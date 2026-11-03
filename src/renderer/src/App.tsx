@@ -296,7 +296,12 @@ function ShelfPanel(): React.JSX.Element {
                 >
                   ×
                 </button>
-                <button type="button" className="shelf-cell-body" onClick={() => void open(it)}>
+                <button
+                  type="button"
+                  className="shelf-cell-body"
+                  title="双击打开"
+                  onDoubleClick={() => void open(it)}
+                >
                   <FileIcon name={it.name} path={it.path} />
                   <span className="shelf-cell-name">{it.name}</span>
                 </button>
@@ -308,7 +313,12 @@ function ShelfPanel(): React.JSX.Element {
             {items.map((it) => (
               <li key={it.id} className="shelf-item" title={it.path}>
                 <FileIcon name={it.name} path={it.path} />
-                <button type="button" className="shelf-name" onClick={() => void open(it)}>
+                <button
+                  type="button"
+                  className="shelf-name"
+                  title="双击打开"
+                  onDoubleClick={() => void open(it)}
+                >
                   {it.name}
                 </button>
                 <span className="shelf-size">{fmtSize(it.size)}</span>
