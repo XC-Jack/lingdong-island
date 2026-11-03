@@ -9,6 +9,9 @@ export interface StatusSnapshot {
   charging: boolean
 }
 
+/** 拖放落盘后的回调登记表（跨闭包广播，不走 ipcRenderer 事件——emit/on 参数语义容易踩坑） */
+const shelfAddedCbs: ((list: ShelfItem[]) => void)[] = []
+
 const api = {
   /** 请求主进程把窗口切到展开/收起尺寸 */
   setExpanded(value: boolean): void {
@@ -61,12 +64,12 @@ const api = {
   shelfShowInFolder(path: string): void {
     ipcRenderer.send('shelf:show-in-folder', path)
   },
-  /** 拖放落盘后广播新列表（渲染层内部事件，避免跨页订阅不到） */
+  /** 拖放落盘后广播新列表（本进程内直接调用回调，无序列化歧义） */
   emitShelfAdded(list: ShelfItem[]): void {
-    ipcRenderer.emit('shelf:added-local', list)
+    for (const cb of shelfAddedCbs) cb(list)
   },
   onShelfAdded(cb: (list: ShelfItem[]) => void): void {
-    ipcRenderer.on('shelf:added-local', (_e, list: ShelfItem[]) => cb(list))
+    shelfAddedCbs.push(cb)
   },
   /**
    * 把拖入的 File 对象转成完整路径。
