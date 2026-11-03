@@ -389,6 +389,20 @@ export default function App(): React.JSX.Element {
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
+  const islandRef = useRef<HTMLDivElement | null>(null)
+
+  // 收起态宽度自适应：内容变化（电量出现/消失等）后量实际宽度报给主进程
+  useEffect(() => {
+    if (expanded) return
+    const el = islandRef.current
+    if (!el) return
+    // 等一帧让 DOM 先按新内容排好版
+    const id = window.requestAnimationFrame(() => {
+      const w = Math.ceil(el.getBoundingClientRect().width)
+      if (w > 0) window.island.setCollapsedWidth(w)
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [expanded, battery])
 
   // 时钟走字
   useEffect(() => {
@@ -534,6 +548,7 @@ export default function App(): React.JSX.Element {
     <div className="app">
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'}`}
+        ref={islandRef}
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
         onDragEnter={onDragEnter}

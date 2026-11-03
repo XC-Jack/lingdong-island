@@ -4,8 +4,13 @@ import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 
-/** 收起态尺寸（CSS 逻辑像素） */
-const COLLAPSED = { width: 240, height: 42 }
+/** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
+const COLLAPSED_HEIGHT = 42
+/** 收起态宽度上下限（防过窄/过宽） */
+const COLLAPSED_MIN_W = 150
+const COLLAPSED_MAX_W = 320
+/** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
+let collapsedWidth = 190
 /** 展开态尺寸（CSS 逻辑像素） */
 const EXPANDED = { width: 720, height: 300 }
 /** 距屏幕顶部的缝隙 */
@@ -20,7 +25,9 @@ let tweenTimer: NodeJS.Timeout | null = null
 /** 按主显示器工作区算出窗口矩形，水平居中、贴顶 */
 function computeBounds(isExpanded: boolean): Electron.Rectangle {
   const { workArea } = screen.getPrimaryDisplay()
-  const size = isExpanded ? EXPANDED : COLLAPSED
+  const size = isExpanded
+    ? EXPANDED
+    : { width: collapsedWidth, height: COLLAPSED_HEIGHT }
   return {
     x: Math.round(workArea.x + (workArea.width - size.width) / 2),
     y: workArea.y + TOP_GAP,
@@ -145,6 +152,19 @@ app.on('window-all-closed', () => {
 ipcMain.on('island:set-expanded', (_event, value: boolean) => {
   if (value === expanded) return
   animateTo(value)
+})
+
+// 渲染层量出收起态内容宽度后下发（随信息数量自适应：有电量时宽、无电量时窄）
+ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
+  const w = Number(value)
+  if (!Number.isFinite(w)) return
+  const next = Math.round(Math.min(COLLAPSED_MAX_W, Math.max(COLLAPSED_MIN_W, w)))
+  if (next === collapsedWidth) return
+  collapsedWidth = next
+  // 只在收起态时立即应用（展开态下次收起时自然生效）
+  if (!expanded && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBounds(computeBounds(false))
+  }
 })
 
 // 打开置物架里的文件（用系统默认程序）

@@ -44,7 +44,8 @@ body {
 }
 
 .island.collapsed {
-  width: 240px;
+  /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
+  width: max-content;
   height: 42px;
   border-radius: 21px;
   display: flex;

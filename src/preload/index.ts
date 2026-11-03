@@ -17,6 +17,10 @@ const api = {
   setExpanded(value: boolean): void {
     ipcRenderer.send('island:set-expanded', value)
   },
+  /** 收起态内容宽度上报（主进程按它定窗口宽，clamp 150~320） */
+  setCollapsedWidth(px: number): void {
+    ipcRenderer.send('island:set-collapsed-width', px)
+  },
   /** 文件拖悬停在窗口上（收起态时让主进程放大窗口） */
   dragHover(): void {
     ipcRenderer.send('island:drag-hover')
