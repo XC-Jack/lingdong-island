@@ -3,7 +3,22 @@ import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 /** 展开面板的页数（分页圆点数） */
-const PAGE_COUNT = 2
+const PAGE_COUNT = 3
+
+/** 通知页数据结构（与 preload/notifyStore 保持一致；独立声明避免跨 tsconfig project 引用） */
+interface NotifyItem {
+  id: number
+  order: number
+  app: string
+  title: string
+  body: string
+  arrival: number
+}
+
+interface NotifyListResult {
+  items: NotifyItem[]
+  unread: number
+}
 
 function formatClock(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0')
@@ -378,15 +393,85 @@ function ShelfPanel(): React.JSX.Element {
   )
 }
 
+/** 相对时间：刚刚 / n 分钟前 / n 小时前 / 昨天 / 具体日期 */
+function fmtRel(ms: number): string {
+  if (!ms) return ''
+  const diff = Date.now() - ms
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
+  const d = new Date(ms)
+  const sameYear = d.getFullYear() === new Date().getFullYear()
+  const mmdd = `${d.getMonth() + 1}/${d.getDate()}`
+  return sameYear ? mmdd : `${d.getFullYear()}/${mmdd}`
+}
+
+/** 通知面板：读取 Windows 通知中心历史（toast），点条目尝试打开来源应用 */
+function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX.Element {
+  const [items, setItems] = useState<NotifyItem[]>([])
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    void window.island.notifyRefresh().then((r: NotifyListResult) => {
+      setItems(r.items)
+      onUnread(r.unread)
+      setLoaded(true)
+    })
+  }, [onUnread])
+
+  const markRead = useCallback(() => {
+    void window.island.notifyMarkRead().then((n) => onUnread(n))
+  }, [onUnread])
+
+  const openOne = useCallback(
+    (it: NotifyItem) => {
+      void window.island.notifyOpenSource(it.app)
+      markRead()
+    },
+    [markRead]
+  )
+
+  return (
+    <div className="todo-panel">
+      <div className="shelf-toolbar">
+        <span className="shelf-count">{items.length > 0 ? `${items.length} 条通知` : ''}</span>
+        <span className="shelf-toolbar-spacer" />
+        <button type="button" className="todo-del" title="全部标为已读（消除收起态红点）" onClick={markRead} disabled={items.length === 0}>
+          已读
+        </button>
+      </div>
+      {items.length === 0 ? (
+        <div className="notify-empty">
+          <span className="shelf-drop-hint">{loaded ? '暂无通知（电脑上应用弹过通知后会出现在这里）' : '读取中…'}</span>
+        </div>
+      ) : (
+        <ul className="notify-list">
+          {items.map((it) => (
+            <li key={it.id} className="notify-item">
+              <button type="button" className="notify-body" title="点击打开来源应用" onClick={() => openOne(it)}>
+                <span className="notify-app">{it.app}</span>
+                <span className="notify-title">{it.title}</span>
+                {it.body && <span className="notify-text">{it.body}</span>}
+              </button>
+              <span className="notify-time">{fmtRel(it.arrival)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
   const [page, setPage] = useState(0)
-  // 验证码：收起态展示「验证码 xxxxxx 已复制」
   // 开机自启开关状态（null=未取到）
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
+  // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
+  const [notifyUnread, setNotifyUnread] = useState(0)
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
@@ -467,7 +552,7 @@ export default function App(): React.JSX.Element {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
       if (!hoverRef.current) setExpanded(false)
-    }, page === 1 ? SHELF_COLLAPSE_MS : AUTO_COLLAPSE_MS)
+    }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
   }, [clearCollapseTimer, page])
 
   const toggle = useCallback(() => {
@@ -496,6 +581,9 @@ export default function App(): React.JSX.Element {
   const onTodoStats = useCallback((done: number, total: number) => {
     setTodoStats({ done, total })
   }, [])
+
+  // 通知未读回调（NotifyPanel 上抛）
+  const onNotifyUnread = useCallback((n: number) => setNotifyUnread(n), [])
 
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
@@ -526,7 +614,7 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(collapseTimer.current)
       collapseTimer.current = window.setTimeout(() => {
         if (!hoverRef.current) setExpanded(false)
-      }, page === 1 ? SHELF_COLLAPSE_MS : AUTO_COLLAPSE_MS)
+      }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
     }
   }
 
@@ -574,7 +662,7 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">{page === 0 ? '待办' : '置物架'}</span>
+              <span className="panel-title">{page === 0 ? '待办' : page === 1 ? '置物架' : '通知'}</span>
               <span className="panel-head-spacer" />
               {page === 0 && (
                 <span className="todo-stat">
@@ -600,7 +688,13 @@ export default function App(): React.JSX.Element {
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>
-                {page === 0 ? <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} /> : <ShelfPanel />}
+                {page === 0 ? (
+                  <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
+                ) : page === 1 ? (
+                  <ShelfPanel />
+                ) : (
+                  <NotifyPanel onUnread={onNotifyUnread} />
+                )}
               </div>
             </div>
             <div className="dots">
@@ -625,6 +719,7 @@ export default function App(): React.JSX.Element {
                 {battery}%
               </span>
             )}
+            {notifyUnread > 0 && <span className="collapsed-dot" title={`${notifyUnread} 条未读通知`} />}
           </>
         )}
       </div>

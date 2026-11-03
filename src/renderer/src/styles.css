@@ -80,6 +80,15 @@ body {
   white-space: nowrap;
 }
 
+/* 通知未读红点（收起态，有未读通知时出现） */
+.collapsed-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: 0 0 6px rgba(255, 95, 87, 0.8);
+}
+
 .collapsed-label {
   font-size: 12px;
   color: rgba(242, 243, 245, 0.62);
@@ -571,6 +580,97 @@ body {
 .shelf-error {
   font-size: 12px;
   color: #ff8f8f;
+}
+
+/* ---------- 通知面板 ---------- */
+
+.notify-list {
+  list-style: none;
+  margin: 0;
+  padding: 2px 4px;
+  width: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 通知页顶部的"已读"按钮是文字按钮，不能继承 todo-del 的 20px 方形 */
+.shelf-toolbar .todo-del {
+  width: auto;
+  min-width: 20px;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 通知页空态：整块居中 */
+.notify-empty {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.notify-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.notify-item:hover {
+  background: rgba(140, 110, 255, 0.12);
+}
+
+.notify-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.notify-app {
+  font-size: 10.5px;
+  color: #9f8bff;
+  letter-spacing: 0.2px;
+}
+
+.notify-title {
+  font-size: 12.5px;
+  color: #f2f3f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.notify-text {
+  font-size: 11.5px;
+  color: rgba(242, 243, 245, 0.55);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.notify-time {
+  flex: none;
+  font-size: 10.5px;
+  color: rgba(242, 243, 245, 0.38);
+  font-variant-numeric: tabular-nums;
+  padding-top: 2px;
 }
 
 .shelf-actions {

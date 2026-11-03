@@ -9,6 +9,21 @@ export interface StatusSnapshot {
   charging: boolean
 }
 
+/** 通知页数据（与主进程 notifyStore 保持一致） */
+export interface NotifyItem {
+  id: number
+  order: number
+  app: string
+  title: string
+  body: string
+  arrival: number
+}
+
+export interface NotifyListResult {
+  items: NotifyItem[]
+  unread: number
+}
+
 /** 拖放落盘后的回调登记表（跨闭包广播，不走 ipcRenderer 事件——emit/on 参数语义容易踩坑） */
 const shelfAddedCbs: ((list: ShelfItem[]) => void)[] = []
 
@@ -96,6 +111,22 @@ const api = {
    */
   filePath(file: File): string {
     return webUtils.getPathForFile(file)
+  },
+  /** 通知页：最近通知列表 + 未读数 */
+  notifyList(): Promise<NotifyListResult> {
+    return ipcRenderer.invoke('notify:list')
+  },
+  /** 通知页：手动刷新（切到通知页时调一次） */
+  notifyRefresh(): Promise<NotifyListResult> {
+    return ipcRenderer.invoke('notify:refresh')
+  },
+  /** 全部标记已读，返回新未读数 */
+  notifyMarkRead(): Promise<number> {
+    return ipcRenderer.invoke('notify:mark-read')
+  },
+  /** 尝试打开通知来源应用；映射不到返回 false */
+  notifyOpenSource(appName: string): Promise<boolean> {
+    return ipcRenderer.invoke('notify:open-source', appName)
   }
 }
 
