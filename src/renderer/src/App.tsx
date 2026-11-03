@@ -135,8 +135,23 @@ function extColor(name: string): string {
   return '#b0bec5'
 }
 
-/** 通用文件图标：折角纸片 + 扩展名色 */
+/** 通用文件图标：优先用系统真实图标（按扩展名缓存），拿不到退回折角纸片 */
 function FileIcon({ name }: { name: string }): React.JSX.Element {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    void window.island.shelfIcon(name).then((p) => {
+      if (alive) setSrc(p)
+    })
+    return () => {
+      alive = false
+    }
+  }, [name])
+  if (src) {
+    // Windows 路径转 file:// URL（空格等字符浏览器自动处理）
+    const url = `file:///${src.replace(/\\/g, '/')}`
+    return <img className="shelf-icon" src={url} alt="" draggable={false} />
+  }
   const color = extColor(name)
   return (
     <svg className="shelf-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -156,6 +171,8 @@ function ShelfPanel(): React.JSX.Element {
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
   const [view, setView] = useState<'grid' | 'list'>('grid')
+  /** 正在拖动换位的条目 id（网格内排序用） */
+  const reorderFrom = useRef<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -188,6 +205,22 @@ function ShelfPanel(): React.JSX.Element {
     const r = await window.island.shelfOpen(item.path)
     if (r !== 'ok') setError(`打不开：${r}`)
   }, [])
+
+  // 网格内拖动换位：拖起记 id，落到另一个格子上按目标位置重排
+  const reorderTo = useCallback(async (target: ShelfItem) => {
+    const from = reorderFrom.current
+    reorderFrom.current = null
+    if (!from || from === target.id) return
+    const ids = items.map((x) => x.id)
+    const fi = ids.indexOf(from)
+    let ti = ids.indexOf(target.id)
+    if (fi === -1 || ti === -1) return
+    ids.splice(fi, 1)
+    // 从前往后拖：删掉自己后目标索引左移一位，插到目标后面
+    if (fi < ti) ti -= 1
+    ids.splice(ti + 1, 0, from)
+    setItems(await window.island.shelfReorder(ids))
+  }, [items])
 
   const fmtSize = (n: number): string => {
     if (n < 1024) return `${n} B`
@@ -225,7 +258,29 @@ function ShelfPanel(): React.JSX.Element {
         ) : view === 'grid' ? (
           <ul className="shelf-grid">
             {items.map((it) => (
-              <li key={it.id} className="shelf-cell" title={it.path}>
+              <li
+                key={it.id}
+                className="shelf-cell"
+                title={it.path}
+                draggable
+                onDragStart={(e) => {
+                  reorderFrom.current = it.id
+                  e.dataTransfer.effectAllowed = 'move'
+                }}
+                onDragOver={(e) => {
+                  // 网格内换位：阻止默认，避免和外层文件投放逻辑混淆
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  void reorderTo(it)
+                }}
+                onDragEnd={() => {
+                  reorderFrom.current = null
+                }}
+              >
                 <button
                   type="button"
                   className="shelf-cell-del"

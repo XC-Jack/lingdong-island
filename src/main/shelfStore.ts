@@ -1,6 +1,7 @@
 import { app, ipcMain } from 'electron'
-import { readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, mkdirSync as mkDir } from 'node:fs'
+import { basename, join, extname } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import type { ShelfItem } from '../shared/types'
 
 export type { ShelfItem }
@@ -12,6 +13,8 @@ interface StoreShape {
 const EMPTY: StoreShape = { items: [] }
 
 let file: string
+/** 系统图标 PNG 缓存目录（按扩展名缓存，一份图标全系统复用） */
+let iconDir: string
 
 function load(): StoreShape {
   try {
@@ -30,6 +33,43 @@ function save(data: StoreShape): void {
 
 function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/**
+ * 用 PowerShell 取某文件/扩展名的系统图标，转成 PNG 缓存。
+ * ExtractAssociatedIcon 只认真实存在的文件，所以先按扩展名造一个空样本文件再取。
+ * 返回 PNG 的 base64，失败返回 null（渲染层退回 SVG 折角纸片）。
+ */
+function systemIconPng(ext: string): string | null {
+  const key = ext ? ext.toLowerCase() : '._none'
+  const png = join(iconDir, `${key.replace(/[^a-z0-9._-]/gi, '_')}.png`)
+  if (existsSync(png)) return png
+  try {
+    mkDir(iconDir, { recursive: true })
+    // 样本文件：放临时目录，用扩展名让系统图标表命中
+    const sampleDir = join(iconDir, 'samples')
+    mkDir(sampleDir, { recursive: true })
+    const sample = join(sampleDir, `sample${ext || '.unknownreax'}`)
+    if (!existsSync(sample)) writeFileSync(sample, '', 'utf8')
+    const script = [
+      'Add-Type -AssemblyName System.Drawing',
+      `$i=[System.Drawing.Icon]::ExtractAssociatedIcon('${sample.replace(/'/g, "''")}')`,
+      `$b=$i.ToBitmap();$m=New-Object System.IO.MemoryStream;`,
+      `$b.Save($m,[System.Drawing.Imaging.ImageFormat]::Png);`,
+      `[Convert]::ToBase64String($m.ToArray())`
+    ].join(';')
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      timeout: 8000,
+      windowsHide: true,
+      encoding: 'utf8'
+    })
+    const b64 = (r.stdout ?? '').trim()
+    if (r.status !== 0 || !b64 || b64.length < 100) return null
+    writeFileSync(png, Buffer.from(b64, 'base64'))
+    return png
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -65,6 +105,7 @@ function addPaths(paths: string[]): ShelfItem[] {
 /** 置物架数据存储：JSON 持久化在 userData，IPC 供渲染层增/删/列 */
 export function setupShelfStore(): void {
   file = join(app.getPath('userData'), 'shelf.json')
+  iconDir = join(app.getPath('userData'), 'icon-cache')
   mkdirSync(app.getPath('userData'), { recursive: true })
 
   ipcMain.handle('shelf:list', (): ShelfItem[] => load().items)
@@ -84,5 +125,29 @@ export function setupShelfStore(): void {
   ipcMain.handle('shelf:clear', (): ShelfItem[] => {
     save({ items: [] })
     return []
+  })
+
+  // 网格内拖动排序：渲染层传新的 id 顺序，主进程按它重排后持久化
+  ipcMain.handle('shelf:reorder', (_e, ids: unknown): ShelfItem[] => {
+    if (!Array.isArray(ids)) return load().items
+    const order = ids.map(String)
+    const data = load()
+    data.items.sort((a, b) => {
+      const ia = order.indexOf(a.id)
+      const ib = order.indexOf(b.id)
+      // 未知 id 的条目排最后，保持相对稳定
+      if (ia === -1 && ib === -1) return 0
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+    save(data)
+    return data.items
+  })
+
+  // 按扩展名取系统图标 PNG 的绝对路径；渲染层用 file:// 直接显示
+  ipcMain.handle('shelf:icon', (_e, name: unknown): string | null => {
+    const ext = extname(String(name ?? ''))
+    return systemIconPng(ext)
   })
 }

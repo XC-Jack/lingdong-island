@@ -58,6 +58,14 @@ const api = {
   shelfClear(): Promise<ShelfItem[]> {
     return ipcRenderer.invoke('shelf:clear')
   },
+  /** 网格内拖动排序：传入新的 id 顺序，返回重排后的全量列表 */
+  shelfReorder(ids: string[]): Promise<ShelfItem[]> {
+    return ipcRenderer.invoke('shelf:reorder', ids)
+  },
+  /** 取某文件名的系统图标 PNG 绝对路径（按扩展名缓存），失败返回 null */
+  shelfIcon(name: string): Promise<string | null> {
+    return ipcRenderer.invoke('shelf:icon', name)
+  },
   shelfOpen(path: string): Promise<string> {
     return ipcRenderer.invoke('shelf:open', path)
   },
