@@ -614,6 +614,52 @@ body {
   justify-content: center;
 }
 
+/* ---------- 日程页 ---------- */
+
+/* 顶部输入行：文本框 + 时间选择 + 加号 */
+.sched-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 2px 4px 8px;
+}
+
+.sched-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sched-time {
+  flex: none;
+  width: 108px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  border-radius: 8px;
+  color: #f2f3f5;
+  font-size: 12px;
+  padding: 7px 8px;
+  outline: none;
+  color-scheme: dark;
+}
+
+/* 时间徽标：有具体时间才显示 */
+.sched-badge {
+  flex: none;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(160, 132, 255, 0.9);
+  background: rgba(140, 110, 255, 0.14);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+/* 已过点未完成：变灰提醒 */
+.sched-badge.sched-past {
+  color: rgba(255, 122, 89, 0.95);
+  background: rgba(255, 122, 89, 0.14);
+}
+
 .notify-item {
   display: flex;
   align-items: flex-start;

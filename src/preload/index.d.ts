@@ -1,4 +1,4 @@
-import type { IslandApi, Todo, ShelfItem, NotifyItem, NotifyListResult } from './index'
+import type { IslandApi, Todo, ShelfItem, NotifyItem, NotifyListResult, ScheduleItem } from './index'
 
 declare global {
   interface Window {
@@ -6,4 +6,4 @@ declare global {
   }
 }
 
-export type { Todo, ShelfItem, NotifyItem, NotifyListResult }
+export type { Todo, ShelfItem, NotifyItem, NotifyListResult, ScheduleItem }

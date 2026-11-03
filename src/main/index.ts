@@ -4,6 +4,7 @@ import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
+import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 
 /** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
 const COLLAPSED_HEIGHT = 42
@@ -141,6 +142,7 @@ app.whenReady().then(() => {
   setupStatus()
   setupShelfStore()
   setupNotifyStore()
+  setupScheduleStore()
   createWindow()
 
   app.on('activate', () => {
@@ -150,6 +152,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopNotifyStore()
+  stopScheduleStore()
   app.quit()
 })
 

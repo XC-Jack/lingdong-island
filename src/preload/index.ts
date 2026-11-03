@@ -127,7 +127,30 @@ const api = {
   /** 尝试打开通知来源应用；映射不到返回 false */
   notifyOpenSource(appName: string): Promise<boolean> {
     return ipcRenderer.invoke('notify:open-source', appName)
+  },
+  /** 日程：列 / 增（文本+可选 'HH:mm'）/ 勾选切换 / 删，全部返回最新全量列表 */
+  scheduleList(): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:list')
+  },
+  scheduleAdd(text: string, time: string | null): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:add', text, time)
+  },
+  scheduleToggle(id: string): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:toggle', id)
+  },
+  scheduleRemove(id: string): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:remove', id)
   }
+}
+
+/** 日程条目（与主进程 scheduleStore 保持一致） */
+export interface ScheduleItem {
+  id: string
+  text: string
+  time: string | null
+  done: boolean
+  reminded: boolean
+  createdAt: number
 }
 
 contextBridge.exposeInMainWorld('island', api)

@@ -3,7 +3,7 @@ import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 /** 展开面板的页数（分页圆点数） */
-const PAGE_COUNT = 3
+const PAGE_COUNT = 4
 
 /** 通知页数据结构（与 preload/notifyStore 保持一致；独立声明避免跨 tsconfig project 引用） */
 interface NotifyItem {
@@ -18,6 +18,16 @@ interface NotifyItem {
 interface NotifyListResult {
   items: NotifyItem[]
   unread: number
+}
+
+/** 日程条目（与 preload/scheduleStore 保持一致） */
+interface ScheduleItem {
+  id: string
+  text: string
+  time: string | null
+  done: boolean
+  reminded: boolean
+  createdAt: number
 }
 
 function formatClock(d: Date): string {
@@ -462,6 +472,98 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
   )
 }
 
+/** 日程面板：今天的安排，可带时间（到点弹系统提醒） */
+function SchedulePanel(): React.JSX.Element {
+  const [items, setItems] = useState<ScheduleItem[]>([])
+  const [text, setText] = useState('')
+  const [time, setTime] = useState('')
+
+  useEffect(() => {
+    void window.island.scheduleList().then(setItems)
+  }, [])
+
+  const add = useCallback(() => {
+    const t = text.trim()
+    if (!t) return
+    void window.island.scheduleAdd(t, time.trim() || null).then((list) => {
+      setItems(list)
+      setText('')
+      setTime('')
+    })
+  }, [text, time])
+
+  const toggle = useCallback((id: string) => {
+    void window.island.scheduleToggle(id).then(setItems)
+  }, [])
+
+  const remove = useCallback((id: string) => {
+    void window.island.scheduleRemove(id).then(setItems)
+  }, [])
+
+  const sorted = [...items].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1
+    if (a.time && b.time) return a.time.localeCompare(b.time)
+    if (a.time) return -1
+    if (b.time) return 1
+    return a.createdAt - b.createdAt
+  })
+  const hm = formatClock(new Date())
+
+  return (
+    <div className="todo-panel">
+      {/* 输入区放顶部（与待办页一致）：文本 + 可选时间 */}
+      <div className="sched-add">
+        <input
+          className="sched-input"
+          placeholder="加个安排…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+          }}
+        />
+        <input
+          className="sched-time"
+          type="time"
+          title="可选：到点前提醒"
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+        />
+        <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
+          +
+        </button>
+      </div>
+      {sorted.length === 0 ? (
+        <div className="notify-empty">
+          <span className="shelf-drop-hint">今天还没有安排</span>
+        </div>
+      ) : (
+        <ul className="todo-list sched-list">
+          {sorted.map((it) => (
+            <li key={it.id} className={`todo-item ${it.done ? 'done' : ''}`}>
+              <input
+                type="checkbox"
+                className="todo-check"
+                checked={it.done}
+                onChange={() => toggle(it.id)}
+              />
+              {it.time && (
+                <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>
+                  {it.time}
+                </span>
+              )}
+              <span className="todo-text">{it.text}</span>
+              <button type="button" className="todo-del" title="删除" onClick={() => remove(it.id)}>
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
@@ -662,7 +764,9 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">{page === 0 ? '待办' : page === 1 ? '置物架' : '通知'}</span>
+              <span className="panel-title">
+                {page === 0 ? '待办' : page === 1 ? '置物架' : page === 2 ? '通知' : '日程'}
+              </span>
               <span className="panel-head-spacer" />
               {page === 0 && (
                 <span className="todo-stat">
@@ -692,8 +796,10 @@ export default function App(): React.JSX.Element {
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
                 ) : page === 1 ? (
                   <ShelfPanel />
-                ) : (
+                ) : page === 2 ? (
                   <NotifyPanel onUnread={onNotifyUnread} />
+                ) : (
+                  <SchedulePanel />
                 )}
               </div>
             </div>
