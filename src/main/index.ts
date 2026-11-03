@@ -91,6 +91,8 @@ function createWindow(): void {
     fullscreenable: false,
     skipTaskbar: true,
     show: false,
+    // 任务栏/Alt+Tab 里显示的应用图标（开发版用源文件；打包版由 exe 图标接管）
+    icon: join(__dirname, '../../build/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
