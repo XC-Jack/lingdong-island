@@ -165,9 +165,11 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
 // ---------- 开机自启 ----------
 
 // 查询当前开机自启状态
-// 注意：get/set 必须传同样的 args——Electron 在 Windows 上按「exe 路径+启动参数」
+// 注意 1：get/set 必须传同样的 args——Electron 在 Windows 上按「exe 路径+启动参数」
 // 匹配 HKCU\...\Run 里的值，参数不一致时 openAtLogin 永远读回 false（实测踩坑）。
-const AUTOSTART_ARGS = ['--hidden']
+// 注意 2：args 里必须带 app 路径 '.'。开发模式下 electron.exe 不带路径参数启动会弹
+// Electron 默认欢迎页（用户开机时看到的蓝色 Atom 页面就是这个），灵动岛本体根本没起。
+const AUTOSTART_ARGS = ['.', '--hidden']
 
 ipcMain.handle('autostart:get', () => {
   return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
