@@ -63,12 +63,10 @@ const api = {
   },
   /** 拖放落盘后广播新列表（渲染层内部事件，避免跨页订阅不到） */
   emitShelfAdded(list: ShelfItem[]): void {
-    window.dispatchEvent(new CustomEvent('shelf:added', { detail: list }))
+    ipcRenderer.emit('shelf:added-local', list)
   },
   onShelfAdded(cb: (list: ShelfItem[]) => void): void {
-    window.addEventListener('shelf:added', (e) => {
-      cb((e as CustomEvent<ShelfItem[]>).detail)
-    })
+    ipcRenderer.on('shelf:added-local', (_e, list: ShelfItem[]) => cb(list))
   },
   /**
    * 把拖入的 File 对象转成完整路径。
