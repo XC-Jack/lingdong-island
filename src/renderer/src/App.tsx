@@ -63,7 +63,13 @@ function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
 }
 
 /** 待办面板：列表 + 勾选 + 增 + 删 + 完成度 n/m */
-function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Element {
+function TodoPanel({
+  onDonePulse,
+  onStats,
+}: {
+  onDonePulse: () => void
+  onStats: (done: number, total: number) => void
+}): React.JSX.Element {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
 
@@ -77,7 +83,11 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
     }
   }, [])
 
+  // 完成度统计上抛给面板头（右上角「n/m 已完成」）
   const done = todos.filter((t) => t.done).length
+  useEffect(() => {
+    onStats(done, todos.length)
+  }, [done, todos.length, onStats])
 
   const add = useCallback(async () => {
     const text = draft.trim()
@@ -101,16 +111,22 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
 
   return (
     <div className="todo-panel">
-      <div className="todo-stat">
-        <span className="todo-count">
-          {done}/{todos.length}
-        </span>
-        <span className="todo-count-label">已完成</span>
+      <div className="todo-add">
+        <input
+          className="todo-input"
+          value={draft}
+          placeholder="加一个待办…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void add()
+          }}
+        />
+        <button type="button" className="todo-add-btn" title="添加" onClick={() => void add()}>
+          +
+        </button>
       </div>
       <ul className="todo-list">
-        {todos.length === 0 && (
-          <li className="todo-empty">还没有待办，加一个吧</li>
-        )}
+        {todos.length === 0 && <li className="todo-empty">还没有待办，加一个吧</li>}
         {todos.map((t) => (
           <li key={t.id} className={`todo-item ${t.done ? 'done' : ''}`}>
             <button
@@ -135,20 +151,6 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
           </li>
         ))}
       </ul>
-      <div className="todo-add">
-        <input
-          className="todo-input"
-          value={draft}
-          placeholder="加一个待办…"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void add()
-          }}
-        />
-        <button type="button" className="todo-add-btn" onClick={() => void add()}>
-          + 加一个
-        </button>
-      </div>
     </div>
   )
 }
@@ -475,6 +477,12 @@ export default function App(): React.JSX.Element {
   // 拖文件落进岛也表扬一下
   const onDonePulse = pulseHappy
 
+  // 待办完成度（右上角 n/m 已完成）
+  const [todoStats, setTodoStats] = useState<{ done: number; total: number }>({ done: 0, total: 0 })
+  const onTodoStats = useCallback((done: number, total: number) => {
+    setTodoStats({ done, total })
+  }, [])
+
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
   const onEnter = (): void => {
@@ -551,9 +559,16 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">{page === 0 ? '待办 清单' : '置物架'}</span>
-              <span className="panel-sub">{page === 0 ? 'M1' : 'M4'}</span>
+              <span className="panel-title">{page === 0 ? '待办' : '置物架'}</span>
               <span className="panel-head-spacer" />
+              {page === 0 && (
+                <span className="todo-stat">
+                  <b className="todo-count">
+                    {todoStats.done}/{todoStats.total}
+                  </b>
+                  <span className="todo-count-label">已完成</span>
+                </span>
+              )}
               <button
                 type="button"
                 className={`autostart-toggle ${autoStart ? 'on' : ''}`}
@@ -570,7 +585,7 @@ export default function App(): React.JSX.Element {
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>
-                {page === 0 ? <TodoPanel onDonePulse={onDonePulse} /> : <ShelfPanel />}
+                {page === 0 ? <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} /> : <ShelfPanel />}
               </div>
             </div>
             <div className="dots">
@@ -595,8 +610,6 @@ export default function App(): React.JSX.Element {
                 {battery}%
               </span>
             )}
-            <span className="collapsed-spacer" />
-            <span className="collapsed-label">点击展开</span>
           </>
         )}
       </div>
