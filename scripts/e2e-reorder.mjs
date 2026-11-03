@@ -106,6 +106,7 @@ const main = async () => {
   if (r2[r2.length - 1] !== 'aaa.txt' || r2[1] !== '我的文件夹') throw new Error('第二次换位失败: ' + r2)
   // 再换回来，确认连续操作都稳定
   const r3 = JSON.parse(await doReorder('我的文件夹', 'bbb.md'))
+  if (r3[0] !== '我的文件夹' || r3[1] !== 'bbb.md') throw new Error('第三次换位失败: ' + r3)
   console.log('[6] 第三次换位后:', r3)
 
   console.log('E2E REORDER PASS')

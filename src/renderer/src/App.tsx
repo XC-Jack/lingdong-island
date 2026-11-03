@@ -207,6 +207,7 @@ function ShelfPanel(): React.JSX.Element {
   const [view, setView] = useState<'grid' | 'list'>('grid')
   /** 正在拖动换位的条目 id（网格内排序用） */
   const reorderFrom = useRef<string | null>(null)
+  const reorderSeq = useRef(0)
 
   useEffect(() => {
     let alive = true
@@ -240,8 +241,8 @@ function ShelfPanel(): React.JSX.Element {
     if (r !== 'ok') setError(`打不开：${r}`)
   }, [])
 
-  // 网格内拖动换位：拖起记 id，落到另一个格子上按目标位置重排。
-  // 依赖里不写 items——用函数式更新拿最新列表，避免连续两次拖动时闭包拿到旧数据
+  // 网格内拖动换位：拖起记 id，落到另一个格子上与目标**互换位置**（最直觉的桌面语义）。
+  // 用函数式更新拿最新列表；主进程返回的排序列表是唯一真相，inFlight 序号防旧响应覆盖新顺序
   const reorderTo = useCallback(async (target: ShelfItem) => {
     const from = reorderFrom.current
     reorderFrom.current = null
@@ -249,14 +250,15 @@ function ShelfPanel(): React.JSX.Element {
     setItems((prev) => {
       const ids = prev.map((x) => x.id)
       const fi = ids.indexOf(from)
-      let ti = ids.indexOf(target.id)
+      const ti = ids.indexOf(target.id)
       if (fi === -1 || ti === -1) return prev
-      ids.splice(fi, 1)
-      // 从前往后拖：删掉自己后目标索引左移一位，插到目标后面
-      if (fi < ti) ti -= 1
-      ids.splice(ti + 1, 0, from)
-      // 主进程返回排序后的列表，用它覆盖本地
-      void window.island.shelfReorder(ids).then((sorted) => setItems(sorted))
+      // 互换：A 拖到 B 上，A 占 B 的位置，B 退到 A 原来的位置
+      ;[ids[fi], ids[ti]] = [ids[ti], ids[fi]]
+      // 换位序号：只有最新一次 reorder 的响应才允许覆盖 items，避免 IPC 慢响应乱序回写
+      const seq = ++reorderSeq.current
+      void window.island.shelfReorder(ids).then((sorted) => {
+        if (seq === reorderSeq.current) setItems(sorted)
+      })
       return prev.map((x) => (x.id === from ? { ...x } : x))
     })
   }, [])
