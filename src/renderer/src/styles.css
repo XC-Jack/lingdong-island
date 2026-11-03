@@ -325,17 +325,15 @@ body {
 
 .shelf-drop {
   flex: 1;
-  border: 1.5px dashed rgba(255, 255, 255, 0.18);
-  border-radius: 12px;
+  /* 无边框：整个面板就是存放区，拖进岛内任意位置都能放下 */
   display: flex;
   align-items: center;
   justify-content: center;
   overflow-y: auto;
-  transition: border-color 120ms, background 120ms;
+  transition: background 120ms;
 }
 
 .shelf-drop.over {
-  border-color: rgba(140, 110, 255, 0.8);
   background: rgba(140, 110, 255, 0.08);
 }
 
