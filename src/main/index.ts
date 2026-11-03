@@ -171,8 +171,12 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
 // ---------- 开机自启 ----------
 
 // 查询当前开机自启状态
+// 注意：get/set 必须传同样的 args——Electron 在 Windows 上按「exe 路径+启动参数」
+// 匹配 HKCU\...\Run 里的值，参数不一致时 openAtLogin 永远读回 false（实测踩坑）。
+const AUTOSTART_ARGS = ['--hidden']
+
 ipcMain.handle('autostart:get', () => {
-  return app.getLoginItemSettings().openAtLogin === true
+  return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
 })
 
 // 设置/取消开机自启
@@ -180,7 +184,7 @@ ipcMain.handle('autostart:set', (_e, on: unknown) => {
   app.setLoginItemSettings({
     openAtLogin: on === true,
     // 自启时以隐藏方式拉起（窗口逻辑自己 ready-to-show showInactive）
-    args: ['--hidden']
+    args: AUTOSTART_ARGS
   })
-  return app.getLoginItemSettings().openAtLogin === true
+  return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
 })
