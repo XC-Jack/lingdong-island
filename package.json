@@ -4,13 +4,15 @@
   "private": true,
   "description": "Windows 桌面灵动岛",
   "main": "./out/main/index.js",
+  "author": "XC-Jack",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
-    "typecheck": "npm run typecheck:node && npm run typecheck:web"
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "dist": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -22,8 +24,33 @@
     "@types/react-dom": "^19.2.1",
     "@vitejs/plugin-react": "^6.2.1",
     "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.5"
+  },
+  "build": {
+    "appId": "com.xcjack.lingdong-island",
+    "productName": "灵动岛",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "灵动岛"
+    }
   }
 }

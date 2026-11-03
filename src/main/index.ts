@@ -189,10 +189,13 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
 // 匹配 HKCU\...\Run 里的值，参数不一致时 openAtLogin 永远读回 false（实测踩坑）。
 // 注意 2：args 必须含 **绝对** app 路径。开机启动时工作目录是 C:\WINDOWS\system32，
 // 相对路径 '.' 会解析到 system32 → 「Unable to find Electron app at
-// C:\WINDOWS\system32」（用户重启实测弹错）。也不能写死路径：主进程编译后位置固定，
-// 用 __dirname 反推项目根（out/main/index.js → 上两级）。
-const APP_ROOT = join(__dirname, '..', '..')
-const AUTOSTART_ARGS = [APP_ROOT, '--hidden']
+// C:\WINDOWS\system32」（用户重启实测弹错）。
+// 注意 3：打包版 electron.exe 自带 app（asar），args 只需 --hidden；开发版裸引擎
+// 必须带项目根路径。__dirname 反推（out/main → 上两级）只对开发版成立，asar 里
+// 会指到 resources\app.asar 而不是安装根，所以用 app.isPackaged 分支。
+const AUTOSTART_ARGS: string[] = app.isPackaged
+  ? ['--hidden']
+  : [join(__dirname, '..', '..'), '--hidden']
 
 ipcMain.handle('autostart:get', () => {
   return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
