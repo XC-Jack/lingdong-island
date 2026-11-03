@@ -119,6 +119,37 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
   )
 }
 
+/** 置物架页收起前的宽限：比待办页长一点，方便去拿文件 */
+const SHELF_COLLAPSE_MS = 4000
+
+/** 按扩展名给文件图标配色 */
+function extColor(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) return '#4fc3f7'
+  if (['mp4', 'mkv', 'avi', 'mov'].includes(ext)) return '#ff8a65'
+  if (['mp3', 'wav', 'flac', 'm4a'].includes(ext)) return '#ba68c8'
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '#ffb74d'
+  if (['doc', 'docx', 'pdf', 'txt', 'md'].includes(ext)) return '#81c784'
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '#aed581'
+  if (['exe', 'msi', 'lnk'].includes(ext)) return '#90a4ae'
+  return '#b0bec5'
+}
+
+/** 通用文件图标：折角纸片 + 扩展名色 */
+function FileIcon({ name }: { name: string }): React.JSX.Element {
+  const color = extColor(name)
+  return (
+    <svg className="shelf-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"
+        fill={color}
+        opacity="0.9"
+      />
+      <path d="M15 2l5 5h-5z" fill="#ffffff" opacity="0.45" />
+    </svg>
+  )
+}
+
 /** 置物架面板：拖文件进来暂存，点击打开，可删除/清空 */
 function ShelfPanel(): React.JSX.Element {
   const [items, setItems] = useState<ShelfItem[]>([])
@@ -195,6 +226,7 @@ function ShelfPanel(): React.JSX.Element {
           <ul className="shelf-list">
             {items.map((it) => (
               <li key={it.id} className="shelf-item" title={it.path}>
+                <FileIcon name={it.name} />
                 <button type="button" className="shelf-name" onClick={() => void open(it)}>
                   {it.name}
                 </button>
@@ -274,10 +306,8 @@ export default function App(): React.JSX.Element {
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
-      // 置物架页不自动收回：拖文件必须先离开岛去资源管理器拿文件，
-      // 700ms 自动收回会让人拖到一半岛就没了
-      if (!hoverRef.current && page !== 1) setExpanded(false)
-    }, AUTO_COLLAPSE_MS)
+      if (!hoverRef.current) setExpanded(false)
+    }, page === 1 ? SHELF_COLLAPSE_MS : AUTO_COLLAPSE_MS)
   }, [clearCollapseTimer, page])
 
   const toggle = useCallback(() => {
@@ -310,23 +340,43 @@ export default function App(): React.JSX.Element {
     if (expanded) scheduleCollapse()
   }
 
+  // 拖文件悬停在岛上（含收起态）：通知主进程放大窗口，切到置物架页，暂停收回
+  const onDragEnter = (e: React.DragEvent): void => {
+    if (!e.dataTransfer.types.includes('Files')) return
+    window.island.dragHover()
+    clearCollapseTimer()
+    hoverRef.current = true
+    setPage(1)
+    setExpanded(true)
+  }
+
+  const onDragOverRoot = (e: React.DragEvent): void => {
+    e.preventDefault()
+    // 悬停期间不断续命，防止拖着拖着岛收走
+    if (collapseTimer.current !== null) {
+      window.clearTimeout(collapseTimer.current)
+      collapseTimer.current = window.setTimeout(() => {
+        if (!hoverRef.current) setExpanded(false)
+      }, page === 1 ? SHELF_COLLAPSE_MS : AUTO_COLLAPSE_MS)
+    }
+  }
+
   return (
     <div className="app">
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'}`}
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOverRoot}
+        onDrop={(e) => {
+          e.preventDefault()
+          // drop 交给内部置物架面板；这里只兜底防导航。松手后重新计时收回
+          scheduleCollapse()
+        }}
         onClick={() => {
           // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
           if (!expanded) toggle()
-        }}
-        onDragOver={(e) => {
-          // 全窗口允许 drop：不写 preventDefault 光标会显示"禁止"，
-          // 且松手会触发系统导航（主进程另有 will-navigate 兜底）
-          e.preventDefault()
-        }}
-        onDrop={(e) => {
-          e.preventDefault()
         }}
         role="button"
         tabIndex={0}

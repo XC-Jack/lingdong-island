@@ -14,6 +14,10 @@ const api = {
   setExpanded(value: boolean): void {
     ipcRenderer.send('island:set-expanded', value)
   },
+  /** 文件拖悬停在窗口上（收起态时让主进程放大窗口） */
+  dragHover(): void {
+    ipcRenderer.send('island:drag-hover')
+  },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:list')

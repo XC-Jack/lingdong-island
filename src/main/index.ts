@@ -97,6 +97,11 @@ function createWindow(): void {
 
   // 拖文件进来时 Chromium 默认会导航到该文件——拦掉，交给渲染层 onDrop 处理
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
+
+  // 文件拖到收起态胶囊上：先放大成展开面板，让用户有地方松手
+  ipcMain.on('island:drag-hover', () => {
+    if (!expanded) animateTo(true)
+  })
   // 注意：不开整窗穿透。收起态窗口仅 240×42，几乎全是胶囊本体；
   // Electron 的 setIgnoreMouseEvents(forward:true) 会让整个窗口（含胶囊）收不到点击，
   // 实测导致收起态点不开。若以后要精修四角，用原生 WS_EX_TRANSPARENT 分区域方案。
