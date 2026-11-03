@@ -274,9 +274,11 @@ export default function App(): React.JSX.Element {
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
-      if (!hoverRef.current) setExpanded(false)
+      // 置物架页不自动收回：拖文件必须先离开岛去资源管理器拿文件，
+      // 700ms 自动收回会让人拖到一半岛就没了
+      if (!hoverRef.current && page !== 1) setExpanded(false)
     }, AUTO_COLLAPSE_MS)
-  }, [clearCollapseTimer])
+  }, [clearCollapseTimer, page])
 
   const toggle = useCallback(() => {
     setExpanded((prev) => {
@@ -317,6 +319,14 @@ export default function App(): React.JSX.Element {
         onClick={() => {
           // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
           if (!expanded) toggle()
+        }}
+        onDragOver={(e) => {
+          // 全窗口允许 drop：不写 preventDefault 光标会显示"禁止"，
+          // 且松手会触发系统导航（主进程另有 will-navigate 兜底）
+          e.preventDefault()
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
         }}
         role="button"
         tabIndex={0}
