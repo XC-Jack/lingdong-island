@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
+import { setupCaptchaStore, stopCaptchaPolling } from './captchaStore'
 
 /** 收起态尺寸（CSS 逻辑像素） */
 const COLLAPSED = { width: 240, height: 42 }
@@ -130,11 +131,16 @@ app.whenReady().then(() => {
   setupTodoStore()
   setupStatus()
   setupShelfStore()
+  setupCaptchaStore()
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('before-quit', () => {
+  stopCaptchaPolling()
 })
 
 app.on('window-all-closed', () => {
@@ -160,4 +166,21 @@ ipcMain.handle('shelf:open', async (_e, path: unknown) => {
 ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
   const p = String(path ?? '')
   if (p) shell.showItemInFolder(p)
+})
+
+// ---------- 开机自启 ----------
+
+// 查询当前开机自启状态
+ipcMain.handle('autostart:get', () => {
+  return app.getLoginItemSettings().openAtLogin === true
+})
+
+// 设置/取消开机自启
+ipcMain.handle('autostart:set', (_e, on: unknown) => {
+  app.setLoginItemSettings({
+    openAtLogin: on === true,
+    // 自启时以隐藏方式拉起（窗口逻辑自己 ready-to-show showInactive）
+    args: ['--hidden']
+  })
+  return app.getLoginItemSettings().openAtLogin === true
 })

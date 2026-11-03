@@ -91,6 +91,55 @@ body {
   flex: 1;
 }
 
+/* ---------- 收起态验证码 ---------- */
+
+.captcha-key {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  animation: pet-breathe 3.2s ease-in-out infinite;
+}
+
+.captcha-text {
+  font-size: 13px;
+  white-space: nowrap;
+  color: rgba(242, 243, 245, 0.9);
+}
+
+.captcha-code {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1.5px;
+  color: #cfc4ff;
+  font-variant-numeric: tabular-nums;
+  margin: 0 2px;
+}
+
+.captcha-copied {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.5);
+  margin-left: 4px;
+}
+
+.captcha-dismiss {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(242, 243, 245, 0.7);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.captcha-dismiss:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
 .collapsed-pet {
   width: 22px;
   height: 22px;
@@ -166,6 +215,46 @@ body {
 .panel-sub {
   font-size: 12px;
   color: rgba(242, 243, 245, 0.45);
+}
+
+.panel-head-spacer {
+  flex: 1;
+}
+
+/* 开机自启开关（面板头右上角） */
+.autostart-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(242, 243, 245, 0.6);
+  transition: background 120ms, color 120ms;
+}
+
+.autostart-toggle:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(242, 243, 245, 0.85);
+}
+
+.autostart-toggle.on {
+  background: rgba(123, 87, 255, 0.25);
+  color: #cfc4ff;
+}
+
+.autostart-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(242, 243, 245, 0.35);
+}
+
+.autostart-toggle.on .autostart-dot {
+  background: #8b6bff;
 }
 
 .panel-body {
