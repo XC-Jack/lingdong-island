@@ -102,6 +102,11 @@ function createWindow(): void {
   ipcMain.on('island:drag-hover', () => {
     if (!expanded) animateTo(true)
   })
+
+  // 点桌面/其他窗口（岛失焦）→ 自动收回。展开时点空白处同理
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('island:window-blur')
+  })
   // 注意：不开整窗穿透。收起态窗口仅 240×42，几乎全是胶囊本体；
   // Electron 的 setIgnoreMouseEvents(forward:true) 会让整个窗口（含胶囊）收不到点击，
   // 实测导致收起态点不开。若以后要精修四角，用原生 WS_EX_TRANSPARENT 分区域方案。

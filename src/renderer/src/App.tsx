@@ -155,6 +155,7 @@ function ShelfPanel(): React.JSX.Element {
   const [items, setItems] = useState<ShelfItem[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
+  const [view, setView] = useState<'grid' | 'list'>('grid')
 
   useEffect(() => {
     let alive = true
@@ -202,8 +203,29 @@ function ShelfPanel(): React.JSX.Element {
 
   return (
     <div className="todo-panel">
+      <div className="shelf-toolbar">
+        <span className="shelf-count">{items.length} 个文件</span>
+        <span className="shelf-toolbar-spacer" />
+        <button
+          type="button"
+          className="shelf-view-btn"
+          title={view === 'grid' ? '切换为列表' : '切换为大图标'}
+          onClick={() => setView(view === 'grid' ? 'list' : 'grid')}
+        >
+          {view === 'grid' ? '☰' : '⊞'}
+        </button>
+        <button
+          type="button"
+          className="todo-del"
+          title="清空置物架"
+          onClick={() => void clear()}
+          disabled={items.length === 0}
+        >
+          清空
+        </button>
+      </div>
       <div
-        className={`shelf-drop ${dragOver ? 'over' : ''}`}
+        className={`shelf-drop ${view} ${dragOver ? 'over' : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           e.stopPropagation()
@@ -222,6 +244,25 @@ function ShelfPanel(): React.JSX.Element {
       >
         {items.length === 0 ? (
           <span className="shelf-drop-hint">把文件拖进来暂存</span>
+        ) : view === 'grid' ? (
+          <ul className="shelf-grid">
+            {items.map((it) => (
+              <li key={it.id} className="shelf-cell" title={it.path}>
+                <button
+                  type="button"
+                  className="shelf-cell-del"
+                  title="移除"
+                  onClick={() => void remove(it.id)}
+                >
+                  ×
+                </button>
+                <button type="button" className="shelf-cell-body" onClick={() => void open(it)}>
+                  <FileIcon name={it.name} />
+                  <span className="shelf-cell-name">{it.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         ) : (
           <ul className="shelf-list">
             {items.map((it) => (
@@ -245,17 +286,6 @@ function ShelfPanel(): React.JSX.Element {
         )}
       </div>
       {error && <div className="shelf-error">{error}</div>}
-      <div className="shelf-actions">
-        <button
-          type="button"
-          className="todo-add-btn"
-          onClick={() => void clear()}
-          disabled={items.length === 0}
-        >
-          清空
-        </button>
-        <span className="shelf-count">{items.length} 个文件</span>
-      </div>
     </div>
   )
 }
@@ -295,6 +325,14 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     window.island?.setExpanded(expanded)
   }, [expanded])
+
+  // 点了桌面/其他程序（窗口失焦）→ 自动收回
+  useEffect(() => {
+    window.island.onWindowBlur(() => {
+      hoverRef.current = false
+      setExpanded(false)
+    })
+  }, [])
 
   const clearCollapseTimer = useCallback(() => {
     if (collapseTimer.current !== null) {
@@ -361,6 +399,17 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  // 整个岛都是投放区：文件可以落在面板任意位置（不只虚线框）
+  const onDropRoot = (e: React.DragEvent): void => {
+    e.preventDefault()
+    if (!e.dataTransfer.files.length) return
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => window.island.filePath(f))
+      .filter((p): p is string => !!p)
+    if (paths.length === 0) return
+    void window.island.shelfAdd(paths)
+  }
+
   return (
     <div className="app">
       <div
@@ -370,8 +419,7 @@ export default function App(): React.JSX.Element {
         onDragEnter={onDragEnter}
         onDragOver={onDragOverRoot}
         onDrop={(e) => {
-          e.preventDefault()
-          // drop 交给内部置物架面板；这里只兜底防导航。松手后重新计时收回
+          onDropRoot(e)
           scheduleCollapse()
         }}
         onClick={() => {

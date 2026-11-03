@@ -18,6 +18,10 @@ const api = {
   dragHover(): void {
     ipcRenderer.send('island:drag-hover')
   },
+  /** 窗口失焦（点了桌面或其他程序）——渲染层借此自动收回 */
+  onWindowBlur(cb: () => void): void {
+    ipcRenderer.on('island:window-blur', cb)
+  },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:list')
