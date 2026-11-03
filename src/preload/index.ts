@@ -12,12 +12,6 @@ export interface StatusSnapshot {
 /** 拖放落盘后的回调登记表（跨闭包广播，不走 ipcRenderer 事件——emit/on 参数语义容易踩坑） */
 const shelfAddedCbs: ((list: ShelfItem[]) => void)[] = []
 
-/** 收起态展示的验证码（与主进程 captchaStore 保持一致） */
-export interface CaptchaState {
-  code: string | null
-  at: number
-}
-
 const api = {
   /** 请求主进程把窗口切到展开/收起尺寸 */
   setExpanded(value: boolean): void {
@@ -50,13 +44,6 @@ const api = {
   /** 收起态状态栏快照：电量、充电状态 */
   statusSnapshot(): Promise<StatusSnapshot> {
     return ipcRenderer.invoke('status:snapshot')
-  },
-  /** 验证码：读当前（60 秒后自动过期）/ 点掉 */
-  captchaCurrent(): Promise<CaptchaState> {
-    return ipcRenderer.invoke('captcha:current')
-  },
-  captchaDismiss(): Promise<CaptchaState> {
-    return ipcRenderer.invoke('captcha:dismiss')
   },
   /** 开机自启：读状态 / 开关 */
   autostartGet(): Promise<boolean> {
@@ -105,10 +92,6 @@ const api = {
    */
   filePath(file: File): string {
     return webUtils.getPathForFile(file)
-  },
-  /** e2e 专用：注入一段文本走真实识别链路 */
-  captchaTestInject(text: string): Promise<CaptchaState> {
-    return ipcRenderer.invoke('captcha:test-inject', text)
   }
 }
 

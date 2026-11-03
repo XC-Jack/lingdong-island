@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
-import { setupCaptchaStore, stopCaptchaPolling } from './captchaStore'
 
 /** 收起态尺寸（CSS 逻辑像素） */
 const COLLAPSED = { width: 240, height: 42 }
@@ -131,16 +130,11 @@ app.whenReady().then(() => {
   setupTodoStore()
   setupStatus()
   setupShelfStore()
-  setupCaptchaStore()
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-})
-
-app.on('before-quit', () => {
-  stopCaptchaPolling()
 })
 
 app.on('window-all-closed', () => {

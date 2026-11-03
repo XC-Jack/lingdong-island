@@ -383,7 +383,6 @@ export default function App(): React.JSX.Element {
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
   const [page, setPage] = useState(0)
   // 验证码：收起态展示「验证码 xxxxxx 已复制」
-  const [captcha, setCaptcha] = useState<{ code: string; at: number } | null>(null)
   // 开机自启开关状态（null=未取到）
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
   const hoverRef = useRef(false)
@@ -411,23 +410,6 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
-  // 验证码：首取 + 每 5 秒轮询；60 秒后自动淡出（主进程也有 TTL 兜底）
-  useEffect(() => {
-    let alive = true
-    const pull = (): void => {
-      void window.island.captchaCurrent().then((s) => {
-        if (!alive) return
-        setCaptcha(s.code ? { code: s.code, at: s.at } : null)
-      })
-    }
-    pull()
-    const id = window.setInterval(pull, 5_000)
-    return () => {
-      alive = false
-      window.clearInterval(id)
-    }
-  }, [])
-
   // 开机自启：读初始状态
   useEffect(() => {
     let alive = true
@@ -444,12 +426,6 @@ export default function App(): React.JSX.Element {
     setAutoStart(next) // 乐观更新，主进程会回真实值
     void window.island.autostartSet(next).then((real) => setAutoStart(real))
   }, [autoStart])
-
-  // 点掉验证码
-  const dismissCaptcha = useCallback((): void => {
-    setCaptcha(null)
-    void window.island.captchaDismiss()
-  }, [])
 
   // 状态变化时同步给主进程，由它调整窗口尺寸
   useEffect(() => {
@@ -609,31 +585,6 @@ export default function App(): React.JSX.Element {
                 />
               ))}
             </div>
-          </>
-        ) : captcha ? (
-          /* 验证码态：最高优先级展示，替代普通收起内容 */
-          <>
-            <svg className="captcha-key" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="9" width="14" height="10" rx="2.5" fill="#4b2ea8" />
-              <circle cx="7.4" cy="14" r="1.35" fill="#cfc4ff" />
-              <rect x="16.2" y="12.6" width="5" height="2.8" rx="1.4" fill="#4b2ea8" />
-            </svg>
-            <span className="captcha-text">
-              验证码 <b className="captcha-code">{captcha.code}</b>
-              <span className="captcha-copied">已复制</span>
-            </span>
-            <span className="collapsed-spacer" />
-            <button
-              type="button"
-              className="captcha-dismiss"
-              title="知道了"
-              onClick={(e) => {
-                e.stopPropagation()
-                dismissCaptcha()
-              }}
-            >
-              ×
-            </button>
           </>
         ) : (
           <>
