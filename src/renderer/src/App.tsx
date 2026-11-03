@@ -167,6 +167,15 @@ function ShelfPanel(): React.JSX.Element {
     }
   }, [])
 
+  // 拖放落点在整岛根上，本面板不直接收 drop；这里只订阅广播的落盘通知
+  useEffect(() => {
+    window.island.onShelfAdded((list) => {
+      setItems(list)
+      setDragOver(false)
+      setError('')
+    })
+  }, [])
+
   const addFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return
     // Electron 32+ 没有 File.path，用 preload 里的 webUtils.getPathForFile 拿完整路径
@@ -224,26 +233,9 @@ function ShelfPanel(): React.JSX.Element {
           清空
         </button>
       </div>
-      <div
-        className={`shelf-drop ${view} ${dragOver ? 'over' : ''}`}
-        onDragOver={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setDragOver(true)
-        }}
-        onDragLeave={(e) => {
-          e.stopPropagation()
-          setDragOver(false)
-        }}
-        onDrop={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setDragOver(false)
-          void addFiles(e.dataTransfer.files)
-        }}
-      >
+      <div className={`shelf-drop ${view} ${dragOver ? 'over' : ''}`}>
         {items.length === 0 ? (
-          <span className="shelf-drop-hint">把文件拖进来暂存</span>
+          <span className="shelf-drop-hint">把文件拖进来暂存（落在岛内任意位置）</span>
         ) : view === 'grid' ? (
           <ul className="shelf-grid">
             {items.map((it) => (
@@ -399,7 +391,7 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  // 整个岛都是投放区：文件可以落在面板任意位置（不只虚线框）
+  // 整个岛都是投放区：文件可以落在面板任意位置
   const onDropRoot = (e: React.DragEvent): void => {
     e.preventDefault()
     if (!e.dataTransfer.files.length) return
@@ -407,7 +399,10 @@ export default function App(): React.JSX.Element {
       .map((f) => window.island.filePath(f))
       .filter((p): p is string => !!p)
     if (paths.length === 0) return
-    void window.island.shelfAdd(paths)
+    // 落在哪个页都算加进置物架（岛只有一个存放区），主进程回传后广播刷新
+    void window.island.shelfAdd(paths).then((list) => {
+      window.island.emitShelfAdded(list)
+    })
   }
 
   return (

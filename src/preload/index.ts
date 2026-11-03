@@ -61,6 +61,15 @@ const api = {
   shelfShowInFolder(path: string): void {
     ipcRenderer.send('shelf:show-in-folder', path)
   },
+  /** 拖放落盘后广播新列表（渲染层内部事件，避免跨页订阅不到） */
+  emitShelfAdded(list: ShelfItem[]): void {
+    window.dispatchEvent(new CustomEvent('shelf:added', { detail: list }))
+  },
+  onShelfAdded(cb: (list: ShelfItem[]) => void): void {
+    window.addEventListener('shelf:added', (e) => {
+      cb((e as CustomEvent<ShelfItem[]>).detail)
+    })
+  },
   /**
    * 把拖入的 File 对象转成完整路径。
    * Electron 32+ 移除了 File.path 属性，官方替代就是 webUtils.getPathForFile。

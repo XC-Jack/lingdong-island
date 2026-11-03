@@ -342,7 +342,7 @@ body {
   color: rgba(242, 243, 245, 0.38);
 }
 
-/* 网格（大图标，仿桌面） */
+/* 网格（大图标，仿桌面）：从左上角开始排 */
 .shelf-grid {
   list-style: none;
   width: 100%;
@@ -351,7 +351,7 @@ body {
   grid-template-columns: repeat(auto-fill, 84px);
   gap: 8px;
   align-content: start;
-  justify-content: center;
+  justify-content: start;
 }
 
 .shelf-cell {
