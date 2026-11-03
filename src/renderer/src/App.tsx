@@ -11,18 +11,52 @@ function formatClock(d: Date): string {
   return `${hh}:${mm}`
 }
 
-/** 岛仔：一只简单的黑胶囊宠物，两个白点眼 + 头顶星星 */
-function Pet({ reaction }: { reaction: 'idle' | 'happy' }): React.JSX.Element {
+/** 岛仔：一只简单的黑胶囊宠物。idle 时呼吸+眨眼，happy 时弯眼+微笑+弹跳+星星 */
+function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
+  const happy = mood === 'happy'
   return (
-    <svg className="collapsed-pet" viewBox="0 0 24 24" aria-hidden="true">
+    <svg
+      className={`collapsed-pet ${happy ? 'pet-happy' : ''}`}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
       <rect x="1" y="4" width="22" height="16" rx="8" fill="#4b2ea8" />
-      <circle cx="9" cy="12" r="1.9" fill="#ffffff" />
-      <circle cx="15" cy="12" r="1.9" fill="#ffffff" />
-      {reaction === 'happy' && (
-        <path
-          d="M19 2.4l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"
-          fill="#ffd45e"
-        />
+      {happy ? (
+        <>
+          {/* 开心：眼睛弯成 ^，嘴角上扬 */}
+          <path
+            className="pet-eye"
+            d="M7 12.6q2-2.6 4 0"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <path
+            className="pet-eye"
+            d="M13 12.6q2-2.6 4 0"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+          <path
+            d="M9.5 15.8q2.5 2.2 5 0"
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+          <path
+            d="M19 2.4l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"
+            fill="#ffd45e"
+          />
+        </>
+      ) : (
+        <>
+          <circle className="pet-eye" cx="9" cy="12" r="1.9" fill="#ffffff" />
+          <circle className="pet-eye" cx="15" cy="12" r="1.9" fill="#ffffff" />
+        </>
       )}
     </svg>
   )
@@ -344,7 +378,7 @@ export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
-  const [reaction, setReaction] = useState<'idle' | 'happy'>('idle')
+  const [mood, setMood] = useState<'idle' | 'happy'>('idle')
   const [page, setPage] = useState(0)
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
@@ -410,11 +444,14 @@ export default function App(): React.JSX.Element {
     })
   }, [clearCollapseTimer, scheduleCollapse])
 
-  // 完成待办 → 岛仔开心一下（M2 会扩展成完整情绪系统）
-  const onDonePulse = useCallback(() => {
-    setReaction('happy')
-    window.setTimeout(() => setReaction('idle'), 1200)
+  // 开心事件：勾掉待办、拖文件进岛 → 岛仔开心 1.8s
+  const pulseHappy = useCallback(() => {
+    setMood('happy')
+    window.setTimeout(() => setMood('idle'), 1800)
   }, [])
+
+  // 拖文件落进岛也表扬一下
+  const onDonePulse = pulseHappy
 
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
@@ -474,6 +511,7 @@ export default function App(): React.JSX.Element {
         onDrop={(e) => {
           onDropRoot(e)
           scheduleCollapse()
+          if (e.dataTransfer.files.length) pulseHappy()
         }}
         onClick={() => {
           // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
@@ -515,7 +553,7 @@ export default function App(): React.JSX.Element {
           </>
         ) : (
           <>
-            <Pet reaction={reaction} />
+            <Pet mood={mood} />
             <span className="collapsed-clock">{formatClock(now)}</span>
             {battery !== null && (
               <span className="collapsed-battery" title={`电量 ${battery}%`}>

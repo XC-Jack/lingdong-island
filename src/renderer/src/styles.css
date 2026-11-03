@@ -95,6 +95,57 @@ body {
   width: 22px;
   height: 22px;
   flex: none;
+  animation: pet-breathe 3.2s ease-in-out infinite;
+}
+
+/* idle 呼吸：轻轻起伏 */
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(0.6px) scaleY(1.04);
+  }
+}
+
+/* 眨眼：眼睛 scaleY 压扁，每 4.6s 眨一次（取前 6% 时间） */
+.pet-eye {
+  transform-origin: center 12px;
+  animation: pet-blink 4.6s step-end infinite;
+}
+
+@keyframes pet-blink {
+  0%,
+  5.5% {
+    transform: scaleY(1);
+  }
+  6%,
+  8% {
+    transform: scaleY(0.12);
+  }
+  8.5%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* 开心：小弹跳 + 轻微左右摇摆 */
+.pet-happy {
+  animation: pet-bounce 0.36s ease-in-out 3;
+}
+
+@keyframes pet-bounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  30% {
+    transform: translateY(-2.5px) rotate(-4deg);
+  }
+  60% {
+    transform: translateY(0) rotate(3deg);
+  }
 }
 
 /* ---------- 展开态 ---------- */
