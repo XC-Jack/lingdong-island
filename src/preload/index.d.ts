@@ -1,4 +1,4 @@
-import type { IslandApi, Todo } from './index'
+import type { IslandApi, Todo, ShelfItem } from './index'
 
 declare global {
   interface Window {
@@ -6,4 +6,4 @@ declare global {
   }
 }
 
-export type { Todo }
+export type { Todo, ShelfItem }

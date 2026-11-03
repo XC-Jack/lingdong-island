@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Todo } from '../shared/types'
+import type { Todo, ShelfItem } from '../shared/types'
 
-export type { Todo }
+export type { Todo, ShelfItem }
 
 /** 收起态状态栏的数据快照（与主进程 statusStore 保持一致） */
 export interface StatusSnapshot {
@@ -33,6 +33,25 @@ const api = {
   /** 收起态状态栏快照：电量、充电状态 */
   statusSnapshot(): Promise<StatusSnapshot> {
     return ipcRenderer.invoke('status:snapshot')
+  },
+  /** 置物架：列 / 加（拖入路径数组）/ 删 / 清空 / 打开 / 显示所在文件夹 */
+  shelfList(): Promise<ShelfItem[]> {
+    return ipcRenderer.invoke('shelf:list')
+  },
+  shelfAdd(paths: string[]): Promise<ShelfItem[]> {
+    return ipcRenderer.invoke('shelf:add', paths)
+  },
+  shelfRemove(id: string): Promise<ShelfItem[]> {
+    return ipcRenderer.invoke('shelf:remove', id)
+  },
+  shelfClear(): Promise<ShelfItem[]> {
+    return ipcRenderer.invoke('shelf:clear')
+  },
+  shelfOpen(path: string): Promise<string> {
+    return ipcRenderer.invoke('shelf:open', path)
+  },
+  shelfShowInFolder(path: string): void {
+    ipcRenderer.send('shelf:show-in-folder', path)
   }
 }
 

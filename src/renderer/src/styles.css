@@ -288,3 +288,91 @@ body {
 .todo-add-btn:hover {
   background: rgba(140, 110, 255, 0.42);
 }
+
+.todo-add-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---------- M4 置物架 ---------- */
+
+.shelf-drop {
+  flex: 1;
+  border: 1.5px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  transition: border-color 120ms, background 120ms;
+}
+
+.shelf-drop.over {
+  border-color: rgba(140, 110, 255, 0.8);
+  background: rgba(140, 110, 255, 0.08);
+}
+
+.shelf-drop-hint {
+  font-size: 13px;
+  color: rgba(242, 243, 245, 0.38);
+}
+
+.shelf-list {
+  list-style: none;
+  width: 100%;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shelf-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.shelf-name {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: #cfc3ff;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0;
+}
+
+.shelf-name:hover {
+  text-decoration: underline;
+}
+
+.shelf-size {
+  flex: none;
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+
+.shelf-error {
+  font-size: 12px;
+  color: #ff8f8f;
+}
+
+.shelf-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shelf-count {
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.4);
+}

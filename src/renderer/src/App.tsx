@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Todo } from '../../shared/types'
+import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
+/** 展开面板的页数（分页圆点数） */
+const PAGE_COUNT = 2
 
 function formatClock(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0')
@@ -117,11 +119,121 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
   )
 }
 
+/** 置物架面板：拖文件进来暂存，点击打开，可删除/清空 */
+function ShelfPanel(): React.JSX.Element {
+  const [items, setItems] = useState<ShelfItem[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void window.island.shelfList().then((l) => {
+      if (alive) setItems(l)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const addFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    // Electron 里 File 对象带 .path（完整路径）
+    const paths = Array.from(files)
+      .map((f) => (f as File & { path?: string }).path)
+      .filter((p): p is string => !!p)
+    if (paths.length === 0) {
+      setError('没拿到文件路径，请直接从资源管理器拖进来')
+      return
+    }
+    setError('')
+    setItems(await window.island.shelfAdd(paths))
+  }, [])
+
+  const remove = useCallback(async (id: string) => {
+    setItems(await window.island.shelfRemove(id))
+  }, [])
+
+  const clear = useCallback(async () => {
+    setItems(await window.island.shelfClear())
+  }, [])
+
+  const open = useCallback(async (item: ShelfItem) => {
+    const r = await window.island.shelfOpen(item.path)
+    if (r !== 'ok') setError(`打不开：${r}`)
+  }, [])
+
+  const fmtSize = (n: number): string => {
+    if (n < 1024) return `${n} B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
+  }
+
+  return (
+    <div className="todo-panel">
+      <div
+        className={`shelf-drop ${dragOver ? 'over' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setDragOver(true)
+        }}
+        onDragLeave={(e) => {
+          e.stopPropagation()
+          setDragOver(false)
+        }}
+        onDrop={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setDragOver(false)
+          void addFiles(e.dataTransfer.files)
+        }}
+      >
+        {items.length === 0 ? (
+          <span className="shelf-drop-hint">把文件拖进来暂存</span>
+        ) : (
+          <ul className="shelf-list">
+            {items.map((it) => (
+              <li key={it.id} className="shelf-item" title={it.path}>
+                <button type="button" className="shelf-name" onClick={() => void open(it)}>
+                  {it.name}
+                </button>
+                <span className="shelf-size">{fmtSize(it.size)}</span>
+                <button
+                  type="button"
+                  className="todo-del"
+                  title="从置物架移除"
+                  onClick={() => void remove(it.id)}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {error && <div className="shelf-error">{error}</div>}
+      <div className="shelf-actions">
+        <button
+          type="button"
+          className="todo-add-btn"
+          onClick={() => void clear()}
+          disabled={items.length === 0}
+        >
+          清空
+        </button>
+        <span className="shelf-count">{items.length} 个文件</span>
+      </div>
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
   const [reaction, setReaction] = useState<'idle' | 'happy'>('idle')
+  const [page, setPage] = useState(0)
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
 
@@ -202,7 +314,10 @@ export default function App(): React.JSX.Element {
         className={`island ${expanded ? 'expanded' : 'collapsed'}`}
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
-        onClick={toggle}
+        onClick={() => {
+          // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
+          if (!expanded) toggle()
+        }}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -215,18 +330,25 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">待办 清单</span>
-              <span className="panel-sub">M1</span>
+              <span className="panel-title">{page === 0 ? '待办 清单' : '置物架'}</span>
+              <span className="panel-sub">{page === 0 ? 'M1' : 'M4'}</span>
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>
-                <TodoPanel onDonePulse={onDonePulse} />
+                {page === 0 ? <TodoPanel onDonePulse={onDonePulse} /> : <ShelfPanel />}
               </div>
             </div>
             <div className="dots">
-              {Array.from({ length: 9 }, (_, i) => (
-                <span key={i} className={`dot ${i === 0 ? 'active' : ''}`} />
+              {Array.from({ length: PAGE_COUNT }, (_, i) => (
+                <span
+                  key={i}
+                  className={`dot ${i === page ? 'active' : ''}`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setPage(i)
+                  }}
+                />
               ))}
             </div>
           </>

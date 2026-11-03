@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { join } from 'node:path'
 import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
+import { setupShelfStore } from './shelfStore'
 
 /** 收起态尺寸（CSS 逻辑像素） */
 const COLLAPSED = { width: 240, height: 42 }
@@ -93,6 +94,9 @@ function createWindow(): void {
 
   // 浮在所有普通窗口之上，但仍可被用户切走
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
+
+  // 拖文件进来时 Chromium 默认会导航到该文件——拦掉，交给渲染层 onDrop 处理
+  mainWindow.webContents.on('will-navigate', (e) => e.preventDefault())
   // 注意：不开整窗穿透。收起态窗口仅 240×42，几乎全是胶囊本体；
   // Electron 的 setIgnoreMouseEvents(forward:true) 会让整个窗口（含胶囊）收不到点击，
   // 实测导致收起态点不开。若以后要精修四角，用原生 WS_EX_TRANSPARENT 分区域方案。
@@ -115,6 +119,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   setupTodoStore()
   setupStatus()
+  setupShelfStore()
   createWindow()
 
   app.on('activate', () => {
@@ -130,4 +135,19 @@ app.on('window-all-closed', () => {
 ipcMain.on('island:set-expanded', (_event, value: boolean) => {
   if (value === expanded) return
   animateTo(value)
+})
+
+// 打开置物架里的文件（用系统默认程序）
+ipcMain.handle('shelf:open', async (_e, path: unknown) => {
+  const p = String(path ?? '')
+  if (!p) return 'empty path'
+  const err = await shell.openPath(p)
+  // 成功时 openPath 返回空字符串
+  return err || 'ok'
+})
+
+// 在资源管理器里显示文件
+ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
+  const p = String(path ?? '')
+  if (p) shell.showItemInFolder(p)
 })
