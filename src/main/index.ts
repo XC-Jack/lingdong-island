@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
+import { setupTodoStore } from './todoStore'
 
 /** 收起态尺寸（CSS 逻辑像素） */
 const COLLAPSED = { width: 240, height: 42 }
@@ -91,6 +92,9 @@ function createWindow(): void {
 
   // 浮在所有普通窗口之上，但仍可被用户切走
   mainWindow.setAlwaysOnTop(true, 'screen-saver')
+  // 注意：不开整窗穿透。收起态窗口仅 240×42，几乎全是胶囊本体；
+  // Electron 的 setIgnoreMouseEvents(forward:true) 会让整个窗口（含胶囊）收不到点击，
+  // 实测导致收起态点不开。若以后要精修四角，用原生 WS_EX_TRANSPARENT 分区域方案。
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.showInactive()
@@ -108,6 +112,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  setupTodoStore()
   createWindow()
 
   app.on('activate', () => {

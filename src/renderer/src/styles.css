@@ -136,3 +136,148 @@ body {
 .dot.active {
   background: rgba(255, 255, 255, 0.85);
 }
+
+/* ---------- M1 待办面板 ---------- */
+
+.todo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+}
+
+.todo-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.todo-count {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-count-label {
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.45);
+}
+
+.todo-list {
+  flex: 1;
+  list-style: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.todo-empty {
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.35);
+  text-align: center;
+  padding: 18px 0;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.todo-item.done .todo-text {
+  color: rgba(242, 243, 245, 0.4);
+  text-decoration: line-through;
+}
+
+.todo-check {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #7dd87d;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.todo-item.done .todo-check {
+  border-color: #7dd87d;
+  background: rgba(125, 216, 125, 0.12);
+}
+
+.todo-text {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todo-del {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(242, 243, 245, 0.35);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.todo-del:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.todo-add {
+  display: flex;
+  gap: 8px;
+}
+
+.todo-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f3f5;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+
+.todo-input:focus {
+  border-color: rgba(140, 110, 255, 0.65);
+}
+
+.todo-input::placeholder {
+  color: rgba(242, 243, 245, 0.3);
+}
+
+.todo-add-btn {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 9px;
+  background: rgba(140, 110, 255, 0.28);
+  color: #cfc3ff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.todo-add-btn:hover {
+  background: rgba(140, 110, 255, 0.42);
+}

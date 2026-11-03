@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-
+import type { Todo } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -23,6 +23,97 @@ function Pet({ reaction }: { reaction: 'idle' | 'happy' }): React.JSX.Element {
         />
       )}
     </svg>
+  )
+}
+
+/** 待办面板：列表 + 勾选 + 增 + 删 + 完成度 n/m */
+function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Element {
+  const [todos, setTodos] = useState<Todo[]>([])
+  const [draft, setDraft] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void window.island.todosList().then((list) => {
+      if (alive) setTodos(list)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const done = todos.filter((t) => t.done).length
+
+  const add = useCallback(async () => {
+    const text = draft.trim()
+    if (!text) return
+    setDraft('')
+    setTodos(await window.island.todosAdd(text))
+  }, [draft])
+
+  const toggle = useCallback(
+    async (t: Todo) => {
+      setTodos(await window.island.todosToggle(t.id))
+      // 从未完成勾成已完成 → 通知岛仔开心
+      if (!t.done) onDonePulse()
+    },
+    [onDonePulse]
+  )
+
+  const remove = useCallback(async (id: string) => {
+    setTodos(await window.island.todosRemove(id))
+  }, [])
+
+  return (
+    <div className="todo-panel">
+      <div className="todo-stat">
+        <span className="todo-count">
+          {done}/{todos.length}
+        </span>
+        <span className="todo-count-label">已完成</span>
+      </div>
+      <ul className="todo-list">
+        {todos.length === 0 && (
+          <li className="todo-empty">还没有待办，加一个吧</li>
+        )}
+        {todos.map((t) => (
+          <li key={t.id} className={`todo-item ${t.done ? 'done' : ''}`}>
+            <button
+              type="button"
+              className="todo-check"
+              title={t.done ? '标记为未完成' : '标记为已完成'}
+              onClick={() => void toggle(t)}
+            >
+              {t.done ? '✓' : ''}
+            </button>
+            <span className="todo-text" title={t.text}>
+              {t.text}
+            </span>
+            <button
+              type="button"
+              className="todo-del"
+              title="删除"
+              onClick={() => void remove(t.id)}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="todo-add">
+        <input
+          className="todo-input"
+          value={draft}
+          placeholder="加一个待办…"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void add()
+          }}
+        />
+        <button type="button" className="todo-add-btn" onClick={() => void add()}>
+          + 加一个
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -68,9 +159,13 @@ export default function App(): React.JSX.Element {
       }
       return next
     })
-    setReaction('happy')
-    window.setTimeout(() => setReaction('idle'), 900)
   }, [clearCollapseTimer, scheduleCollapse])
+
+  // 完成待办 → 岛仔开心一下（M2 会扩展成完整情绪系统）
+  const onDonePulse = useCallback(() => {
+    setReaction('happy')
+    window.setTimeout(() => setReaction('idle'), 1200)
+  }, [])
 
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
@@ -103,10 +198,15 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">灵动岛</span>
-              <span className="panel-sub">M0 · 岛壳</span>
+              <span className="panel-title">待办 清单</span>
+              <span className="panel-sub">M1</span>
             </div>
-            <div className="panel-body">面板内容接下来一步步填进来</div>
+            <div className="panel-body">
+              {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
+              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>
+                <TodoPanel onDonePulse={onDonePulse} />
+              </div>
+            </div>
             <div className="dots">
               {Array.from({ length: 9 }, (_, i) => (
                 <span key={i} className={`dot ${i === 0 ? 'active' : ''}`} />
