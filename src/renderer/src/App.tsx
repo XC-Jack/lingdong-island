@@ -137,9 +137,9 @@ function ShelfPanel(): React.JSX.Element {
 
   const addFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return
-    // Electron 里 File 对象带 .path（完整路径）
+    // Electron 32+ 没有 File.path，用 preload 里的 webUtils.getPathForFile 拿完整路径
     const paths = Array.from(files)
-      .map((f) => (f as File & { path?: string }).path)
+      .map((f) => window.island.filePath(f))
       .filter((p): p is string => !!p)
     if (paths.length === 0) {
       setError('没拿到文件路径，请直接从资源管理器拖进来')

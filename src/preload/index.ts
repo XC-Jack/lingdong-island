@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { Todo, ShelfItem } from '../shared/types'
 
 export type { Todo, ShelfItem }
@@ -52,6 +52,13 @@ const api = {
   },
   shelfShowInFolder(path: string): void {
     ipcRenderer.send('shelf:show-in-folder', path)
+  },
+  /**
+   * 把拖入的 File 对象转成完整路径。
+   * Electron 32+ 移除了 File.path 属性，官方替代就是 webUtils.getPathForFile。
+   */
+  filePath(file: File): string {
+    return webUtils.getPathForFile(file)
   }
 }
 
