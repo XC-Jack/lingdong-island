@@ -167,9 +167,12 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
 // 查询当前开机自启状态
 // 注意 1：get/set 必须传同样的 args——Electron 在 Windows 上按「exe 路径+启动参数」
 // 匹配 HKCU\...\Run 里的值，参数不一致时 openAtLogin 永远读回 false（实测踩坑）。
-// 注意 2：args 里必须带 app 路径 '.'。开发模式下 electron.exe 不带路径参数启动会弹
-// Electron 默认欢迎页（用户开机时看到的蓝色 Atom 页面就是这个），灵动岛本体根本没起。
-const AUTOSTART_ARGS = ['.', '--hidden']
+// 注意 2：args 必须含 **绝对** app 路径。开机启动时工作目录是 C:\WINDOWS\system32，
+// 相对路径 '.' 会解析到 system32 → 「Unable to find Electron app at
+// C:\WINDOWS\system32」（用户重启实测弹错）。也不能写死路径：主进程编译后位置固定，
+// 用 __dirname 反推项目根（out/main/index.js → 上两级）。
+const APP_ROOT = join(__dirname, '..', '..')
+const AUTOSTART_ARGS = [APP_ROOT, '--hidden']
 
 ipcMain.handle('autostart:get', () => {
   return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
