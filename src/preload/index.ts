@@ -3,6 +3,12 @@ import type { Todo } from '../shared/types'
 
 export type { Todo }
 
+/** 收起态状态栏的数据快照（与主进程 statusStore 保持一致） */
+export interface StatusSnapshot {
+  battery: number | null
+  charging: boolean
+}
+
 const api = {
   /** 请求主进程把窗口切到展开/收起尺寸 */
   setExpanded(value: boolean): void {
@@ -23,6 +29,10 @@ const api = {
   },
   todosRename(id: string, text: string): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:rename', { id, text })
+  },
+  /** 收起态状态栏快照：电量、充电状态 */
+  statusSnapshot(): Promise<StatusSnapshot> {
+    return ipcRenderer.invoke('status:snapshot')
   }
 }
 

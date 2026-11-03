@@ -120,6 +120,7 @@ function TodoPanel({ onDonePulse }: { onDonePulse: () => void }): React.JSX.Elem
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
+  const [battery, setBattery] = useState<number | null>(null)
   const [reaction, setReaction] = useState<'idle' | 'happy'>('idle')
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
@@ -128,6 +129,22 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(id)
+  }, [])
+
+  // 电量：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
+  useEffect(() => {
+    let alive = true
+    const pull = (): void => {
+      void window.island.statusSnapshot().then((s) => {
+        if (alive) setBattery(s.battery)
+      })
+    }
+    pull()
+    const id = window.setInterval(pull, 60_000)
+    return () => {
+      alive = false
+      window.clearInterval(id)
+    }
   }, [])
 
   // 状态变化时同步给主进程，由它调整窗口尺寸
@@ -217,6 +234,11 @@ export default function App(): React.JSX.Element {
           <>
             <Pet reaction={reaction} />
             <span className="collapsed-clock">{formatClock(now)}</span>
+            {battery !== null && (
+              <span className="collapsed-battery" title={`电量 ${battery}%`}>
+                {battery}%
+              </span>
+            )}
             <span className="collapsed-spacer" />
             <span className="collapsed-label">点击展开</span>
           </>

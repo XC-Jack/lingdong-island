@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
 import { setupTodoStore } from './todoStore'
+import { setupStatus } from './statusStore'
 
 /** 收起态尺寸（CSS 逻辑像素） */
 const COLLAPSED = { width: 240, height: 42 }
@@ -113,6 +114,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   setupTodoStore()
+  setupStatus()
   createWindow()
 
   app.on('activate', () => {
