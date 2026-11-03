@@ -135,18 +135,18 @@ function extColor(name: string): string {
   return '#b0bec5'
 }
 
-/** 通用文件图标：优先用系统真实图标（按扩展名缓存），拿不到退回折角纸片 */
-function FileIcon({ name }: { name: string }): React.JSX.Element {
+/** 通用文件图标：优先用系统真实图标（文件夹/文件用真实路径取，其余按扩展名缓存），拿不到退回折角纸片 */
+function FileIcon({ name, path }: { name: string; path: string }): React.JSX.Element {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
-    void window.island.shelfIcon(name).then((p) => {
+    void window.island.shelfIcon(name, path).then((p) => {
       if (alive) setSrc(p)
     })
     return () => {
       alive = false
     }
-  }, [name])
+  }, [name, path])
   if (src) {
     // Windows 路径转 file:// URL（空格等字符浏览器自动处理）
     const url = `file:///${src.replace(/\\/g, '/')}`
@@ -206,21 +206,26 @@ function ShelfPanel(): React.JSX.Element {
     if (r !== 'ok') setError(`打不开：${r}`)
   }, [])
 
-  // 网格内拖动换位：拖起记 id，落到另一个格子上按目标位置重排
+  // 网格内拖动换位：拖起记 id，落到另一个格子上按目标位置重排。
+  // 依赖里不写 items——用函数式更新拿最新列表，避免连续两次拖动时闭包拿到旧数据
   const reorderTo = useCallback(async (target: ShelfItem) => {
     const from = reorderFrom.current
     reorderFrom.current = null
     if (!from || from === target.id) return
-    const ids = items.map((x) => x.id)
-    const fi = ids.indexOf(from)
-    let ti = ids.indexOf(target.id)
-    if (fi === -1 || ti === -1) return
-    ids.splice(fi, 1)
-    // 从前往后拖：删掉自己后目标索引左移一位，插到目标后面
-    if (fi < ti) ti -= 1
-    ids.splice(ti + 1, 0, from)
-    setItems(await window.island.shelfReorder(ids))
-  }, [items])
+    setItems((prev) => {
+      const ids = prev.map((x) => x.id)
+      const fi = ids.indexOf(from)
+      let ti = ids.indexOf(target.id)
+      if (fi === -1 || ti === -1) return prev
+      ids.splice(fi, 1)
+      // 从前往后拖：删掉自己后目标索引左移一位，插到目标后面
+      if (fi < ti) ti -= 1
+      ids.splice(ti + 1, 0, from)
+      // 主进程返回排序后的列表，用它覆盖本地
+      void window.island.shelfReorder(ids).then((sorted) => setItems(sorted))
+      return prev.map((x) => (x.id === from ? { ...x } : x))
+    })
+  }, [])
 
   const fmtSize = (n: number): string => {
     if (n < 1024) return `${n} B`
@@ -265,6 +270,8 @@ function ShelfPanel(): React.JSX.Element {
                 draggable
                 onDragStart={(e) => {
                   reorderFrom.current = it.id
+                  // Electron 的拖动需要 dataTransfer 里有数据，dragover/drop 才会稳定触发
+                  e.dataTransfer.setData('text/plain', it.id)
                   e.dataTransfer.effectAllowed = 'move'
                 }}
                 onDragOver={(e) => {
@@ -290,7 +297,7 @@ function ShelfPanel(): React.JSX.Element {
                   ×
                 </button>
                 <button type="button" className="shelf-cell-body" onClick={() => void open(it)}>
-                  <FileIcon name={it.name} />
+                  <FileIcon name={it.name} path={it.path} />
                   <span className="shelf-cell-name">{it.name}</span>
                 </button>
               </li>
@@ -300,7 +307,7 @@ function ShelfPanel(): React.JSX.Element {
           <ul className="shelf-list">
             {items.map((it) => (
               <li key={it.id} className="shelf-item" title={it.path}>
-                <FileIcon name={it.name} />
+                <FileIcon name={it.name} path={it.path} />
                 <button type="button" className="shelf-name" onClick={() => void open(it)}>
                   {it.name}
                 </button>

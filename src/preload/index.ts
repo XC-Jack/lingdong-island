@@ -62,9 +62,9 @@ const api = {
   shelfReorder(ids: string[]): Promise<ShelfItem[]> {
     return ipcRenderer.invoke('shelf:reorder', ids)
   },
-  /** 取某文件名的系统图标 PNG 绝对路径（按扩展名缓存），失败返回 null */
-  shelfIcon(name: string): Promise<string | null> {
-    return ipcRenderer.invoke('shelf:icon', name)
+  /** 取某文件名的系统图标 PNG 绝对路径（按扩展名缓存，文件夹用真实图标），失败返回 null */
+  shelfIcon(name: string, path: string): Promise<string | null> {
+    return ipcRenderer.invoke('shelf:icon', name, path)
   },
   shelfOpen(path: string): Promise<string> {
     return ipcRenderer.invoke('shelf:open', path)
