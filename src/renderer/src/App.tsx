@@ -630,7 +630,6 @@ function SchedulePanel(): React.JSX.Element {
   const [items, setItems] = useState<ScheduleItem[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
-  const [time, setTime] = useState('')
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => {
     const d = new Date()
@@ -645,12 +644,11 @@ function SchedulePanel(): React.JSX.Element {
   const add = useCallback(() => {
     const t = text.trim()
     if (!t) return
-    void window.island.scheduleAdd(t, time.trim() || null).then((list) => {
+    void window.island.scheduleAdd(t, null).then((list) => {
       setItems(list)
       setText('')
-      setTime('')
     })
-  }, [text, time])
+  }, [text])
 
   const toggle = useCallback((id: string) => {
     void window.island.scheduleToggle(id).then(setItems)
@@ -698,13 +696,6 @@ function SchedulePanel(): React.JSX.Element {
             onKeyDown={(e) => {
               if (e.key === 'Enter') add()
             }}
-          />
-          <input
-            className="sched-time"
-            type="time"
-            title="可选：到点前提醒"
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
           />
           <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
             +

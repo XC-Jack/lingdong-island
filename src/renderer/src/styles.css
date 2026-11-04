@@ -504,7 +504,6 @@ body {
 .shelf-toolbar-spacer {
   flex: 1;
 }
-
 .shelf-view-btn {
   width: 26px;
   height: 24px;
@@ -903,7 +902,7 @@ body {
   background: rgba(125, 216, 125, 0.14);
 }
 
-/* 顶部输入行：文本框 + 时间选择 + 加号（苹果式：暗色填充、同高、圆角统一、无刺眼白框） */
+/* 顶部输入行：文本框 + 加号（苹果式：暗色填充、圆角统一、无刺眼白框） */
 .sched-add {
   display: flex;
   gap: 8px;
@@ -934,26 +933,6 @@ body {
 .sched-input:focus {
   border-color: rgba(140, 110, 255, 0.55);
   background: rgba(255, 255, 255, 0.08);
-}
-
-.sched-time {
-  flex: none;
-  height: 32px;
-  width: 104px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  color: rgba(242, 243, 245, 0.85);
-  font-size: 12.5px;
-  font-family: inherit;
-  padding: 0 10px;
-  outline: none;
-  color-scheme: dark;
-  transition: border-color 120ms;
-}
-
-.sched-time:focus {
-  border-color: rgba(140, 110, 255, 0.55);
 }
 
 /* 时间徽标：药丸样式（对照视频日程列表的时间徽标） */
@@ -1038,6 +1017,12 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* 工具条布局：计数在左，操作按钮全部靠右（page-fade 去掉 width:100% 后工具条不再是整行，需显式撑满） */
+.shelf-toolbar {
+  width: 100%;
+  justify-content: space-between;
 }
 
 .shelf-count {
