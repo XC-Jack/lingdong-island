@@ -47,6 +47,13 @@ body {
   animation: page-fade-in 180ms ease-out;
 }
 
+/* 置物架/通知页：内容宽度自适应，但工具条必须贴岛右缘（与头部右侧对齐），
+   否则工具条 100% 只等于内容宽，视图按钮/清空/已读会悬在中间。
+   不能用全局 .page-fade{width:100%}：日程页靠 max-content 撑开，撑满会与自适应尺寸互锁。 */
+.page-fade.wide {
+  width: 100%;
+}
+
 .island.collapsed {
   /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
   flex-shrink: 0;

@@ -1399,7 +1399,14 @@ export default function App(): React.JSX.Element {
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
-              <div key={pageAnim} onClick={(e) => e.stopPropagation()} className="page-fade">
+              {/* 置物架/通知页工具条（视图按钮、清空、已读）要贴岛右缘：
+                  这两页内容宽度是自适应的，page-fade 不撑满时工具条只到内容右边界、按钮悬在中间。
+                  加 wide 让该页整行占满（第 1/4 页内容本身接近满宽，保持原样不动） */}
+              <div
+                key={pageAnim}
+                onClick={(e) => e.stopPropagation()}
+                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''}`}
+              >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
                 ) : page === 1 ? (
