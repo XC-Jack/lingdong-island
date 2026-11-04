@@ -620,18 +620,29 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       {items.length === 0 ? (
         <div className="notify-empty">
           <div className="notify-empty-inner">
-            <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
-              <path
-                d="M12 3a6 6 0 0 0-6 6v3.2l-1.6 2.7a.9.9 0 0 0 .77 1.35h13.66a.9.9 0 0 0 .77-1.35L18 12.2V9a6 6 0 0 0-6-6z"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinejoin="round"
-              />
-              <path d="M10 19.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <span className="shelf-drop-hint">{loaded ? '暂无通知' : '读取中…'}</span>
-            <span className="notify-empty-sub">应用弹过通知后会出现在这里</span>
+            {loaded ? (
+              <>
+                <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
+                  <path
+                    d="M12 3a6 6 0 0 0-6 6v3.2l-1.6 2.7a.9.9 0 0 0 .77 1.35h13.66a.9.9 0 0 0 .77-1.35L18 12.2V9a6 6 0 0 0-6-6z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinejoin="round"
+                  />
+                  <path d="M10 19.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <span className="shelf-drop-hint">暂无通知</span>
+                <span className="notify-empty-sub">应用弹过通知后会出现在这里</span>
+              </>
+            ) : (
+              /* 加载骨架条（baseline-ui：结构化骨架优于纯文案） */
+              <div className="notify-skeleton" aria-busy="true" aria-label="通知加载中">
+                <div className="notify-skel-row" />
+                <div className="notify-skel-row" />
+                <div className="notify-skel-row" />
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -1170,6 +1181,7 @@ export default function App(): React.JSX.Element {
         }}
         role="button"
         tabIndex={0}
+        aria-label={expanded ? `${PAGE_META[page].label}面板` : '灵动岛，回车展开'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
@@ -1225,6 +1237,7 @@ export default function App(): React.JSX.Element {
                 type="button"
                 className="pager-arrow"
                 title="上一页"
+                aria-label="上一页"
                 onClick={(e) => {
                   e.stopPropagation()
                   flipPage(-1)
@@ -1234,9 +1247,11 @@ export default function App(): React.JSX.Element {
               </button>
               <div className="dots">
                 {Array.from({ length: PAGE_COUNT }, (_, i) => (
-                  <span
+                  <button
                     key={i}
+                    type="button"
                     className={`dot ${i === page ? 'active' : ''}`}
+                    aria-label={`跳到第 ${i + 1} 页：${PAGE_META[i].label}`}
                     onClick={(e) => {
                       e.stopPropagation()
                       gotoPage(i)
@@ -1248,6 +1263,7 @@ export default function App(): React.JSX.Element {
                 type="button"
                 className="pager-arrow"
                 title="下一页"
+                aria-label="下一页"
                 onClick={(e) => {
                   e.stopPropagation()
                   flipPage(1)
