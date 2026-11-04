@@ -552,7 +552,7 @@ body {
   flex: 1;
 }
 .shelf-view-btn {
-  width: 26px;
+  width: 24px;
   height: 24px;
   border: none;
   border-radius: 7px;
@@ -575,6 +575,12 @@ body {
   color: #f2f3f5;
 }
 
+/* 当前选中视图：紫色高亮 */
+.shelf-view-btn.active {
+  background: rgba(140, 110, 255, 0.2);
+  color: #b9a8ff;
+}
+
 .shelf-drop {
   flex: 0 1 auto;
   max-width: 100%;
@@ -595,16 +601,78 @@ body {
   color: rgba(242, 243, 245, 0.38);
 }
 
-/* 网格（大图标，仿桌面）：从左上角开始排 */
+/* 网格（图标视图）：横向一排滚动（对照截图），三档大小由 shelf-drop 上的 lg/md/sm 类控制 */
 .shelf-grid {
   list-style: none;
   padding: 10px;
-  /* flex 横排 + 自动换行：max-content 下自然多列展开（grid auto-fill 依赖确定宽度，在 max-content 容器里会塌成一列） */
   display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  justify-content: flex-start;
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 8px;
+}
+
+/* 三档图标大小：lg 84px / md 64px / sm 48px */
+.shelf-drop.lg .shelf-cell {
+  width: 84px;
+}
+
+.shelf-drop.md .shelf-cell {
+  width: 64px;
+}
+
+.shelf-drop.sm .shelf-cell {
+  width: 48px;
+}
+
+.shelf-drop.sm .shelf-cell-body {
+  padding: 6px 2px 4px;
+}
+
+.shelf-drop.sm .shelf-cell-name {
+  font-size: 10px;
+}
+
+/* 横向滚动区：图标视图一排放不下时左右滚 */
+.shelf-hscroll {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.shelf-strip {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.shelf-strip::-webkit-scrollbar {
+  display: none;
+}
+
+/* 两侧滚动箭头（有更多内容才出现） */
+.shelf-scroll-arrow {
+  flex: none;
+  width: 20px;
+  height: 32px;
+  border: none;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(242, 243, 245, 0.65);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shelf-scroll-arrow:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #f2f3f5;
 }
 
 .shelf-cell {
@@ -714,7 +782,7 @@ body {
   height: 12px;
 }
 
-/* 列表（紧凑行） */
+/* 列表（紧凑行）：超出上下滚动 */
 .shelf-list {
   list-style: none;
   width: 100%;
@@ -722,6 +790,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow-y: auto;
 }
 
 .shelf-item {

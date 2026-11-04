@@ -363,12 +363,34 @@ function ShelfPanel(): React.JSX.Element {
   const [items, setItems] = useState<ShelfItem[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
-  const [view, setView] = useState<'grid' | 'list'>('grid')
+  // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
+  const [view, setView] = useState<'lg' | 'md' | 'sm' | 'list'>('lg')
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
+  // 图标视图横向滚动：是否还有更多内容（决定两侧箭头显隐）
+  const [canScroll, setCanScroll] = useState(false)
   /** 正在拖动换位的条目 id（网格内排序用） */
   const reorderFrom = useRef<string | null>(null)
   const reorderSeq = useRef(0)
+  /** 图标视图滚动容器 */
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const updateCanScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) {
+      setCanScroll(false)
+      return
+    }
+    setCanScroll(el.scrollWidth > el.clientWidth + 4)
+  }, [])
+
+  useEffect(() => {
+    updateCanScroll()
+  }, [items, view, updateCanScroll])
+
+  const scrollBy = (dir: number): void => {
+    scrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' })
+  }
 
   useEffect(() => {
     let alive = true
@@ -436,14 +458,42 @@ function ShelfPanel(): React.JSX.Element {
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length} 个文件</span>
         <span className="shelf-toolbar-spacer" />
+        {/* 视图切换：大 / 中 / 小 图标 与 列表（对照截图：图标可选大小，列表上下滚动） */}
         <button
           type="button"
-          className="shelf-view-btn"
-          title={view === 'grid' ? '切换为列表' : '切换为大图标'}
-          aria-label={view === 'grid' ? '切换为列表视图' : '切换为大图标视图'}
-          onClick={() => setView(view === 'grid' ? 'list' : 'grid')}
+          className={`shelf-view-btn ${view === 'lg' ? 'active' : ''}`}
+          title="大图标"
+          aria-label="大图标视图"
+          onClick={() => setView('lg')}
         >
-          {view === 'grid' ? <IcoList /> : <IcoGrid />}
+          <IcoGrid />
+        </button>
+        <button
+          type="button"
+          className={`shelf-view-btn ${view === 'md' ? 'active' : ''}`}
+          title="中图标"
+          aria-label="中图标视图"
+          onClick={() => setView('md')}
+        >
+          <IcoGrid />
+        </button>
+        <button
+          type="button"
+          className={`shelf-view-btn ${view === 'sm' ? 'active' : ''}`}
+          title="小图标"
+          aria-label="小图标视图"
+          onClick={() => setView('sm')}
+        >
+          <IcoGrid />
+        </button>
+        <button
+          type="button"
+          className={`shelf-view-btn ${view === 'list' ? 'active' : ''}`}
+          title="列表"
+          aria-label="列表视图"
+          onClick={() => setView('list')}
+        >
+          <IcoList />
         </button>
         <button
           type="button"
@@ -469,64 +519,7 @@ function ShelfPanel(): React.JSX.Element {
       <div className={`shelf-drop ${view} ${dragOver ? 'over' : ''}`}>
         {items.length === 0 ? (
           <span className="shelf-drop-hint">把文件拖进来暂存（落在岛内任意位置）</span>
-        ) : view === 'grid' ? (
-          <ul className="shelf-grid">
-            {items.map((it) => (
-              <li
-                key={it.id}
-                className="shelf-cell"
-                title={it.path}
-                draggable
-                onDragStart={(e) => {
-                  reorderFrom.current = it.id
-                  // Electron 的拖动需要 dataTransfer 里有数据，dragover/drop 才会稳定触发
-                  e.dataTransfer.setData('text/plain', it.id)
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-                onDragOver={(e) => {
-                  // 网格内换位：阻止默认，避免和外层文件投放逻辑混淆
-                  e.preventDefault()
-                  e.stopPropagation()
-                }}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void reorderTo(it)
-                }}
-                onDragEnd={() => {
-                  reorderFrom.current = null
-                }}
-              >
-                <button
-                  type="button"
-                  className="shelf-cell-del"
-                  title="移除"
-                  onClick={() => void remove(it.id)}
-                >
-                  ×
-                </button>
-                <button
-                  type="button"
-                  className="shelf-cell-body"
-                  title="双击打开"
-                  onDoubleClick={() => void open(it)}
-                >
-                  <FileIcon name={it.name} path={it.path} />
-                  <span className="shelf-cell-name">{it.name}</span>
-                </button>
-                <button
-                  type="button"
-                  className="shelf-cell-folder"
-                  title="在文件夹中显示"
-                  aria-label={`在文件夹中显示 ${it.name}`}
-                  onClick={() => window.island.shelfShowInFolder(it.path)}
-                >
-                  <IcoFolder />
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
+        ) : view === 'list' ? (
           <ul className="shelf-list">
             {items.map((it) => (
               <li key={it.id} className="shelf-item" title={it.path}>
@@ -561,6 +554,79 @@ function ShelfPanel(): React.JSX.Element {
               </li>
             ))}
           </ul>
+        ) : (
+          /* 图标视图：横向一排滚动，两侧箭头（对照截图） */
+          <div className="shelf-hscroll">
+            {canScroll && (
+              <button type="button" className="shelf-scroll-arrow left" title="向左滚" aria-label="向左滚动" onClick={() => scrollBy(-1)}>
+                ‹
+              </button>
+            )}
+            <div className="shelf-strip" ref={scrollRef} onScroll={updateCanScroll}>
+              <ul className="shelf-grid">
+                {items.map((it) => (
+                  <li
+                    key={it.id}
+                    className="shelf-cell"
+                    title={it.path}
+                    draggable
+                    onDragStart={(e) => {
+                      reorderFrom.current = it.id
+                      // Electron 的拖动需要 dataTransfer 里有数据，dragover/drop 才会稳定触发
+                      e.dataTransfer.setData('text/plain', it.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragOver={(e) => {
+                      // 网格内换位：阻止默认，避免和外层文件投放逻辑混淆
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      void reorderTo(it)
+                    }}
+                    onDragEnd={() => {
+                      reorderFrom.current = null
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="shelf-cell-del"
+                      title="移除"
+                      aria-label={`移除 ${it.name}`}
+                      onClick={() => void remove(it.id)}
+                    >
+                      ×
+                    </button>
+                    <button
+                      type="button"
+                      className="shelf-cell-body"
+                      title="双击打开"
+                      onDoubleClick={() => void open(it)}
+                    >
+                      <FileIcon name={it.name} path={it.path} />
+                      <span className="shelf-cell-name">{it.name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="shelf-cell-folder"
+                      title="在文件夹中显示"
+                      aria-label={`在文件夹中显示 ${it.name}`}
+                      onClick={() => window.island.shelfShowInFolder(it.path)}
+                    >
+                      <IcoFolder />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {canScroll && (
+              <button type="button" className="shelf-scroll-arrow right" title="向右滚" aria-label="向右滚动" onClick={() => scrollBy(1)}>
+                ›
+              </button>
+            )}
+          </div>
         )}
       </div>
       {error && <div className="shelf-error">{error}</div>}
