@@ -171,6 +171,7 @@ body {
 /* ---------- 展开态 ---------- */
 
 .panel-head {
+  position: relative; /* head-status 绝对居中的定位锚 */
   display: flex;
   align-items: center;
   gap: 10px;
@@ -178,13 +179,21 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* 展开态头部常驻状态区（对照参考工具：顶部信息 UI 展开后不消失）：迷你岛仔 + 时钟 + 电量，居中 */
+/* 展开态头部常驻状态区：绝对定位真正居中（margin:0 auto 会被 flex:1 的 spacer
+   抢光剩余空间，auto margin 拿到 0，状态区就贴在标题后面——用户看到的「还在左上角」） */
 .head-status {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
   gap: 7px;
   flex: none;
-  margin: 0 auto;
+  pointer-events: none; /* 让点击穿透到下层，避免挡住头部控件 */
+}
+.head-status > * {
+  pointer-events: auto;
 }
 
 .head-status .collapsed-pet {
