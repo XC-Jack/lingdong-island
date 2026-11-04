@@ -524,7 +524,7 @@ body {
 
 .shelf-drop {
   flex: 0 1 auto;
-  width: 100%;
+  max-width: 100%;
   /* 无边框：整个面板就是存放区，拖进岛内任意位置都能放下；高度随内容，超出面板上限内滚动 */
   display: flex;
   align-items: flex-start;
@@ -545,13 +545,13 @@ body {
 /* 网格（大图标，仿桌面）：从左上角开始排 */
 .shelf-grid {
   list-style: none;
-  width: 100%;
   padding: 10px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, 84px);
+  /* flex 横排 + 自动换行：max-content 下自然多列展开（grid auto-fill 依赖确定宽度，在 max-content 容器里会塌成一列） */
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: flex-start;
   gap: 8px;
-  align-content: start;
-  justify-content: start;
 }
 
 .shelf-cell {
@@ -789,11 +789,13 @@ body {
   font-size: 15px;
   font-weight: 700;
   color: #f2f3f5;
+  font-variant-numeric: tabular-nums;
 }
 
 .sched-day-sub {
   font-size: 11px;
-  color: rgba(242, 243, 245, 0.4);
+  color: rgba(242, 243, 245, 0.35);
+  white-space: nowrap;
 }
 
 /* 月历 */
@@ -901,7 +903,7 @@ body {
   background: rgba(125, 216, 125, 0.14);
 }
 
-/* 顶部输入行：文本框 + 时间选择 + 加号 */
+/* 顶部输入行：文本框 + 时间选择 + 加号（苹果式：暗色填充、同高、圆角统一、无刺眼白框） */
 .sched-add {
   display: flex;
   gap: 8px;
@@ -913,19 +915,45 @@ body {
 .sched-input {
   flex: 1;
   min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f2f3f5;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 120ms, background 120ms;
+}
+
+.sched-input::placeholder {
+  color: rgba(242, 243, 245, 0.3);
+}
+
+.sched-input:focus {
+  border-color: rgba(140, 110, 255, 0.55);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .sched-time {
   flex: none;
-  width: 108px;
+  height: 32px;
+  width: 104px;
   background: rgba(255, 255, 255, 0.06);
-  border: none;
-  border-radius: 8px;
-  color: #f2f3f5;
-  font-size: 12px;
-  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: rgba(242, 243, 245, 0.85);
+  font-size: 12.5px;
+  font-family: inherit;
+  padding: 0 10px;
   outline: none;
   color-scheme: dark;
+  transition: border-color 120ms;
+}
+
+.sched-time:focus {
+  border-color: rgba(140, 110, 255, 0.55);
 }
 
 /* 时间徽标：药丸样式（对照视频日程列表的时间徽标） */
