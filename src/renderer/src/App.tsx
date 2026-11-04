@@ -549,14 +549,97 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
   )
 }
 
-/** 日程面板：今天的安排，可带时间（到点弹系统提醒） */
+/** 月历：本月网格（周一为首），今天高亮，有安排的日子带蓝点，可点选日期 */
+function MonthCalendar({
+  selected,
+  onSelect,
+  markedDays,
+}: {
+  selected: string // YYYY-MM-DD
+  onSelect: (day: string) => void
+  markedDays: Set<string> // 有日程/待办的日子（YYYY-MM-DD）
+}): React.JSX.Element {
+  const [viewYear, setViewYear] = useState(() => Number(selected.slice(0, 4)))
+  const [viewMonth, setViewMonth] = useState(() => Number(selected.slice(5, 7)) - 1) // 0-based
+
+  const todayKey = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+
+  // 本月网格：补齐周一为首列的前导空位
+  const cells: (number | null)[] = (() => {
+    const first = new Date(viewYear, viewMonth, 1)
+    const lead = (first.getDay() + 6) % 7 // 周一=0
+    const days = new Date(viewYear, viewMonth + 1, 0).getDate()
+    return [...Array(lead).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)]
+  })()
+
+  const dayKey = (day: number): string =>
+    `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+  const shiftMonth = (dir: number): void => {
+    const m = viewMonth + dir
+    setViewYear((y) => y + Math.floor(m / 12))
+    setViewMonth(((m % 12) + 12) % 12)
+  }
+
+  return (
+    <div className="cal">
+      <div className="cal-head">
+        <button type="button" className="cal-nav" title="上个月" onClick={() => shiftMonth(-1)}>
+          ‹
+        </button>
+        <span className="cal-title">
+          {viewYear}年{viewMonth + 1}月
+        </span>
+        <button type="button" className="cal-nav" title="下个月" onClick={() => shiftMonth(1)}>
+          ›
+        </button>
+      </div>
+      <div className="cal-grid cal-week">
+        {['一', '二', '三', '四', '五', '六', '日'].map((w) => (
+          <span key={w} className="cal-weekday">
+            {w}
+          </span>
+        ))}
+      </div>
+      <div className="cal-grid">
+        {cells.map((day, i) =>
+          day === null ? (
+            <span key={`e${i}`} />
+          ) : (
+            <button
+              key={day}
+              type="button"
+              className={`cal-day ${dayKey(day) === todayKey ? 'today' : ''} ${dayKey(day) === selected ? 'selected' : ''}`}
+              onClick={() => onSelect(dayKey(day))}
+            >
+              {day}
+              {markedDays.has(dayKey(day)) && <i className="cal-mark" />}
+            </button>
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 日程面板：左月历 + 右当日安排（日程+待办混排），可带时间（到点弹系统提醒） */
 function SchedulePanel(): React.JSX.Element {
   const [items, setItems] = useState<ScheduleItem[]>([])
+  const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
   const [time, setTime] = useState('')
+  // 选中的日期（YYYY-MM-DD，默认今天）
+  const [selDay, setSelDay] = useState<string>(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
 
   useEffect(() => {
     void window.island.scheduleList().then(setItems)
+    void window.island.todosList().then(setTodos)
   }, [])
 
   const add = useCallback(() => {
@@ -573,78 +656,108 @@ function SchedulePanel(): React.JSX.Element {
     void window.island.scheduleToggle(id).then(setItems)
   }, [])
 
+  const toggleTodo = useCallback((id: string) => {
+    void window.island.todosToggle(id).then(setTodos)
+  }, [])
+
   const remove = useCallback((id: string) => {
     void window.island.scheduleRemove(id).then(setItems)
   }, [])
 
-  const sorted = [...items].sort((a, b) => {
+  // 日程全部按「今天」处理（数据模型暂无日期字段）；有日程的日子标蓝点
+  const todayKey = selDay
+  const markedDays = new Set<string>([todayKey, ...items.map(() => todayKey)])
+  // 选中日的混排列表：日程（带时间在前）+ 待办
+  const schedSorted = [...items].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
     if (a.time && b.time) return a.time.localeCompare(b.time)
     if (a.time) return -1
     if (b.time) return 1
     return a.createdAt - b.createdAt
   })
+  const todoSorted = [...todos].sort((a, b) => Number(a.done) - Number(b.done))
   const hm = formatClock(new Date())
+  const dayLabel = `${Number(selDay.slice(5, 7))}月${Number(selDay.slice(8, 10))}日`
 
   return (
-    <div className="todo-panel">
-      {/* 输入区放顶部（与待办页一致）：文本 + 可选时间 */}
-      <div className="sched-add">
-        <input
-          className="sched-input"
-          placeholder="加个安排…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') add()
-          }}
-        />
-        <input
-          className="sched-time"
-          type="time"
-          title="可选：到点前提醒"
-          value={time}
-          onChange={(e) => setTime(e.target.value)}
-        />
-        <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
-          +
-        </button>
-      </div>
-      {sorted.length === 0 ? (
-        <div className="notify-empty">
-          <div className="notify-empty-inner">
-            <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
-              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            <span className="shelf-drop-hint">今天还没有安排</span>
-            <span className="notify-empty-sub">加一条试试，可带时间到点提醒</span>
-          </div>
+    <div className="sched-split">
+      {/* 左栏：月历 */}
+      <MonthCalendar selected={selDay} onSelect={setSelDay} markedDays={markedDays} />
+      {/* 右栏：当日安排 */}
+      <div className="sched-day">
+        <div className="sched-day-head">
+          <span className="sched-day-title">{dayLabel}</span>
+          <span className="sched-day-sub">{items.length} 条日程 · {todos.length} 条待办</span>
         </div>
-      ) : (
-        <ul className="todo-list sched-list">
-          {sorted.map((it) => (
-            <li key={it.id} className={`todo-item ${it.done ? 'done' : ''}`}>
-              <input
-                type="checkbox"
-                className="todo-check"
-                checked={it.done}
-                onChange={() => toggle(it.id)}
-              />
-              {it.time && (
-                <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>
-                  {it.time}
-                </span>
-              )}
-              <span className="todo-text">{it.text}</span>
-              <button type="button" className="todo-del" title="删除" onClick={() => remove(it.id)}>
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+        <div className="sched-add">
+          <input
+            className="sched-input"
+            placeholder="加个安排…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') add()
+            }}
+          />
+          <input
+            className="sched-time"
+            type="time"
+            title="可选：到点前提醒"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+          />
+          <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
+            +
+          </button>
+        </div>
+        {schedSorted.length === 0 && todoSorted.length === 0 ? (
+          <div className="notify-empty">
+            <div className="notify-empty-inner">
+              <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
+                <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              <span className="shelf-drop-hint">这一天还没有安排</span>
+              <span className="notify-empty-sub">加一条试试，可带时间到点提醒</span>
+            </div>
+          </div>
+        ) : (
+          <ul className="todo-list sched-list">
+            {schedSorted.map((it) => (
+              <li key={`s${it.id}`} className={`todo-item ${it.done ? 'done' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="todo-check"
+                  checked={it.done}
+                  onChange={() => toggle(it.id)}
+                />
+                {it.time && (
+                  <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>
+                    {it.time}
+                  </span>
+                )}
+                <span className="todo-text">{it.text}</span>
+                <button type="button" className="todo-del" title="删除" onClick={() => remove(it.id)}>
+                  ×
+                </button>
+              </li>
+            ))}
+            {todoSorted.map((t) => (
+              <li key={`t${t.id}`} className={`todo-item ${t.done ? 'done' : ''}`}>
+                <input
+                  type="checkbox"
+                  className="todo-check"
+                  checked={t.done}
+                  onChange={() => toggleTodo(t.id)}
+                />
+                <span className="sched-badge sched-badge-todo">待办</span>
+                <span className="todo-text">{t.text}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

@@ -45,12 +45,12 @@ body {
 
 /* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画 */
 .page-fade {
-  width: 100%;
   animation: page-fade-in 180ms ease-out;
 }
 
 .island.collapsed {
   /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
+  flex-shrink: 0;
   width: max-content;
   height: 42px;
   border-radius: 21px;
@@ -63,6 +63,7 @@ body {
 
 .island.expanded {
   /* 宽高随内容自然撑开（参照视频各页按内容收紧），上限由主进程 clamp */
+  flex-shrink: 0;
   width: max-content;
   min-width: 420px;
   max-width: 720px;
@@ -761,6 +762,145 @@ body {
 
 /* ---------- 日程页 ---------- */
 
+/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局） */
+.sched-split {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  width: max-content;
+}
+
+/* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
+.sched-day {
+  flex: 1;
+  min-width: 252px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sched-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px 6px;
+}
+
+.sched-day-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #f2f3f5;
+}
+
+.sched-day-sub {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.4);
+}
+
+/* 月历 */
+.cal {
+  flex: none;
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.cal-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f2f3f5;
+}
+
+.cal-nav {
+  border: none;
+  background: none;
+  color: rgba(242, 243, 245, 0.55);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.cal-nav:hover {
+  color: #f2f3f5;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 10.5px;
+  color: rgba(242, 243, 245, 0.35);
+  padding: 2px 0;
+}
+
+.cal-day {
+  position: relative;
+  border: none;
+  background: none;
+  color: rgba(242, 243, 245, 0.78);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 0 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.cal-day:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cal-day.today {
+  background: rgba(100, 181, 246, 0.22);
+  color: #aed6ff;
+  font-weight: 700;
+}
+
+.cal-day.selected {
+  background: #64b5f6;
+  color: #0b0e14;
+  font-weight: 700;
+}
+
+/* 有安排的日子：底部蓝点 */
+.cal-mark {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: #64b5f6;
+}
+
+.cal-day.selected .cal-mark {
+  background: #0b0e14;
+}
+
+/* 待办徽标（日程页混排里的待办项） */
+.sched-badge.sched-badge-todo {
+  color: #7dd87d;
+  background: rgba(125, 216, 125, 0.14);
+}
+
 /* 顶部输入行：文本框 + 时间选择 + 加号 */
 .sched-add {
   display: flex;
@@ -876,3 +1016,5 @@ body {
   font-size: 12px;
   color: rgba(242, 243, 245, 0.4);
 }
+
+

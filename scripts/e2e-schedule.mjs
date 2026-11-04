@@ -124,7 +124,7 @@ const main = async () => {
   await sleep(400)
   const empty = await send(`document.querySelector('.notify-empty')?.textContent ?? null`)
   console.log('[5] 空态提示:', empty)
-  if (!empty || !empty.includes('今天还没有安排')) throw new Error('fail: empty state')
+  if (!empty || !empty.includes('这一天还没有安排')) throw new Error('fail: empty state')
 
   console.log('E2E SCHEDULE PASS')
   ws.close()
