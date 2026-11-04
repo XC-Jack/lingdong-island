@@ -593,6 +593,17 @@ body {
   transition: background 120ms;
 }
 
+/* 列表视图：列表本体限高内滚——shelf-drop 高度随内容自然增长时 overflow-y 永远不触发，
+   必须给列表一个确定的 max-height（高于 4 项后滚动），岛高上限交给主进程 clamp */
+.shelf-drop.list {
+  display: block;
+  overflow: visible;
+}
+
+.shelf-drop.list .shelf-list {
+  max-height: 288px;
+}
+
 .shelf-drop.over {
   background: rgba(140, 110, 255, 0.08);
 }
@@ -612,17 +623,32 @@ body {
   gap: 8px;
 }
 
-/* 三档图标大小：lg 84px / md 64px / sm 48px */
+/* 三档图标大小：格子宽 + 图标本体一起缩（lg 84/40 / md 64/30 / sm 48/22），大小差异要一眼能看出来 */
 .shelf-drop.lg .shelf-cell {
   width: 84px;
+}
+
+.shelf-drop.lg .shelf-cell-body .shelf-icon {
+  width: 40px;
+  height: 40px;
 }
 
 .shelf-drop.md .shelf-cell {
   width: 64px;
 }
 
+.shelf-drop.md .shelf-cell-body .shelf-icon {
+  width: 30px;
+  height: 30px;
+}
+
 .shelf-drop.sm .shelf-cell {
   width: 48px;
+}
+
+.shelf-drop.sm .shelf-cell-body .shelf-icon {
+  width: 22px;
+  height: 22px;
 }
 
 .shelf-drop.sm .shelf-cell-body {

@@ -111,6 +111,32 @@ const IcoGrid = (): React.JSX.Element => (
   </IconSvg>
 )
 
+/** 中图标视图（九宫格缺角，与大图标区分） */
+const IcoGridMd = (): React.JSX.Element => (
+  <IconSvg>
+    <rect x="4" y="4" width="6.5" height="6.5" rx="1.4" />
+    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4" />
+    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4" />
+    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4" />
+    <rect x="8.75" y="8.75" width="6.5" height="6.5" rx="1.4" />
+  </IconSvg>
+)
+
+/** 小图标视图（密集点阵，与小图标区分） */
+const IcoGridSm = (): React.JSX.Element => (
+  <IconSvg>
+    <rect x="4" y="4" width="4.5" height="4.5" rx="1" />
+    <rect x="9.75" y="4" width="4.5" height="4.5" rx="1" />
+    <rect x="15.5" y="4" width="4.5" height="4.5" rx="1" />
+    <rect x="4" y="9.75" width="4.5" height="4.5" rx="1" />
+    <rect x="9.75" y="9.75" width="4.5" height="4.5" rx="1" />
+    <rect x="15.5" y="9.75" width="4.5" height="4.5" rx="1" />
+    <rect x="4" y="15.5" width="4.5" height="4.5" rx="1" />
+    <rect x="9.75" y="15.5" width="4.5" height="4.5" rx="1" />
+    <rect x="15.5" y="15.5" width="4.5" height="4.5" rx="1" />
+  </IconSvg>
+)
+
 /** 时钟（日程时间选择按钮，点它弹原生时间选择器） */
 const IcoClock = (): React.JSX.Element => (
   <IconSvg>
@@ -469,42 +495,17 @@ function ShelfPanel(): React.JSX.Element {
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length} 个文件</span>
         <span className="shelf-toolbar-spacer" />
-        {/* 视图切换：大 / 中 / 小 图标 与 列表（对照截图：图标可选大小，列表上下滚动） */}
+        {/* 视图切换：单按钮循环 大→中→小→列表（对照截图：图标可选大小，列表上下滚动） */}
         <button
           type="button"
-          className={`shelf-view-btn ${view === 'lg' ? 'active' : ''}`}
-          title="大图标"
-          aria-label="大图标视图"
-          onClick={() => setView('lg')}
+          className="shelf-view-btn"
+          title={
+            view === 'lg' ? '当前：大图标（点击切换到中图标）' : view === 'md' ? '当前：中图标（点击切换到小图标）' : view === 'sm' ? '当前：小图标（点击切换到列表）' : '当前：列表（点击切换到大图标）'
+          }
+          aria-label={`当前视图：${view === 'lg' ? '大图标' : view === 'md' ? '中图标' : view === 'sm' ? '小图标' : '列表'}，点击切换到${view === 'lg' ? '中图标' : view === 'md' ? '小图标' : view === 'sm' ? '列表' : '大图标'}`}
+          onClick={() => setView(view === 'lg' ? 'md' : view === 'md' ? 'sm' : view === 'sm' ? 'list' : 'lg')}
         >
-          <IcoGrid />
-        </button>
-        <button
-          type="button"
-          className={`shelf-view-btn ${view === 'md' ? 'active' : ''}`}
-          title="中图标"
-          aria-label="中图标视图"
-          onClick={() => setView('md')}
-        >
-          <IcoGrid />
-        </button>
-        <button
-          type="button"
-          className={`shelf-view-btn ${view === 'sm' ? 'active' : ''}`}
-          title="小图标"
-          aria-label="小图标视图"
-          onClick={() => setView('sm')}
-        >
-          <IcoGrid />
-        </button>
-        <button
-          type="button"
-          className={`shelf-view-btn ${view === 'list' ? 'active' : ''}`}
-          title="列表"
-          aria-label="列表视图"
-          onClick={() => setView('list')}
-        >
-          <IcoList />
+          {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
         </button>
         <button
           type="button"
