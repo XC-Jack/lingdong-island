@@ -627,11 +627,15 @@ function ShelfPanel(): React.JSX.Element {
                       e.dataTransfer.effectAllowed = 'move'
                     }}
                     onDragOver={(e) => {
-                      // 网格内换位：阻止默认，避免和外层文件投放逻辑混淆
+                      // 网格内换位：只拦截「架内图标拖动」；外部文件拖入必须放行冒泡，
+                      // 否则事件在这里被吞、光标变禁止、drop 也被吞掉（架上有东西就放不进来的根因）
+                      if (reorderFrom.current === null) return
                       e.preventDefault()
                       e.stopPropagation()
                     }}
                     onDrop={(e) => {
+                      // 同上：外部文件拖入时放行，冒泡到岛根 onDropRoot 加入置物架
+                      if (reorderFrom.current === null) return
                       e.preventDefault()
                       e.stopPropagation()
                       void reorderTo(it)
@@ -1092,6 +1096,8 @@ export default function App(): React.JSX.Element {
   const hoverRef = useRef(false)
   const collapseTimer = useRef<number | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
+  // 一次拖动只处理一次 dragEnter 的去重标记（dragleave/drop 时复位）
+  const dragActive = useRef(false)
 
   // 尺寸自适应上报：岛元素按内容自然撑开（CSS max-content），这里量出实际尺寸报给主进程定窗口。
   // 去抖 80ms：避开 width/height 过渡动画的中间值，只在尺寸稳定后上报。
@@ -1229,14 +1235,28 @@ export default function App(): React.JSX.Element {
     if (expanded) scheduleCollapse()
   }
 
-  // 拖文件悬停在岛上（含收起态）：通知主进程放大窗口，切到置物架页，暂停收回
+  // 拖文件悬停在岛上（含收起态）：通知主进程放大窗口，切到置物架页，暂停收回。
+  // dragEnter 会在光标每划过一个子元素时冒泡重复触发——必须去重，
+  // 否则反复 gotoPage(1) 重挂页面重放淡入动画 = 用户看到的频闪抖动（m02309）
   const onDragEnter = (e: React.DragEvent): void => {
     if (!e.dataTransfer.types.includes('Files')) return
+    e.stopPropagation()
+    if (dragActive.current) return
+    dragActive.current = true
     window.island.dragHover()
     clearCollapseTimer()
     hoverRef.current = true
-    gotoPage(1)
-    setExpanded(true)
+    if (!expanded) {
+      window.island.setExpanded(true)
+      setExpanded(true)
+    }
+    setPage((p) => (p === 1 ? p : 1))
+    setPageAnim((n) => (page === 1 ? n : n + 1))
+  }
+
+  // 拖动结束（drop 或拖离窗口）复位去重标记，下一次拖入重新生效
+  const onDragLeaveRoot = (): void => {
+    dragActive.current = false
   }
 
   // Esc 键收起（展开时），免得非得点空白或移开鼠标
@@ -1297,9 +1317,11 @@ export default function App(): React.JSX.Element {
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
         onDragEnter={onDragEnter}
+        onDragLeave={onDragLeaveRoot}
         onDragOver={onDragOverRoot}
         onDrop={(e) => {
           onDropRoot(e)
+          onDragLeaveRoot()
           scheduleCollapse()
           if (e.dataTransfer.files.length) pulseHappy()
         }}
