@@ -581,6 +581,55 @@ body {
   color: #b9a8ff;
 }
 
+/* 视图选择菜单（用户 m02221：点开可选择，而不是循环切换） */
+.shelf-view-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.shelf-view-btn.open {
+  background: rgba(140, 110, 255, 0.2);
+  color: #b9a8ff;
+}
+.shelf-view-pop {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 96px;
+  padding: 4px;
+  background: rgba(28, 28, 34, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.shelf-view-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(242, 243, 245, 0.85);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+.shelf-view-item svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.shelf-view-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.shelf-view-item.picked {
+  background: rgba(140, 110, 255, 0.18);
+  color: #b9a8ff;
+}
+
 .shelf-drop {
   flex: 0 1 auto;
   max-width: 100%;
@@ -822,6 +871,11 @@ body {
   flex-direction: column;
   gap: 6px;
   overflow-y: auto;
+  /* 隐藏系统滚动条（用户：白色滚动条很丑）——保留滚动能力，滚轮/触摸照常 */
+  scrollbar-width: none;
+}
+.shelf-list::-webkit-scrollbar {
+  display: none;
 }
 
 .shelf-item {

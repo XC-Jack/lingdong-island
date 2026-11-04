@@ -393,6 +393,8 @@ function ShelfPanel(): React.JSX.Element {
   const [view, setView] = useState<'lg' | 'md' | 'sm' | 'list'>('lg')
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
+  // 视图选择菜单展开态：点视图按钮弹出四项菜单（大/中/小/列表）
+  const [viewPop, setViewPop] = useState(false)
   // 图标视图横向滚动：是否还有更多内容（决定两侧箭头显隐）
   const [canScroll, setCanScroll] = useState(false)
   /** 正在拖动换位的条目 id（网格内排序用） */
@@ -400,6 +402,16 @@ function ShelfPanel(): React.JSX.Element {
   const reorderSeq = useRef(0)
   /** 图标视图滚动容器 */
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** 视图选择菜单容器：开着时点外面自动收起 */
+  const viewPopRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!viewPop) return
+    const onDown = (e: MouseEvent): void => {
+      if (!viewPopRef.current?.contains(e.target as Node)) setViewPop(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [viewPop])
 
   const updateCanScroll = useCallback(() => {
     const el = scrollRef.current
@@ -495,18 +507,44 @@ function ShelfPanel(): React.JSX.Element {
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length} 个文件</span>
         <span className="shelf-toolbar-spacer" />
-        {/* 视图切换：单按钮循环 大→中→小→列表（对照截图：图标可选大小，列表上下滚动） */}
-        <button
-          type="button"
-          className="shelf-view-btn"
-          title={
-            view === 'lg' ? '当前：大图标（点击切换到中图标）' : view === 'md' ? '当前：中图标（点击切换到小图标）' : view === 'sm' ? '当前：小图标（点击切换到列表）' : '当前：列表（点击切换到大图标）'
-          }
-          aria-label={`当前视图：${view === 'lg' ? '大图标' : view === 'md' ? '中图标' : view === 'sm' ? '小图标' : '列表'}，点击切换到${view === 'lg' ? '中图标' : view === 'md' ? '小图标' : view === 'sm' ? '列表' : '大图标'}`}
-          onClick={() => setView(view === 'lg' ? 'md' : view === 'md' ? 'sm' : view === 'sm' ? 'list' : 'lg')}
-        >
-          {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
-        </button>
+        {/* 视图切换：点开弹四项选择菜单（大/中/小/列表），不是循环切换（用户 m02221 要求可选择） */}
+        <span className="shelf-view-wrap" ref={viewPopRef}>
+          <button
+            type="button"
+            className={`shelf-view-btn ${viewPop ? 'open' : ''}`}
+            title="选择视图"
+            aria-label="选择视图"
+            aria-expanded={viewPop}
+            onClick={() => setViewPop((v) => !v)}
+          >
+            {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
+          </button>
+          {viewPop && (
+            <span className="shelf-view-pop" role="menu" aria-label="选择视图">
+              {([
+                ['lg', '大图标', <IcoGrid />],
+                ['md', '中图标', <IcoGridMd />],
+                ['sm', '小图标', <IcoGridSm />],
+                ['list', '列表', <IcoList />],
+              ] as const).map(([v, label, icon]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={view === v}
+                  className={`shelf-view-item ${view === v ? 'picked' : ''}`}
+                  onClick={() => {
+                    setView(v)
+                    setViewPop(false)
+                  }}
+                >
+                  {icon}
+                  {label}
+                </button>
+              ))}
+            </span>
+          )}
+        </span>
         <button
           type="button"
           className={`todo-del ${confirmClear ? 'confirm-clear' : ''}`}
