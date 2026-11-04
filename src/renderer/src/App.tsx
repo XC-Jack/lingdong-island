@@ -1373,6 +1373,8 @@ export default function App(): React.JSX.Element {
                   </span>
                 )}
               </span>
+              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度+自启开关推到右侧，
+                  与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
               <span className="panel-head-spacer" />
               {page === 0 && (
                 <span className="todo-stat">
