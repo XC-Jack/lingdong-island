@@ -1204,7 +1204,11 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量 */}
+              <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
+                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
+              </span>
+              <span className="panel-title">{PAGE_META[page].label}</span>
+              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量，居中 */}
               <span className="head-status">
                 <Pet mood={mood} />
                 <span className="head-clock">{formatClock(now)}</span>
@@ -1214,10 +1218,6 @@ export default function App(): React.JSX.Element {
                   </span>
                 )}
               </span>
-              <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
-                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
-              </span>
-              <span className="panel-title">{PAGE_META[page].label}</span>
               <span className="panel-head-spacer" />
               {page === 0 && (
                 <span className="todo-stat">

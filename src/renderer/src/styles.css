@@ -178,14 +178,13 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* 展开态头部常驻状态区（对照参考工具：顶部信息 UI 展开后不消失）：迷你岛仔 + 时钟 + 电量 */
+/* 展开态头部常驻状态区（对照参考工具：顶部信息 UI 展开后不消失）：迷你岛仔 + 时钟 + 电量，居中 */
 .head-status {
   display: flex;
   align-items: center;
   gap: 7px;
   flex: none;
-  padding-right: 10px;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0 auto;
 }
 
 .head-status .collapsed-pet {
