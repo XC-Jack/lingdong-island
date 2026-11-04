@@ -384,9 +384,20 @@ function ShelfPanel(): React.JSX.Element {
     setCanScroll(el.scrollWidth > el.clientWidth + 4)
   }, [])
 
+  // 内容/视图变化后量一次能否滚动；rAF 等布局落定（首次挂载时 strip 可能还没排好版）
   useEffect(() => {
-    updateCanScroll()
+    const id = window.requestAnimationFrame(updateCanScroll)
+    return () => window.cancelAnimationFrame(id)
   }, [items, view, updateCanScroll])
+
+  // 容器尺寸变化（窗口展开/收起、换页动画）也要重量
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const ro = new ResizeObserver(updateCanScroll)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [view, updateCanScroll])
 
   const scrollBy = (dir: number): void => {
     scrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' })

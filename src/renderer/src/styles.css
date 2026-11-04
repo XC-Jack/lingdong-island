@@ -589,6 +589,7 @@ body {
   align-items: flex-start;
   justify-content: center;
   overflow-y: auto;
+  overflow-x: hidden;
   transition: background 120ms;
 }
 
@@ -632,10 +633,13 @@ body {
   font-size: 10px;
 }
 
-/* 横向滚动区：图标视图一排放不下时左右滚 */
+/* 横向滚动区：图标视图一排放不下时左右滚。
+   max-width 是关键：不限制的话 nowrap 行的自然宽度会把整个岛（width:max-content）撑到 720 上限，
+   内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发 */
 .shelf-hscroll {
   display: flex;
   align-items: center;
+  justify-content: center;
   width: 100%;
   min-width: 0;
 }
@@ -643,6 +647,7 @@ body {
 .shelf-strip {
   flex: 1;
   min-width: 0;
+  max-width: 460px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
