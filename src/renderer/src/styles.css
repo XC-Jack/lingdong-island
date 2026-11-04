@@ -448,6 +448,16 @@ body {
   cursor: pointer;
 }
 
+/* 清空按钮确认态：警示红底，宽度自适应文字（按钮本体 20px 方块，仅确认时撑开） */
+.todo-del.confirm-clear {
+  width: auto;
+  padding: 0 7px;
+  color: #fff;
+  background: rgba(255, 107, 107, 0.85);
+  font-size: 12px;
+  height: 22px;
+}
+
 .todo-del:hover {
   color: #ff6b6b;
   background: rgba(255, 107, 107, 0.12);

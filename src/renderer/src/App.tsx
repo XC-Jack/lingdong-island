@@ -364,6 +364,8 @@ function ShelfPanel(): React.JSX.Element {
   const [dragOver, setDragOver] = useState(false)
   const [error, setError] = useState('')
   const [view, setView] = useState<'grid' | 'list'>('grid')
+  // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
+  const [confirmClear, setConfirmClear] = useState(false)
   /** 正在拖动换位的条目 id（网格内排序用） */
   const reorderFrom = useRef<string | null>(null)
   const reorderSeq = useRef(0)
@@ -445,13 +447,23 @@ function ShelfPanel(): React.JSX.Element {
         </button>
         <button
           type="button"
-          className="todo-del"
+          className={`todo-del ${confirmClear ? 'confirm-clear' : ''}`}
           title="清空置物架"
           aria-label="清空置物架"
-          onClick={() => void clear()}
+          // 破坏性操作二次确认（baseline-ui: MUST confirm destructive actions）：第一次点进入确认态，失焦取消
+          aria-expanded={confirmClear}
+          onClick={() => {
+            if (confirmClear) {
+              void clear()
+              setConfirmClear(false)
+            } else {
+              setConfirmClear(true)
+            }
+          }}
+          onBlur={() => setConfirmClear(false)}
           disabled={items.length === 0}
         >
-          清空
+          {confirmClear ? '确认清空？' : '清空'}
         </button>
       </div>
       <div className={`shelf-drop ${view} ${dragOver ? 'over' : ''}`}>
