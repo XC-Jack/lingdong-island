@@ -251,7 +251,13 @@ function TodoPanel({
             if (e.key === 'Enter') void add()
           }}
         />
-        <button type="button" className="todo-add-btn" title="添加" onClick={() => void add()}>
+        <button
+          type="button"
+          className="todo-add-btn"
+          title="添加"
+          aria-label="添加待办"
+          onClick={() => void add()}
+        >
           +
         </button>
       </div>
@@ -263,6 +269,7 @@ function TodoPanel({
               type="button"
               className={`todo-check ${t.done ? 'checked' : ''}`}
               title={t.done ? '标记为未完成' : '标记为已完成'}
+              aria-label={t.done ? `标记 ${t.text} 为未完成` : `标记 ${t.text} 为已完成`}
               onClick={() => void toggle(t)}
             >
               {t.done ? <IcoCheck /> : ''}
@@ -293,6 +300,7 @@ function TodoPanel({
               type="button"
               className="todo-del"
               title="删除"
+              aria-label={`删除待办 ${t.text}`}
               onClick={() => void remove(t.id)}
             >
               ×
@@ -430,6 +438,7 @@ function ShelfPanel(): React.JSX.Element {
           type="button"
           className="shelf-view-btn"
           title={view === 'grid' ? '切换为列表' : '切换为大图标'}
+          aria-label={view === 'grid' ? '切换为列表视图' : '切换为大图标视图'}
           onClick={() => setView(view === 'grid' ? 'list' : 'grid')}
         >
           {view === 'grid' ? <IcoList /> : <IcoGrid />}
@@ -438,6 +447,7 @@ function ShelfPanel(): React.JSX.Element {
           type="button"
           className="todo-del"
           title="清空置物架"
+          aria-label="清空置物架"
           onClick={() => void clear()}
           disabled={items.length === 0}
         >
@@ -496,6 +506,7 @@ function ShelfPanel(): React.JSX.Element {
                   type="button"
                   className="shelf-cell-folder"
                   title="在文件夹中显示"
+                  aria-label={`在文件夹中显示 ${it.name}`}
                   onClick={() => window.island.shelfShowInFolder(it.path)}
                 >
                   <IcoFolder />
@@ -521,6 +532,7 @@ function ShelfPanel(): React.JSX.Element {
                   type="button"
                   className="todo-del shelf-row-folder"
                   title="在文件夹中显示"
+                  aria-label={`在文件夹中显示 ${it.name}`}
                   onClick={() => window.island.shelfShowInFolder(it.path)}
                 >
                   <IcoFolder />
@@ -529,6 +541,7 @@ function ShelfPanel(): React.JSX.Element {
                   type="button"
                   className="todo-del"
                   title="从置物架移除"
+                  aria-label={`从置物架移除 ${it.name}`}
                   onClick={() => void remove(it.id)}
                 >
                   ×
@@ -593,7 +606,14 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length > 0 ? `${items.length} 条通知` : ''}</span>
         <span className="shelf-toolbar-spacer" />
-        <button type="button" className="todo-del" title="全部标为已读（消除收起态红点）" onClick={markRead} disabled={items.length === 0}>
+        <button
+          type="button"
+          className="todo-del"
+          title="全部标为已读（消除收起态红点）"
+          aria-label="全部标为已读"
+          onClick={markRead}
+          disabled={items.length === 0}
+        >
           已读
         </button>
       </div>
@@ -670,13 +690,13 @@ function MonthCalendar({
   return (
     <div className="cal">
       <div className="cal-head">
-        <button type="button" className="cal-nav" title="上个月" onClick={() => shiftMonth(-1)}>
+        <button type="button" className="cal-nav" title="上个月" aria-label="上个月" onClick={() => shiftMonth(-1)}>
           ‹
         </button>
         <span className="cal-title">
           {viewYear}年{viewMonth + 1}月
         </span>
-        <button type="button" className="cal-nav" title="下个月" onClick={() => shiftMonth(1)}>
+        <button type="button" className="cal-nav" title="下个月" aria-label="下个月" onClick={() => shiftMonth(1)}>
           ›
         </button>
       </div>
@@ -696,6 +716,7 @@ function MonthCalendar({
               key={day}
               type="button"
               className={`cal-day ${dayKey(day) === todayKey ? 'today' : ''} ${dayKey(day) === selected ? 'selected' : ''}`}
+              aria-label={`选择 ${viewMonth + 1} 月 ${day} 日`}
               onClick={() => onSelect(dayKey(day))}
             >
               {day}
@@ -713,10 +734,11 @@ function SchedulePanel(): React.JSX.Element {
   const [items, setItems] = useState<ScheduleItem[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
-  // 可选时间（HH:mm 或空）：时钟图标按钮弹原生时间选择器，不再显示丑的 --:-- 文本框
+  // 可选时间（HH:mm 或空）：时钟图标按钮展开自绘深色时间选择面板（原生选择器白底割裂，不用）
   const [time, setTime] = useState('')
-  // 隐藏的原生时间输入框引用：时钟按钮点击时触发 showPicker()
-  const timeInputRef = useRef<HTMLInputElement>(null)
+  // 时间选择面板开关
+  const [timePop, setTimePop] = useState(false)
+  const timePopRef = useRef<HTMLDivElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => {
     const d = new Date()
@@ -728,6 +750,16 @@ function SchedulePanel(): React.JSX.Element {
     void window.island.todosList().then(setTodos)
   }, [])
 
+  // 时间面板开着时，点面板外自动收起
+  useEffect(() => {
+    if (!timePop) return
+    const onDown = (e: MouseEvent): void => {
+      if (!timePopRef.current?.contains(e.target as Node)) setTimePop(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [timePop])
+
   const add = useCallback(() => {
     const t = text.trim()
     if (!t) return
@@ -735,6 +767,7 @@ function SchedulePanel(): React.JSX.Element {
       setItems(list)
       setText('')
       setTime('')
+      setTimePop(false)
     })
   }, [text, time])
 
@@ -785,26 +818,59 @@ function SchedulePanel(): React.JSX.Element {
               if (e.key === 'Enter') add()
             }}
           />
-          {/* 时钟按钮：弹原生时间选择器（隐藏 input 承接 value），选过时间后高亮显示，再点可重选 */}
-          <input
-            ref={timeInputRef}
-            className="sched-time-native"
-            type="time"
-            tabIndex={-1}
-            value={time}
-            onChange={(e) => setTime(e.target.value)}
-          />
+          {/* 时钟按钮：展开自绘深色时间选择面板，选过时间后高亮显示，再点可收起 */}
           <button
             type="button"
-            className={`sched-time-btn ${time ? 'picked' : ''}`}
+            className={`sched-time-btn ${time ? 'picked' : ''} ${timePop ? 'open' : ''}`}
             title={time ? `已选 ${time}，点击重选` : '可选：到点前提醒'}
-            onClick={() => timeInputRef.current?.showPicker()}
+            aria-label={time ? `已选时间 ${time}，点击重选` : '选择提醒时间'}
+            aria-expanded={timePop}
+            onClick={() => setTimePop((v) => !v)}
           >
             <IcoClock />
           </button>
-          <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
+          <button type="button" className="todo-add-btn" title="添加日程" aria-label="添加日程" onClick={add}>
             +
           </button>
+          {/* 自绘时间选择面板：小时/分钟两列，深色风格与岛一致 */}
+          {timePop && (
+            <div className="sched-time-pop" ref={timePopRef}>
+              <div className="time-pop-head">
+                <span>{time ? `已选 ${time}` : '选择提醒时间'}</span>
+                {time && (
+                  <button type="button" className="time-pop-clear" onClick={() => { setTime(''); }}>
+                    清除
+                  </button>
+                )}
+              </div>
+              <div className="time-pop-cols">
+                <div className="time-pop-col">
+                  {Array.from({ length: 24 }, (_, h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      className={`time-pop-cell ${time.slice(0, 2) === String(h).padStart(2, '0') ? 'picked' : ''}`}
+                      onClick={() => setTime((prev) => `${String(h).padStart(2, '0')}${prev.slice(2) || ':00'}`)}
+                    >
+                      {String(h).padStart(2, '0')}
+                    </button>
+                  ))}
+                </div>
+                <div className="time-pop-col">
+                  {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`time-pop-cell ${time.slice(3) === String(m).padStart(2, '0') ? 'picked' : ''}`}
+                      onClick={() => setTime((prev) => `${prev.slice(0, 2) || '08'}:${String(m).padStart(2, '0')}`)}
+                    >
+                      {String(m).padStart(2, '0')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         {schedSorted.length === 0 && todoSorted.length === 0 ? (
           <div className="notify-empty">
@@ -826,6 +892,7 @@ function SchedulePanel(): React.JSX.Element {
                   type="checkbox"
                   className="todo-check"
                   checked={it.done}
+                  aria-label={it.done ? `标记日程 ${it.text} 为未完成` : `标记日程 ${it.text} 为已完成`}
                   onChange={() => toggle(it.id)}
                 />
                 {it.time && (
@@ -834,7 +901,13 @@ function SchedulePanel(): React.JSX.Element {
                   </span>
                 )}
                 <span className="todo-text">{it.text}</span>
-                <button type="button" className="todo-del" title="删除" onClick={() => remove(it.id)}>
+                <button
+                  type="button"
+                  className="todo-del"
+                  title="删除"
+                  aria-label={`删除日程 ${it.text}`}
+                  onClick={() => remove(it.id)}
+                >
                   ×
                 </button>
               </li>
@@ -845,6 +918,7 @@ function SchedulePanel(): React.JSX.Element {
                   type="checkbox"
                   className="todo-check"
                   checked={t.done}
+                  aria-label={t.done ? `标记待办 ${t.text} 为未完成` : `标记待办 ${t.text} 为已完成`}
                   onChange={() => toggleTodo(t.id)}
                 />
                 <span className="sched-badge sched-badge-todo">待办</span>

@@ -40,7 +40,6 @@ body {
     width 220ms cubic-bezier(0.22, 1, 0.36, 1),
     height 220ms cubic-bezier(0.22, 1, 0.36, 1),
     border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: width, height;
 }
 
 /* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画 */
@@ -963,17 +962,7 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* 时钟按钮：弹原生时间选择器（隐藏 input 承接 value）；选过时间后紫色高亮 */
-.sched-time-native {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-  border: none;
-  padding: 0;
-}
-
+/* 时钟按钮：展开自绘深色时间选择面板；选过时间后紫色高亮 */
 .sched-time-btn {
   flex: none;
   width: 32px;
@@ -1004,6 +993,91 @@ body {
   color: #b9a8ff;
   border-color: rgba(140, 110, 255, 0.45);
   background: rgba(140, 110, 255, 0.12);
+}
+
+.sched-time-btn.open {
+  color: #b9a8ff;
+  border-color: rgba(140, 110, 255, 0.55);
+}
+
+/* 自绘时间选择面板：深色浮层，与岛风格一致（替代白底原生选择器） */
+.sched-time-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  background: rgba(28, 28, 34, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  padding: 8px;
+  width: 168px;
+}
+
+.time-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 6px;
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.55);
+}
+
+.time-pop-clear {
+  border: none;
+  background: none;
+  color: #b9a8ff;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.time-pop-clear:hover {
+  color: #d3c8ff;
+}
+
+.time-pop-cols {
+  display: flex;
+  gap: 4px;
+}
+
+.time-pop-col {
+  flex: 1;
+  height: 152px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.time-pop-cell {
+  flex: none;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(242, 243, 245, 0.75);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.time-pop-cell:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2f3f5;
+}
+
+.time-pop-cell.picked {
+  background: rgba(140, 110, 255, 0.85);
+  color: #fff;
+  font-weight: 600;
 }
 
 /* 时间徽标：药丸样式（对照视频日程列表的时间徽标） */
