@@ -87,7 +87,7 @@ function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
   )
 }
 
-/** 待办面板：列表 + 勾选 + 增 + 删 + 完成度 n/m */
+/** 待办面板：列表 + 勾选 + 增 + 删 + 改（双击编辑） + 完成度 n/m */
 function TodoPanel({
   onDonePulse,
   onStats,
@@ -97,6 +97,10 @@ function TodoPanel({
 }): React.JSX.Element {
   const [todos, setTodos] = useState<Todo[]>([])
   const [draft, setDraft] = useState('')
+  // 双击编辑：正在改名的条目 id + 草稿
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const draftInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -119,6 +123,8 @@ function TodoPanel({
     if (!text) return
     setDraft('')
     setTodos(await window.island.todosAdd(text))
+    // 加完保持输入框焦点，方便连着录几条
+    draftInputRef.current?.focus()
   }, [draft])
 
   const toggle = useCallback(
@@ -134,13 +140,29 @@ function TodoPanel({
     setTodos(await window.island.todosRemove(id))
   }, [])
 
+  // 双击进入编辑：草稿先填当前文本，下次渲染时选中全部
+  const startEdit = useCallback((t: Todo) => {
+    setEditingId(t.id)
+    setEditDraft(t.text)
+  }, [])
+
+  const commitEdit = useCallback(async () => {
+    const id = editingId
+    const text = editDraft.trim()
+    setEditingId(null)
+    if (!id) return
+    if (!text) return // 空文本视为取消，不误删内容
+    setTodos(await window.island.todosRename(id, text))
+  }, [editingId, editDraft])
+
   return (
     <div className="todo-panel">
       <div className="todo-add">
         <input
+          ref={draftInputRef}
           className="todo-input"
           value={draft}
-          placeholder="加一个待办…"
+          placeholder="加一个待办，回车连记…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void add()
@@ -156,15 +178,34 @@ function TodoPanel({
           <li key={t.id} className={`todo-item ${t.done ? 'done' : ''}`}>
             <button
               type="button"
-              className="todo-check"
+              className={`todo-check ${t.done ? 'checked' : ''}`}
               title={t.done ? '标记为未完成' : '标记为已完成'}
               onClick={() => void toggle(t)}
             >
               {t.done ? '✓' : ''}
             </button>
-            <span className="todo-text" title={t.text}>
-              {t.text}
-            </span>
+            {editingId === t.id ? (
+              <input
+                className="todo-edit"
+                autoFocus
+                value={editDraft}
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) => setEditDraft(e.target.value)}
+                onBlur={() => void commitEdit()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void commitEdit()
+                  if (e.key === 'Escape') setEditingId(null)
+                }}
+              />
+            ) : (
+              <span
+                className="todo-text"
+                title="双击编辑"
+                onDoubleClick={() => startEdit(t)}
+              >
+                {t.text}
+              </span>
+            )}
             <button
               type="button"
               className="todo-del"
@@ -368,6 +409,14 @@ function ShelfPanel(): React.JSX.Element {
                   <FileIcon name={it.name} path={it.path} />
                   <span className="shelf-cell-name">{it.name}</span>
                 </button>
+                <button
+                  type="button"
+                  className="shelf-cell-folder"
+                  title="在文件夹中显示"
+                  onClick={() => window.island.shelfShowInFolder(it.path)}
+                >
+                  📁
+                </button>
               </li>
             ))}
           </ul>
@@ -385,6 +434,14 @@ function ShelfPanel(): React.JSX.Element {
                   {it.name}
                 </button>
                 <span className="shelf-size">{fmtSize(it.size)}</span>
+                <button
+                  type="button"
+                  className="todo-del shelf-row-folder"
+                  title="在文件夹中显示"
+                  onClick={() => window.island.shelfShowInFolder(it.path)}
+                >
+                  📁
+                </button>
                 <button
                   type="button"
                   className="todo-del"
@@ -420,6 +477,8 @@ function fmtRel(ms: number): string {
 function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX.Element {
   const [items, setItems] = useState<NotifyItem[]>([])
   const [loaded, setLoaded] = useState(false)
+  // 相对时间（"5 分钟前"）每 30s 重算一次，避免开着不动时间变陈旧
+  const [, tickNow] = useState(0)
 
   useEffect(() => {
     void window.island.notifyRefresh().then((r: NotifyListResult) => {
@@ -428,6 +487,11 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       setLoaded(true)
     })
   }, [onUnread])
+
+  useEffect(() => {
+    const id = window.setInterval(() => tickNow((n) => n + 1), 30_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const markRead = useCallback(() => {
     void window.island.notifyMarkRead().then((n) => onUnread(n))
@@ -452,7 +516,20 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       </div>
       {items.length === 0 ? (
         <div className="notify-empty">
-          <span className="shelf-drop-hint">{loaded ? '暂无通知（电脑上应用弹过通知后会出现在这里）' : '读取中…'}</span>
+          <div className="notify-empty-inner">
+            <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
+              <path
+                d="M12 3a6 6 0 0 0-6 6v3.2l-1.6 2.7a.9.9 0 0 0 .77 1.35h13.66a.9.9 0 0 0 .77-1.35L18 12.2V9a6 6 0 0 0-6-6z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
+              <path d="M10 19.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="shelf-drop-hint">{loaded ? '暂无通知' : '读取中…'}</span>
+            <span className="notify-empty-sub">应用弹过通知后会出现在这里</span>
+          </div>
         </div>
       ) : (
         <ul className="notify-list">
@@ -535,7 +612,15 @@ function SchedulePanel(): React.JSX.Element {
       </div>
       {sorted.length === 0 ? (
         <div className="notify-empty">
-          <span className="shelf-drop-hint">今天还没有安排</span>
+          <div className="notify-empty-inner">
+            <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
+              <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="shelf-drop-hint">今天还没有安排</span>
+            <span className="notify-empty-sub">加一条试试，可带时间到点提醒</span>
+          </div>
         </div>
       ) : (
         <ul className="todo-list sched-list">
@@ -563,6 +648,14 @@ function SchedulePanel(): React.JSX.Element {
     </div>
   )
 }
+
+/** 页标签：页头图标 + 名称（对照视频里每页左上角的彩色小图标 + 页名） */
+const PAGE_META: { icon: string; label: string; accent: string }[] = [
+  { icon: '✓', label: '待办', accent: '#7dd87d' },
+  { icon: '🗂', label: '置物架', accent: '#ffb74d' },
+  { icon: '🔔', label: '通知', accent: '#9f8bff' },
+  { icon: '📅', label: '日程', accent: '#64b5f6' },
+]
 
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
@@ -705,9 +798,34 @@ export default function App(): React.JSX.Element {
     window.island.dragHover()
     clearCollapseTimer()
     hoverRef.current = true
-    setPage(1)
+    gotoPage(1)
     setExpanded(true)
   }
+
+  // Esc 键收起（展开时），免得非得点空白或移开鼠标
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setExpanded(false)
+        scheduleCollapse()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded, scheduleCollapse])
+
+  // 翻页（‹ ›）：循环，不越界
+  const flipPage = useCallback((dir: 1 | -1) => {
+    setPage((p) => (p + dir + PAGE_COUNT) % PAGE_COUNT)
+  }, [])
+
+  // 切页淡入：换页时给面板体一个短动画类
+  const [pageAnim, setPageAnim] = useState(0)
+  const gotoPage = useCallback((i: number) => {
+    setPage(i)
+    setPageAnim((n) => n + 1)
+  }, [])
 
   const onDragOverRoot = (e: React.DragEvent): void => {
     e.preventDefault()
@@ -764,9 +882,10 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-title">
-                {page === 0 ? '待办' : page === 1 ? '置物架' : page === 2 ? '通知' : '日程'}
+              <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
+                <span className="panel-badge-icon">{PAGE_META[page].icon}</span>
               </span>
+              <span className="panel-title">{PAGE_META[page].label}</span>
               <span className="panel-head-spacer" />
               {page === 0 && (
                 <span className="todo-stat">
@@ -791,7 +910,7 @@ export default function App(): React.JSX.Element {
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
-              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>
+              <div key={pageAnim} onClick={(e) => e.stopPropagation()} className="page-fade" style={{ width: '100%' }}>
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
                 ) : page === 1 ? (
@@ -803,17 +922,41 @@ export default function App(): React.JSX.Element {
                 )}
               </div>
             </div>
-            <div className="dots">
-              {Array.from({ length: PAGE_COUNT }, (_, i) => (
-                <span
-                  key={i}
-                  className={`dot ${i === page ? 'active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setPage(i)
-                  }}
-                />
-              ))}
+            <div className="pager">
+              <button
+                type="button"
+                className="pager-arrow"
+                title="上一页"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  flipPage(-1)
+                }}
+              >
+                ‹
+              </button>
+              <div className="dots">
+                {Array.from({ length: PAGE_COUNT }, (_, i) => (
+                  <span
+                    key={i}
+                    className={`dot ${i === page ? 'active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      gotoPage(i)
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                type="button"
+                className="pager-arrow"
+                title="下一页"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  flipPage(1)
+                }}
+              >
+                ›
+              </button>
             </div>
           </>
         ) : (

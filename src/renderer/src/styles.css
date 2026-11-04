@@ -162,10 +162,24 @@ body {
 
 .panel-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标） */
+.panel-badge {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: color-mix(in srgb, var(--accent, #8b6bff) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #8b6bff) 35%, transparent);
 }
 
 .panel-title {
@@ -244,22 +258,61 @@ body {
   min-height: 0;
 }
 
-.dots {
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-  padding-top: 12px;
-}
-
 .dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.22);
+  transition: background 150ms, transform 150ms;
 }
 
 .dot.active {
   background: rgba(255, 255, 255, 0.85);
+  transform: scale(1.25);
+}
+
+/* 翻页器：‹ 圆点 ›，箭头对照视频的左右翻页 */
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.pager-arrow {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(242, 243, 245, 0.55);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  transition: background 120ms, color 120ms;
+}
+
+.pager-arrow:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #f2f3f5;
+}
+
+/* 切页淡入：换页时面板体轻轻浮起 */
+.page-fade {
+  animation: page-fade-in 180ms ease-out;
+}
+
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* ---------- M1 待办面板 ---------- */
@@ -269,6 +322,21 @@ body {
   flex-direction: column;
   gap: 10px;
   height: 100%;
+}
+
+/* 双击编辑待办文本时的行内输入框（视觉上贴 .todo-input） */
+.todo-edit {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(140, 110, 255, 0.65);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f2f3f5;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
 }
 
 .todo-list {
@@ -320,6 +388,23 @@ body {
 .todo-item.done .todo-check {
   border-color: #7dd87d;
   background: rgba(125, 216, 125, 0.12);
+}
+
+/* 勾选打勾动画：勾成时 ✓ 轻轻弹出 */
+.todo-check.checked {
+  animation: check-pop 220ms ease-out;
+}
+
+@keyframes check-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.18);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 .todo-text {
@@ -526,6 +611,35 @@ body {
   color: #fff;
 }
 
+/* 网格单元格的「在文件夹中显示」小按钮：hover 才出现，与删除按钮同排 */
+.shelf-cell-folder {
+  position: absolute;
+  top: -4px;
+  left: -2px;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(20, 20, 24, 0.9);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 1;
+}
+
+.shelf-cell:hover .shelf-cell-folder {
+  display: flex;
+}
+
+/* 列表行的文件夹按钮：继承 todo-del 形状，仅字色 */
+.shelf-row-folder {
+  font-size: 12px;
+}
+
 /* 列表（紧凑行） */
 .shelf-list {
   list-style: none;
@@ -605,13 +719,32 @@ body {
   white-space: nowrap;
 }
 
-/* 通知页空态：整块居中 */
+/* 通知页空态：整块居中，图标 + 主提示 + 副提示 */
 .notify-empty {
   flex: 1;
   width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.notify-empty-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.notify-empty-icon {
+  width: 34px;
+  height: 34px;
+  color: rgba(242, 243, 245, 0.22);
+  margin-bottom: 2px;
+}
+
+.notify-empty-sub {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.28);
 }
 
 /* ---------- 日程页 ---------- */
@@ -643,21 +776,23 @@ body {
   color-scheme: dark;
 }
 
-/* 时间徽标：有具体时间才显示 */
+/* 时间徽标：药丸样式（对照视频日程列表的时间徽标） */
 .sched-badge {
   flex: none;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: rgba(160, 132, 255, 0.9);
-  background: rgba(140, 110, 255, 0.14);
-  border-radius: 6px;
-  padding: 2px 6px;
+  color: #b9a8ff;
+  background: rgba(140, 110, 255, 0.16);
+  border-radius: 999px;
+  padding: 3px 9px;
+  line-height: 1;
 }
 
-/* 已过点未完成：变灰提醒 */
+/* 已过点未完成：橙色药丸提醒 */
 .sched-badge.sched-past {
-  color: rgba(255, 122, 89, 0.95);
-  background: rgba(255, 122, 89, 0.14);
+  color: #ffa078;
+  background: rgba(255, 122, 89, 0.16);
 }
 
 .notify-item {
