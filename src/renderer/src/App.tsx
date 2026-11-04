@@ -1346,13 +1346,30 @@ export default function App(): React.JSX.Element {
                 <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
               </span>
               <span className="panel-title">{PAGE_META[page].label}</span>
-              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量，居中 */}
+              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量圈，居中 */}
               <span className="head-status">
                 <Pet mood={mood} />
                 <span className="head-clock">{formatClock(now)}</span>
                 {battery !== null && (
-                  <span className="head-battery" title={`电量 ${battery}%`}>
-                    {battery}%
+                  <span
+                    className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
+                    role="img"
+                    aria-label={`电量 ${battery}%`}
+                    title={`电量 ${battery}%`}
+                  >
+                    <svg viewBox="0 0 36 36" aria-hidden="true">
+                      {/* 底环 + 进度环：stroke-dasharray 按 battery% 画弧（r=15.5 周长≈97.4） */}
+                      <circle className="ring-bg" cx="18" cy="18" r="15.5" />
+                      <circle
+                        className="ring-fg"
+                        cx="18"
+                        cy="18"
+                        r="15.5"
+                        strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
+                        transform="rotate(-90 18 18)"
+                      />
+                    </svg>
+                    <span className="ring-num">{battery}</span>
                   </span>
                 )}
               </span>
@@ -1438,8 +1455,24 @@ export default function App(): React.JSX.Element {
             <Pet mood={mood} />
             <span className="collapsed-clock">{formatClock(now)}</span>
             {battery !== null && (
-              <span className="collapsed-battery" title={`电量 ${battery}%`}>
-                {battery}%
+              <span
+                className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
+                role="img"
+                aria-label={`电量 ${battery}%`}
+                title={`电量 ${battery}%`}
+              >
+                <svg viewBox="0 0 36 36" aria-hidden="true">
+                  <circle className="ring-bg" cx="18" cy="18" r="15.5" />
+                  <circle
+                    className="ring-fg"
+                    cx="18"
+                    cy="18"
+                    r="15.5"
+                    strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
+                    transform="rotate(-90 18 18)"
+                  />
+                </svg>
+                <span className="ring-num">{battery}</span>
               </span>
             )}
             {notifyUnread > 0 && <span className="collapsed-dot" title={`${notifyUnread} 条未读通知`} />}

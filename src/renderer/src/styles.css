@@ -199,9 +199,45 @@ body {
   color: rgba(242, 243, 245, 0.85);
 }
 
-.head-battery {
-  font-size: 11px;
-  color: rgba(242, 243, 245, 0.45);
+/* 电量圆环（用户 m02391 截图：白圈 + 百分比数字居中，类似表盘）——收起态/展开态共用 */
+.head-battery-ring {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+}
+.head-battery-ring svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.head-battery-ring .ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 3;
+}
+.head-battery-ring .ring-fg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dasharray 400ms;
+}
+.head-battery-ring.low .ring-fg {
+  stroke: rgba(255, 107, 107, 0.9);
+}
+.head-battery-ring .ring-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
   font-variant-numeric: tabular-nums;
 }
 
