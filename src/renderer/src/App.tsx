@@ -1376,14 +1376,6 @@ export default function App(): React.JSX.Element {
               {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度+自启开关推到右侧，
                   与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
               <span className="panel-head-spacer" />
-              {page === 0 && (
-                <span className="todo-stat">
-                  <b className="todo-count">
-                    {todoStats.done}/{todoStats.total}
-                  </b>
-                  <span className="todo-count-label">已完成</span>
-                </span>
-              )}
               <button
                 type="button"
                 className={`autostart-toggle ${autoStart ? 'on' : ''}`}
@@ -1396,6 +1388,14 @@ export default function App(): React.JSX.Element {
                 <span className="autostart-dot" />
                 {autoStart === null ? '自启…' : autoStart ? '自启开' : '自启关'}
               </button>
+              {/* 完成度缩小为「0/0」纯数字，置于自启开关正下方（用户 m02643） */}
+              {page === 0 && (
+                <span className="todo-stat">
+                  <b className="todo-count">
+                    {todoStats.done}/{todoStats.total}
+                  </b>
+                </span>
+              )}
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}

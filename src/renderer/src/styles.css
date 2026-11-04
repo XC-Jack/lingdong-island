@@ -275,13 +275,15 @@ body {
   color: rgba(242, 243, 245, 0.92);
 }
 
-/* 待办完成度（面板头右侧，小而轻） */
+/* 待办完成度（自启开关正下方一行，仅 0/0 纯数字——用户 m02643）：
+   绝对定位挂头部右下，不参与 flex 流（width:100% 参流会把标题挤竖排） */
 .todo-stat {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  margin-right: 8px;
-  flex: none;
+  position: absolute;
+  right: 2px;
+  top: 100%;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .todo-count {
