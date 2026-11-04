@@ -178,6 +178,34 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+/* 展开态头部常驻状态区（对照参考工具：顶部信息 UI 展开后不消失）：迷你岛仔 + 时钟 + 电量 */
+.head-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding-right: 10px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.head-status .collapsed-pet {
+  width: 16px;
+  height: 16px;
+}
+
+.head-clock {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: rgba(242, 243, 245, 0.85);
+}
+
+.head-battery {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
 /* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标） */
 .panel-badge {
   width: 26px;

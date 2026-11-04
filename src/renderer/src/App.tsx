@@ -1204,6 +1204,16 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
+              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量 */}
+              <span className="head-status">
+                <Pet mood={mood} />
+                <span className="head-clock">{formatClock(now)}</span>
+                {battery !== null && (
+                  <span className="head-battery" title={`电量 ${battery}%`}>
+                    {battery}%
+                  </span>
+                )}
+              </span>
               <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
                 <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
               </span>
