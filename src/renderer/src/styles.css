@@ -43,6 +43,12 @@ body {
   will-change: width, height;
 }
 
+/* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画 */
+.page-fade {
+  width: 100%;
+  animation: page-fade-in 180ms ease-out;
+}
+
 .island.collapsed {
   /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
   width: max-content;
@@ -56,8 +62,13 @@ body {
 }
 
 .island.expanded {
-  width: 720px;
-  height: 300px;
+  /* 宽高随内容自然撑开（参照视频各页按内容收紧），上限由主进程 clamp */
+  width: max-content;
+  min-width: 420px;
+  max-width: 720px;
+  height: max-content;
+  min-height: 220px;
+  max-height: 420px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -299,10 +310,7 @@ body {
   color: #f2f3f5;
 }
 
-/* 切页淡入：换页时面板体轻轻浮起 */
-.page-fade {
-  animation: page-fade-in 180ms ease-out;
-}
+/* 切页淡入（.page-fade 定义在文件顶部 island 区块） */
 
 @keyframes page-fade-in {
   from {
@@ -321,7 +329,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
+  width: 100%;
 }
 
 /* 双击编辑待办文本时的行内输入框（视觉上贴 .todo-input） */
@@ -339,8 +347,9 @@ body {
   outline: none;
 }
 
+/* 列表随内容撑开；超出 .island.expanded 的 max-height 时在内部滚动 */
 .todo-list {
-  flex: 1;
+  flex: 0 1 auto;
   list-style: none;
   overflow-y: auto;
   display: flex;
@@ -513,8 +522,9 @@ body {
 }
 
 .shelf-drop {
-  flex: 1;
-  /* 无边框：整个面板就是存放区，拖进岛内任意位置都能放下 */
+  flex: 0 1 auto;
+  width: 100%;
+  /* 无边框：整个面板就是存放区，拖进岛内任意位置都能放下；高度随内容，超出面板上限内滚动 */
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -703,6 +713,7 @@ body {
   margin: 0;
   padding: 2px 4px;
   width: 100%;
+  flex: 0 1 auto;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -719,10 +730,11 @@ body {
   white-space: nowrap;
 }
 
-/* 通知页空态：整块居中，图标 + 主提示 + 副提示 */
+/* 通知页空态：整块居中，图标 + 主提示 + 副提示（高度随面板，不强行撑满） */
 .notify-empty {
-  flex: 1;
+  flex: 1 1 auto;
   width: 100%;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;

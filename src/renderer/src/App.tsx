@@ -671,18 +671,33 @@ export default function App(): React.JSX.Element {
   const collapseTimer = useRef<number | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
 
-  // 收起态宽度自适应：内容变化（电量出现/消失等）后量实际宽度报给主进程
+  // 尺寸自适应上报：岛元素按内容自然撑开（CSS max-content），这里量出实际尺寸报给主进程定窗口。
+  // 去抖 80ms：避开 width/height 过渡动画的中间值，只在尺寸稳定后上报。
   useEffect(() => {
-    if (expanded) return
     const el = islandRef.current
     if (!el) return
-    // 等一帧让 DOM 先按新内容排好版
-    const id = window.requestAnimationFrame(() => {
-      const w = Math.ceil(el.getBoundingClientRect().width)
-      if (w > 0) window.island.setCollapsedWidth(w)
+    let timer: number | null = null
+    const ro = new ResizeObserver(() => {
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        const r = el.getBoundingClientRect()
+        const w = Math.ceil(r.width)
+        const h = Math.ceil(r.height)
+        if (w <= 0 || h <= 0) return
+        if (el.classList.contains('expanded')) {
+          window.island.setExpandedSize(w, h)
+        } else {
+          window.island.setCollapsedWidth(w)
+        }
+      }, 80)
     })
-    return () => window.cancelAnimationFrame(id)
-  }, [expanded, battery])
+    ro.observe(el)
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+      ro.disconnect()
+    }
+  }, [])
 
   // 时钟走字
   useEffect(() => {
@@ -910,7 +925,7 @@ export default function App(): React.JSX.Element {
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
-              <div key={pageAnim} onClick={(e) => e.stopPropagation()} className="page-fade" style={{ width: '100%' }}>
+              <div key={pageAnim} onClick={(e) => e.stopPropagation()} className="page-fade">
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
                 ) : page === 1 ? (

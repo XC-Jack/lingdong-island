@@ -13,8 +13,11 @@ const COLLAPSED_MIN_W = 150
 const COLLAPSED_MAX_W = 320
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
 let collapsedWidth = 190
-/** 展开态尺寸（CSS 逻辑像素） */
-const EXPANDED = { width: 720, height: 300 }
+/** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
+const EXPANDED_MIN = { width: 420, height: 220 }
+const EXPANDED_MAX = { width: 720, height: 420 }
+/** 展开态当前尺寸（渲染层量出来的，默认值给个合理初始） */
+let expandedSize = { width: 560, height: 300 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
 /** 过渡动画时长（毫秒） */
@@ -28,7 +31,7 @@ let tweenTimer: NodeJS.Timeout | null = null
 function computeBounds(isExpanded: boolean): Electron.Rectangle {
   const { workArea } = screen.getPrimaryDisplay()
   const size = isExpanded
-    ? EXPANDED
+    ? expandedSize
     : { width: collapsedWidth, height: COLLAPSED_HEIGHT }
   return {
     x: Math.round(workArea.x + (workArea.width - size.width) / 2),
@@ -172,6 +175,23 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   // 只在收起态时立即应用（展开态下次收起时自然生效）
   if (!expanded && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setBounds(computeBounds(false))
+  }
+})
+
+// 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）
+ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
+  const nw = Number(w)
+  const nh = Number(h)
+  if (!Number.isFinite(nw) || !Number.isFinite(nh)) return
+  const next = {
+    width: Math.round(Math.min(EXPANDED_MAX.width, Math.max(EXPANDED_MIN.width, nw))),
+    height: Math.round(Math.min(EXPANDED_MAX.height, Math.max(EXPANDED_MIN.height, nh)))
+  }
+  if (next.width === expandedSize.width && next.height === expandedSize.height) return
+  expandedSize = next
+  // 只在展开态时立即应用（收起态下次展开时自然生效）
+  if (expanded && mainWindow && !mainWindow.isDestroyed()) {
+    animateTo(true)
   }
 })
 
