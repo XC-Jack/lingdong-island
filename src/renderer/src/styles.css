@@ -189,9 +189,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  color: var(--accent, #8b6bff);
   background: color-mix(in srgb, var(--accent, #8b6bff) 22%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #8b6bff) 35%, transparent);
+}
+
+.panel-badge svg {
+  width: 15px;
+  height: 15px;
 }
 
 .panel-title {
@@ -387,12 +392,17 @@ body {
   border: 1.5px solid rgba(255, 255, 255, 0.35);
   background: transparent;
   color: #7dd87d;
-  font-size: 12px;
-  line-height: 1;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+}
+
+.todo-check svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 3;
 }
 
 .todo-item.done .todo-check {
@@ -511,9 +521,16 @@ body {
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.06);
   color: rgba(242, 243, 245, 0.65);
-  font-size: 13px;
   cursor: pointer;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.shelf-view-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .shelf-view-btn:hover {
@@ -616,6 +633,10 @@ body {
   display: flex;
 }
 
+.shelf-cell:hover .shelf-cell-folder {
+  display: flex;
+}
+
 .shelf-cell-del:hover {
   background: rgba(255, 107, 107, 0.85);
   color: #fff;
@@ -631,8 +652,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 50%;
   background: rgba(20, 20, 24, 0.9);
-  font-size: 9px;
-  line-height: 1;
+  color: rgba(242, 243, 245, 0.8);
   cursor: pointer;
   display: none;
   align-items: center;
@@ -641,13 +661,20 @@ body {
   z-index: 1;
 }
 
-.shelf-cell:hover .shelf-cell-folder {
-  display: flex;
+.shelf-cell-folder svg {
+  width: 9px;
+  height: 9px;
 }
 
-/* 列表行的文件夹按钮：继承 todo-del 形状，仅字色 */
-.shelf-row-folder {
-  font-size: 12px;
+.shelf-cell-folder:hover {
+  color: #f2f3f5;
+  background: rgba(40, 40, 48, 0.95);
+}
+
+/* 列表行的文件夹按钮：继承 todo-del 形状，svg 缩到行内合适大小 */
+.shelf-row-folder svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* 列表（紧凑行） */
@@ -902,8 +929,9 @@ body {
   background: rgba(125, 216, 125, 0.14);
 }
 
-/* 顶部输入行：文本框 + 加号（苹果式：暗色填充、圆角统一、无刺眼白框） */
+/* 顶部输入行：文本框 + 时钟按钮 + 加号（苹果式：暗色填充、圆角统一、无刺眼白框） */
 .sched-add {
+  position: relative;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -933,6 +961,49 @@ body {
 .sched-input:focus {
   border-color: rgba(140, 110, 255, 0.55);
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* 时钟按钮：弹原生时间选择器（隐藏 input 承接 value）；选过时间后紫色高亮 */
+.sched-time-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  padding: 0;
+}
+
+.sched-time-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(242, 243, 245, 0.55);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+
+.sched-time-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sched-time-btn:hover {
+  color: #f2f3f5;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sched-time-btn.picked {
+  color: #b9a8ff;
+  border-color: rgba(140, 110, 255, 0.45);
+  background: rgba(140, 110, 255, 0.12);
 }
 
 /* 时间徽标：药丸样式（对照视频日程列表的时间徽标） */

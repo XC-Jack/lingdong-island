@@ -36,6 +36,89 @@ function formatClock(d: Date): string {
   return `${hh}:${mm}`
 }
 
+/** 线性小图标（stroke 继承 currentColor，替代 emoji：跨平台渲染一致、可随主题着色、任意缩放不糊） */
+function IconSvg({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {children}
+    </svg>
+  )
+}
+
+/** 对勾（待办页） */
+const IcoCheck = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </IconSvg>
+)
+
+/** 分格收纳（置物架页） */
+const IcoShelf = (): React.JSX.Element => (
+  <IconSvg>
+    <rect x="3.5" y="4" width="17" height="16" rx="2.5" />
+    <path d="M3.5 12h17M12 4v8" />
+  </IconSvg>
+)
+
+/** 铃铛（通知页） */
+const IcoBell = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M12 4a5.5 5.5 0 0 0-5.5 5.5v3l-1.4 2.4a.8.8 0 0 0 .7 1.2h12.4a.8.8 0 0 0 .7-1.2l-1.4-2.4v-3A5.5 5.5 0 0 0 12 4z" />
+    <path d="M10 19a2 2 0 0 0 4 0" />
+  </IconSvg>
+)
+
+/** 日历（日程页） */
+const IcoCal = (): React.JSX.Element => (
+  <IconSvg>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+    <path d="M3.5 9.5h17M8 3v4M16 3v4" />
+  </IconSvg>
+)
+
+/** 文件夹（在文件夹中显示） */
+const IcoFolder = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M3.5 6.5a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2v8.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+  </IconSvg>
+)
+
+/** 列表视图（三行点线） */
+const IcoList = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M9 6.5h11M9 12h11M9 17.5h11" />
+    <circle cx="4.8" cy="6.5" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="4.8" cy="12" r="1.1" fill="currentColor" stroke="none" />
+    <circle cx="4.8" cy="17.5" r="1.1" fill="currentColor" stroke="none" />
+  </IconSvg>
+)
+
+/** 大图标视图（四宫格） */
+const IcoGrid = (): React.JSX.Element => (
+  <IconSvg>
+    <rect x="4" y="4" width="7" height="7" rx="1.6" />
+    <rect x="13" y="4" width="7" height="7" rx="1.6" />
+    <rect x="4" y="13" width="7" height="7" rx="1.6" />
+    <rect x="13" y="13" width="7" height="7" rx="1.6" />
+  </IconSvg>
+)
+
+/** 时钟（日程时间选择按钮，点它弹原生时间选择器） */
+const IcoClock = (): React.JSX.Element => (
+  <IconSvg>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </IconSvg>
+)
+
 /** 岛仔：一只简单的黑胶囊宠物。idle 时呼吸+眨眼，happy 时弯眼+微笑+弹跳+星星 */
 function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
   const happy = mood === 'happy'
@@ -182,7 +265,7 @@ function TodoPanel({
               title={t.done ? '标记为未完成' : '标记为已完成'}
               onClick={() => void toggle(t)}
             >
-              {t.done ? '✓' : ''}
+              {t.done ? <IcoCheck /> : ''}
             </button>
             {editingId === t.id ? (
               <input
@@ -349,7 +432,7 @@ function ShelfPanel(): React.JSX.Element {
           title={view === 'grid' ? '切换为列表' : '切换为大图标'}
           onClick={() => setView(view === 'grid' ? 'list' : 'grid')}
         >
-          {view === 'grid' ? '☰' : '⊞'}
+          {view === 'grid' ? <IcoList /> : <IcoGrid />}
         </button>
         <button
           type="button"
@@ -415,7 +498,7 @@ function ShelfPanel(): React.JSX.Element {
                   title="在文件夹中显示"
                   onClick={() => window.island.shelfShowInFolder(it.path)}
                 >
-                  📁
+                  <IcoFolder />
                 </button>
               </li>
             ))}
@@ -440,7 +523,7 @@ function ShelfPanel(): React.JSX.Element {
                   title="在文件夹中显示"
                   onClick={() => window.island.shelfShowInFolder(it.path)}
                 >
-                  📁
+                  <IcoFolder />
                 </button>
                 <button
                   type="button"
@@ -630,6 +713,10 @@ function SchedulePanel(): React.JSX.Element {
   const [items, setItems] = useState<ScheduleItem[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
+  // 可选时间（HH:mm 或空）：时钟图标按钮弹原生时间选择器，不再显示丑的 --:-- 文本框
+  const [time, setTime] = useState('')
+  // 隐藏的原生时间输入框引用：时钟按钮点击时触发 showPicker()
+  const timeInputRef = useRef<HTMLInputElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => {
     const d = new Date()
@@ -644,11 +731,12 @@ function SchedulePanel(): React.JSX.Element {
   const add = useCallback(() => {
     const t = text.trim()
     if (!t) return
-    void window.island.scheduleAdd(t, null).then((list) => {
+    void window.island.scheduleAdd(t, time || null).then((list) => {
       setItems(list)
       setText('')
+      setTime('')
     })
-  }, [text])
+  }, [text, time])
 
   const toggle = useCallback((id: string) => {
     void window.island.scheduleToggle(id).then(setItems)
@@ -697,6 +785,23 @@ function SchedulePanel(): React.JSX.Element {
               if (e.key === 'Enter') add()
             }}
           />
+          {/* 时钟按钮：弹原生时间选择器（隐藏 input 承接 value），选过时间后高亮显示，再点可重选 */}
+          <input
+            ref={timeInputRef}
+            className="sched-time-native"
+            type="time"
+            tabIndex={-1}
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+          />
+          <button
+            type="button"
+            className={`sched-time-btn ${time ? 'picked' : ''}`}
+            title={time ? `已选 ${time}，点击重选` : '可选：到点前提醒'}
+            onClick={() => timeInputRef.current?.showPicker()}
+          >
+            <IcoClock />
+          </button>
           <button type="button" className="todo-add-btn" title="添加日程" onClick={add}>
             +
           </button>
@@ -753,12 +858,12 @@ function SchedulePanel(): React.JSX.Element {
   )
 }
 
-/** 页标签：页头图标 + 名称（对照视频里每页左上角的彩色小图标 + 页名） */
-const PAGE_META: { icon: string; label: string; accent: string }[] = [
-  { icon: '✓', label: '待办', accent: '#7dd87d' },
-  { icon: '🗂', label: '置物架', accent: '#ffb74d' },
-  { icon: '🔔', label: '通知', accent: '#9f8bff' },
-  { icon: '📅', label: '日程', accent: '#64b5f6' },
+/** 页标签：页头图标组件 + 名称（对照视频里每页左上角的彩色小图标 + 页名）；图标用线性 SVG，不用 emoji */
+const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string }[] = [
+  { icon: IcoCheck, label: '待办', accent: '#7dd87d' },
+  { icon: IcoShelf, label: '置物架', accent: '#ffb74d' },
+  { icon: IcoBell, label: '通知', accent: '#9f8bff' },
+  { icon: IcoCal, label: '日程', accent: '#64b5f6' },
 ]
 
 export default function App(): React.JSX.Element {
@@ -1002,7 +1107,7 @@ export default function App(): React.JSX.Element {
           <>
             <div className="panel-head">
               <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
-                <span className="panel-badge-icon">{PAGE_META[page].icon}</span>
+                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
               </span>
               <span className="panel-title">{PAGE_META[page].label}</span>
               <span className="panel-head-spacer" />
