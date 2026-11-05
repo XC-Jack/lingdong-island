@@ -43,6 +43,22 @@ Windows 桌面顶部居中的悬浮胶囊：收起时是一条窄条，点开展
 └── .dsh-vision-router/    （忽略）看屏幕截图时留下的记录，备查
 ```
 
+## src 里每个文件是干什么的
+
+| 文件 | 中文作用 |
+|---|---|
+| `src/main/index.ts` | 主进程总入口：建窗口、开机自启、处理「打开文件」「在文件夹中显示」 |
+| `src/main/todoStore.ts` | 待办数据的读写（存 `todos.json`） |
+| `src/main/scheduleStore.ts` | 日程数据的读写（存 `schedule.json`） |
+| `src/main/shelfStore.ts` | 置物架数据的读写 + 提取系统图标（存 `shelf.json` 和 `icon-cache/`） |
+| `src/main/notifyStore.ts` | 通知已读记录的读写（存 `notif-read.json`） |
+| `src/main/statusStore.ts` | 电量等系统状态的读取 |
+| `src/preload/index.ts` | 中间人：把主进程的能力安全地交给界面 |
+| `src/renderer/src/App.tsx` | **界面主体**——你看到的全部画面和交互都在这里 |
+| `src/renderer/src/main.tsx` | 界面的启动入口，只负责把 App 挂上去 |
+| `src/renderer/src/styles.css` | 全部样式：颜色、尺寸、动画 |
+| `src/shared/types.ts` | 主进程和界面共用的数据格式定义 |
+
 ## 文档入口
 
 **产品是什么** → [`docs/facts/产品定义.md`](docs/facts/产品定义.md)
