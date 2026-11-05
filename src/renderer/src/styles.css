@@ -1369,18 +1369,19 @@ body {
   z-index: 5;
   background: rgba(28, 28, 34, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  border-radius: 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  padding: 8px;
-  width: 168px;
+  padding: 6px;
+  /* 修身：两列数字各 44px，加上留白刚好不显臃肿 */
+  width: 132px;
 }
 
 .time-pop-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 4px 6px;
-  font-size: 11px;
+  padding: 0 2px 5px;
+  font-size: 10.5px;
   color: rgba(242, 243, 245, 0.55);
 }
 
@@ -1388,9 +1389,9 @@ body {
   border: none;
   background: none;
   color: #b9a8ff;
-  font-size: 11px;
+  font-size: 10.5px;
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 3px;
 }
 
 .time-pop-clear:hover {
@@ -1399,24 +1400,33 @@ body {
 
 .time-pop-cols {
   display: flex;
-  gap: 4px;
+  gap: 2px;
 }
 
+/* 隐藏滚动条但仍可滚动：滚轮/触控板照常，视觉上只剩两列数字 */
 .time-pop-col {
   flex: 1;
-  height: 152px;
+  min-width: 0;
+  height: 150px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-right: 2px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  gap: 1px;
+  padding-right: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior: contain;
+}
+
+.time-pop-col::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .time-pop-cell {
   flex: none;
-  height: 24px;
+  height: 23px;
   border: none;
   border-radius: 6px;
   background: transparent;
