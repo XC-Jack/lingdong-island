@@ -201,6 +201,20 @@ async function main() {
   if (!a7) throw new Error('A7 界面白屏')
   console.log('[A7] 界面存活')
 
+  // A8 输入框里的空格/回车不收岛（US-036 真凶防回归：岛根 onKeyDown 见 Enter/空格 toggle()，
+  // 输入框必须 stopPropagation。派发 bubbles keydown 模拟冒泡路径）
+  const a8 = await evalJs(`(async () => {
+    const input = document.querySelector('.sched-input')
+    input.focus()
+    const fire = (key) => input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+    fire(' ')
+    fire('Enter')
+    await new Promise((r) => setTimeout(r, 250))
+    return { expanded: !!document.querySelector('.sched-input'), alive: !!document.querySelector('.island') }
+  })()`)
+  if (!a8.expanded || !a8.alive) throw new Error(`A8 输入框空格/回冒泡收岛: ${JSON.stringify(a8)}`)
+  console.log(`[A8] 输入框空格/回车冒泡后岛保持展开: ${JSON.stringify(a8)}`)
+
   console.log('E2E SCHEDULE-EDIT PASS')
 }
 

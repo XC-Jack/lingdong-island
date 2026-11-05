@@ -376,6 +376,9 @@ function TodoPanel({
           placeholder="加一条今天要做的事，回车连记…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）。
+            // 拼音输入用空格选字、回车上屏都会冒泡到这里，把正在输入的岛收走。
+            e.stopPropagation()
             if (e.key === 'Enter') void add()
           }}
         />
@@ -1273,6 +1276,9 @@ function SchedulePanel(): React.JSX.Element {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑，
+              // 日程页输入框与待办页同修：空格选字/回车提交都会冒泡）
+              e.stopPropagation()
               if (e.key === 'Enter') add()
             }}
           />
