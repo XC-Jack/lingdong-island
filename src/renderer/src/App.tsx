@@ -37,6 +37,11 @@ function formatClock(d: Date): string {
   return `${hh}:${mm}`
 }
 
+/** 本地日期键 'YYYY-MM-DD'。不能用 toISOString：那是 UTC，东八区凌晨会差一天 */
+function localDayKey(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** 线性小图标（stroke 继承 currentColor，替代 emoji：跨平台渲染一致、可随主题着色、任意缩放不糊） */
 function IconSvg({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -197,7 +202,8 @@ function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
   )
 }
 
-/** 待办面板：列表 + 勾选 + 增 + 删 + 改（双击编辑） + 完成度 n/m */
+/** 待办面板：今天要做什么（今天的日程 + 待办混排） + 勾选 + 增 + 删 + 改（双击编辑） + 完成度 n/m
+ *  US-033：待办页与「今天」同步——只列今天的日程，明天/昨天不出现，新增的内容存为今天的日程 */
 function TodoPanel({
   onDonePulse,
   onStats,
@@ -206,36 +212,73 @@ function TodoPanel({
   onStats: (done: number, total: number) => void
 }): React.JSX.Element {
   const [todos, setTodos] = useState<Todo[]>([])
+  const [items, setItems] = useState<ScheduleItem[]>([])
   const [draft, setDraft] = useState('')
   // 双击编辑：正在改名的条目 id + 草稿
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const draftInputRef = useRef<HTMLInputElement | null>(null)
+  // 新增时可选的时间（HH:mm 或空），复用日程页那套自绘深色时间面板
+  const [time, setTime] = useState('')
+  const [timePop, setTimePop] = useState(false)
+  const timePopRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let alive = true
     void window.island.todosList().then((list) => {
       if (alive) setTodos(list)
     })
+    void window.island.scheduleList().then((list) => {
+      if (alive) setItems(list)
+    })
     return () => {
       alive = false
     }
   }, [])
 
-  // 完成度统计上抛给面板头（右上角「n/m 已完成」）
-  const done = todos.filter((t) => t.done).length
+  // 时间面板开着时，点面板外自动收起
   useEffect(() => {
-    onStats(done, todos.length)
-  }, [done, todos.length, onStats])
+    if (!timePop) return
+    const onDown = (e: MouseEvent): void => {
+      if (!timePopRef.current?.contains(e.target as Node)) setTimePop(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [timePop])
+
+  // 只取今天（本地日期）的日程：明天的、昨天的一律不进来
+  const today = localDayKey()
+  const todayItems = items.filter((it) => it.day === today)
+  const schedSorted = [...todayItems].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1
+    if (a.time && b.time) return a.time.localeCompare(b.time)
+    if (a.time) return -1
+    if (b.time) return 1
+    return a.createdAt - b.createdAt
+  })
+  const todoSorted = [...todos].sort((a, b) => Number(a.done) - Number(b.done))
+
+  // 完成度统计上抛给面板头（右上角「n/m 已完成」）：待办 + 今天的日程一起算
+  const done = todos.filter((t) => t.done).length + todayItems.filter((it) => it.done).length
+  const total = todos.length + todayItems.length
+  useEffect(() => {
+    onStats(done, total)
+  }, [done, total, onStats])
+
+  const hm = formatClock(new Date())
 
   const add = useCallback(async () => {
     const text = draft.trim()
     if (!text) return
     setDraft('')
-    setTodos(await window.island.todosAdd(text))
+    const t = time
+    setTime('')
+    setTimePop(false)
+    // 存为「今天的日程」：今天在待办页与日程页都能看到，明天从待办页消失
+    setItems(await window.island.scheduleAdd(text, t || null, today))
     // 加完保持输入框焦点，方便连着录几条
     draftInputRef.current?.focus()
-  }, [draft])
+  }, [draft, time, today])
 
   const toggle = useCallback(
     async (t: Todo) => {
@@ -246,8 +289,20 @@ function TodoPanel({
     [onDonePulse]
   )
 
+  const toggleSched = useCallback(
+    async (it: ScheduleItem) => {
+      setItems(await window.island.scheduleToggle(it.id))
+      if (!it.done) onDonePulse()
+    },
+    [onDonePulse]
+  )
+
   const remove = useCallback(async (id: string) => {
     setTodos(await window.island.todosRemove(id))
+  }, [])
+
+  const removeSched = useCallback(async (id: string) => {
+    setItems(await window.island.scheduleRemove(id))
   }, [])
 
   // 双击进入编辑：草稿先填当前文本，下次渲染时选中全部
@@ -272,25 +327,109 @@ function TodoPanel({
           ref={draftInputRef}
           className="todo-input"
           value={draft}
-          placeholder="加一个待办，回车连记…"
+          placeholder="加一条今天要做的事，回车连记…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void add()
           }}
         />
+        {/* 时钟按钮：可选时间，选过之后高亮显示，再点可收起 */}
+        <button
+          type="button"
+          className={`sched-time-btn ${time ? 'picked' : ''} ${timePop ? 'open' : ''}`}
+          title={time ? `已选 ${time}，点击重选` : '可选：加个时间'}
+          aria-label={time ? `已选时间 ${time}，点击重选` : '选择时间'}
+          aria-expanded={timePop}
+          onClick={() => setTimePop((v) => !v)}
+        >
+          <IcoClock />
+        </button>
         <button
           type="button"
           className="todo-add-btn"
           title="添加"
-          aria-label="添加待办"
+          aria-label="添加"
           onClick={() => void add()}
         >
           +
         </button>
+        {timePop && (
+          <div className="sched-time-pop" ref={timePopRef}>
+            <div className="time-pop-head">
+              <span>{time ? `已选 ${time}` : '选择时间'}</span>
+              {time && (
+                <button
+                  type="button"
+                  className="time-pop-clear"
+                  onClick={() => {
+                    setTime('')
+                  }}
+                >
+                  清除
+                </button>
+              )}
+            </div>
+            <div className="time-pop-cols">
+              <div className="time-pop-col">
+                {Array.from({ length: 24 }, (_, h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    className={`time-pop-cell ${time.slice(0, 2) === String(h).padStart(2, '0') ? 'picked' : ''}`}
+                    onClick={() => setTime((prev) => `${String(h).padStart(2, '0')}${prev.slice(2) || ':00'}`)}
+                  >
+                    {String(h).padStart(2, '0')}
+                  </button>
+                ))}
+              </div>
+              <div className="time-pop-col">
+                {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`time-pop-cell ${time.slice(3) === String(m).padStart(2, '0') ? 'picked' : ''}`}
+                    onClick={() => setTime((prev) => `${prev.slice(0, 2) || '08'}:${String(m).padStart(2, '0')}`)}
+                  >
+                    {String(m).padStart(2, '0')}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       <ul className="todo-list">
-        {todos.length === 0 && <li className="todo-empty">还没有待办，加一个吧</li>}
-        {todos.map((t) => (
+        {schedSorted.length === 0 && todoSorted.length === 0 && (
+          <li className="todo-empty">今天还没有安排，加一条吧</li>
+        )}
+        {/* 今天的日程：只显示时间（不显示日期），过点未完成的徽标变橙 */}
+        {schedSorted.map((it) => (
+          <li key={`s${it.id}`} className={`todo-item todo-sched ${it.done ? 'done' : ''}`}>
+            <button
+              type="button"
+              className={`todo-check ${it.done ? 'checked' : ''}`}
+              title={it.done ? '标记为未完成' : '标记为已完成'}
+              aria-label={it.done ? `标记日程 ${it.text} 为未完成` : `标记日程 ${it.text} 为已完成`}
+              onClick={() => void toggleSched(it)}
+            >
+              {it.done ? <IcoCheck /> : ''}
+            </button>
+            {it.time && (
+              <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>{it.time}</span>
+            )}
+            <span className="todo-text">{it.text}</span>
+            <button
+              type="button"
+              className="todo-del"
+              title="删除"
+              aria-label={`删除日程 ${it.text}`}
+              onClick={() => void removeSched(it.id)}
+            >
+              ×
+            </button>
+          </li>
+        ))}
+        {todoSorted.map((t) => (
           <li key={t.id} className={`todo-item ${t.done ? 'done' : ''}`}>
             <button
               type="button"
@@ -960,10 +1099,7 @@ function SchedulePanel(): React.JSX.Element {
   const [timePop, setTimePop] = useState(false)
   const timePopRef = useRef<HTMLDivElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
-  const [selDay, setSelDay] = useState<string>(() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })
+  const [selDay, setSelDay] = useState<string>(() => localDayKey())
 
   useEffect(() => {
     void window.island.scheduleList().then(setItems)
@@ -1004,10 +1140,7 @@ function SchedulePanel(): React.JSX.Element {
   }, [])
 
   // 今天（本地时区），用于「待办只在今天混排」与过期判定
-  const todayKey = (() => {
-    const d = new Date()
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  })()
+  const todayKey = localDayKey()
   // 有日程的日子标蓝点
   const markedDays = new Set<string>(items.map((it) => it.day))
   // 选中日当天的日程（按 done / 时间排序）
@@ -1314,9 +1447,15 @@ export default function App(): React.JSX.Element {
   // 收起态不渲染 TodoPanel，拿不到它上抛的统计，这里直接问一次主进程现算。
   // 只在「首次挂载」和「每次收回」时算（expanded 初值就是 false，挂载即覆盖），
   // 不挂轮询：收起态没有待办编辑入口，唯一的变动来源是展开态里的操作。
+  // 口径必须与 TodoPanel 的 onStats 一致：待办 + 今天的日程（US-033）。
   const refreshTodoStats = useCallback(() => {
-    void window.island.todosList().then((list) => {
-      setTodoStats({ done: list.filter((t) => t.done).length, total: list.length })
+    const today = localDayKey()
+    void Promise.all([window.island.todosList(), window.island.scheduleList()]).then(([list, sched]) => {
+      const day = sched.filter((it) => it.day === today)
+      setTodoStats({
+        done: list.filter((t) => t.done).length + day.filter((it) => it.done).length,
+        total: list.length + day.length
+      })
     })
   }, [])
 
@@ -1588,13 +1727,14 @@ export default function App(): React.JSX.Element {
                 <span className="ring-num">{battery}</span>
               </span>
             )}
-            {/* 待办剩余（收起态）：只在真有未完成待办时出现，全部做完就收起不再催 */}
+            {/* 待办剩余（收起态）：只在真有未完成的事时出现，全部做完就收起不再催。
+                US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」 */}
             {todoStats.total - todoStats.done > 0 && (
               <span
                 className="collapsed-todo"
-                title={`还有 ${todoStats.total - todoStats.done} 件待办（共 ${todoStats.total} 件）`}
+                title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}
                 role="img"
-                aria-label={`还有 ${todoStats.total - todoStats.done} 件待办未完成`}
+                aria-label={`今天还有 ${todoStats.total - todoStats.done} 件没做完`}
               >
                 <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
               </span>

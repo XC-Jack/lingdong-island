@@ -563,6 +563,8 @@ body {
 .todo-add {
   display: flex;
   gap: 8px;
+  /* 时间选择面板（.sched-time-pop）按此定位（US-033：待办页也能选时间） */
+  position: relative;
 }
 
 .todo-input {
