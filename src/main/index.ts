@@ -22,8 +22,8 @@ const EXPANDED_MAX = { width: 720, height: 420 }
 let expandedSize = { width: 560, height: 300 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
-/** 过渡动画时长（毫秒） */
-const TWEEN_MS = 220
+/** 过渡动画时长（毫秒）。用户实测 220ms 太急，调到 500ms（US-038 验收反馈，用户嫌 320 仍快） */
+const TWEEN_MS = 500
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
