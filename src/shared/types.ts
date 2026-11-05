@@ -18,4 +18,25 @@ export interface ShelfItem {
   size: number
   /** 拖入时间戳（毫秒） */
   addedAt: number
+  /**
+   * 原文件是否已经不在了（被移走/删除）。
+   * 运行时由主进程查文件系统算出，**不写进 shelf.json**，读盘时一律视为 false。
+   */
+  missing?: boolean
+}
+
+/** 打开置物架条目的结果（结构化返回，避免把英文系统报错直接甩给用户） */
+export interface ShelfOpenResult {
+  /** 是否成功打开 */
+  ok: boolean
+  /** 失败原因分类：missing=文件已不在；empty=路径为空；failed=系统打开失败 */
+  reason: 'ok' | 'missing' | 'empty' | 'failed'
+  /** 系统返回的原始英文错误（仅在 reason==='failed' 时有值，只用于日志/兜底展示） */
+  detail?: string
+}
+
+/** 「在文件夹中显示」的结果 */
+export interface ShelfRevealResult {
+  ok: boolean
+  reason: 'ok' | 'missing' | 'empty'
 }

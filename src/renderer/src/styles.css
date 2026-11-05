@@ -979,6 +979,103 @@ body {
   color: #ff8f8f;
 }
 
+/* ---------- 置物架：文件失效（原文件被移走/删除） ---------- */
+
+/* 失效条目的整体观感：淡下去，让人一眼看出「这条已经不在磁盘上了」 */
+.shelf-cell.missing .shelf-cell-body {
+  opacity: 0.45;
+}
+
+.shelf-cell.missing .shelf-cell-name {
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 143, 143, 0.75);
+}
+
+.shelf-item.missing {
+  background: rgba(255, 143, 143, 0.07);
+}
+
+.shelf-item.missing .shelf-icon {
+  opacity: 0.45;
+}
+
+.shelf-item.missing .shelf-name {
+  color: rgba(207, 195, 255, 0.5);
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 143, 143, 0.75);
+}
+
+/* 「失效」小徽标：走一行小字，不用红色大块，避免把正常文件也衬得脏 */
+.shelf-badge-missing {
+  flex: none;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 6px;
+  color: #ffb3b3;
+  background: rgba(255, 107, 107, 0.16);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  white-space: nowrap;
+}
+
+/* 图标视图里徽标跟在文件名下面一行，不压在名字上 */
+.shelf-cell-body .shelf-badge-missing {
+  margin-top: 1px;
+}
+
+/* 失效条目上的「在文件夹中显示」不可点 */
+.shelf-cell-folder:disabled,
+.shelf-row-folder:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* 底部提示条：中文说明 + 一键移除 */
+.shelf-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  background: rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(255, 107, 107, 0.28);
+  color: #ffc9c9;
+}
+
+.shelf-notice.failed {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #ffd7d7;
+}
+
+.shelf-notice-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.shelf-notice-btn {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  background: rgba(255, 107, 107, 0.18);
+  color: #ffc9c9;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.shelf-notice-btn:hover {
+  background: rgba(255, 107, 107, 0.32);
+  color: #ffffff;
+}
+
 /* ---------- 通知面板 ---------- */
 
 .notify-list {

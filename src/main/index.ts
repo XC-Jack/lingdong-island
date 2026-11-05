@@ -1,10 +1,12 @@
 import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
 import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
+import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
 const COLLAPSED_HEIGHT = 42
@@ -196,18 +198,25 @@ ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
 })
 
 // 打开置物架里的文件（用系统默认程序）
-ipcMain.handle('shelf:open', async (_e, path: unknown) => {
+// 返结构化的结果而不是原始字符串：文件已不在时直接回 missing，
+// 不让 shell.openPath 的英文系统报错（如 "Failed to open path"）透到界面上。
+ipcMain.handle('shelf:open', async (_e, path: unknown): Promise<ShelfOpenResult> => {
   const p = String(path ?? '')
-  if (!p) return 'empty path'
+  if (!p) return { ok: false, reason: 'empty' }
+  if (!existsSync(p)) return { ok: false, reason: 'missing' }
   const err = await shell.openPath(p)
   // 成功时 openPath 返回空字符串
-  return err || 'ok'
+  if (!err) return { ok: true, reason: 'ok' }
+  return { ok: false, reason: 'failed', detail: err }
 })
 
-// 在资源管理器里显示文件
-ipcMain.handle('shelf:show-in-folder', (_e, path: unknown) => {
+// 在资源管理器里显示文件；文件已不在时同样如实回报，让界面能说明原因
+ipcMain.handle('shelf:show-in-folder', (_e, path: unknown): ShelfRevealResult => {
   const p = String(path ?? '')
-  if (p) shell.showItemInFolder(p)
+  if (!p) return { ok: false, reason: 'empty' }
+  if (!existsSync(p)) return { ok: false, reason: 'missing' }
+  shell.showItemInFolder(p)
+  return { ok: true, reason: 'ok' }
 })
 
 // ---------- 开机自启 ----------

@@ -31,6 +31,23 @@ function save(data: StoreShape): void {
   writeFileSync(file, JSON.stringify(data, null, 2), 'utf8')
 }
 
+/**
+ * 给条目补上「原文件是否还在」这个运行时状态。
+ * 只加在传出去的副本上，不写盘（shelf.json 里永远没有 missing 字段）；
+ * 每次返回列表都重新查一次文件系统，文件放回原处后标识会自动消失。
+ */
+function withMissing(items: ShelfItem[]): ShelfItem[] {
+  return items.map((it) => {
+    let missing = false
+    try {
+      missing = !existsSync(it.path)
+    } catch {
+      missing = true
+    }
+    return missing ? { ...it, missing: true } : { ...it, missing: false }
+  })
+}
+
 function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
@@ -157,18 +174,19 @@ export function setupShelfStore(): void {
   iconDir = join(app.getPath('userData'), 'icon-cache')
   mkdirSync(app.getPath('userData'), { recursive: true })
 
-  ipcMain.handle('shelf:list', (): ShelfItem[] => load().items)
+  // 返回给渲染层的列表一律带 missing 运行时状态（不落盘）
+  ipcMain.handle('shelf:list', (): ShelfItem[] => withMissing(load().items))
 
   ipcMain.handle('shelf:add', (_e, paths: unknown): ShelfItem[] => {
     const list = Array.isArray(paths) ? paths : [paths]
-    return addPaths(list.map(String))
+    return withMissing(addPaths(list.map(String)))
   })
 
   ipcMain.handle('shelf:remove', (_e, id: unknown): ShelfItem[] => {
     const data = load()
     data.items = data.items.filter((x) => x.id !== id)
     save(data)
-    return data.items
+    return withMissing(data.items)
   })
 
   ipcMain.handle('shelf:clear', (): ShelfItem[] => {
@@ -178,7 +196,7 @@ export function setupShelfStore(): void {
 
   // 网格内拖动排序：渲染层传新的 id 顺序，主进程按它重排后持久化
   ipcMain.handle('shelf:reorder', (_e, ids: unknown): ShelfItem[] => {
-    if (!Array.isArray(ids)) return load().items
+    if (!Array.isArray(ids)) return withMissing(load().items)
     const order = ids.map(String)
     const data = load()
     data.items.sort((a, b) => {
@@ -191,7 +209,7 @@ export function setupShelfStore(): void {
       return ia - ib
     })
     save(data)
-    return data.items
+    return withMissing(data.items)
   })
 
   // 按文件名取系统图标 PNG 的绝对路径；渲染层用 file:// 直接显示。

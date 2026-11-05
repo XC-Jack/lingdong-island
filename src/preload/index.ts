@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
-export type { Todo, ShelfItem }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult }
 
 /** 收起态状态栏的数据快照（与主进程 statusStore 保持一致） */
 export interface StatusSnapshot {
@@ -96,11 +96,15 @@ const api = {
   shelfIcon(name: string, path: string): Promise<string | null> {
     return ipcRenderer.invoke('shelf:icon', name, path)
   },
-  shelfOpen(path: string): Promise<string> {
+  shelfOpen(path: string): Promise<ShelfOpenResult> {
     return ipcRenderer.invoke('shelf:open', path)
   },
-  shelfShowInFolder(path: string): void {
-    ipcRenderer.send('shelf:show-in-folder', path)
+  /**
+   * 在文件夹中显示。走 invoke 而不是 send：主进程注册的是 ipcMain.handle，
+   * 用 send 发出去的事件没有任何监听者，按钮点了会静默无反应（既有 bug，本次一并修好）。
+   */
+  shelfShowInFolder(path: string): Promise<ShelfRevealResult> {
+    return ipcRenderer.invoke('shelf:show-in-folder', path)
   },
   /** 拖放落盘后广播新列表（本进程内直接调用回调，无序列化歧义） */
   emitShelfAdded(list: ShelfItem[]): void {
