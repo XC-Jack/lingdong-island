@@ -480,8 +480,14 @@ function TodoPanel({
                 onChange={(e) => setEditDraft(e.target.value)}
                 onBlur={() => void commitEdit()}
                 onKeyDown={(e) => {
+                  // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛，
+                  // 编辑框里回车提交会把整座岛收走（US-036 实测踩坑，待办编辑框同修）
+                  e.stopPropagation()
                   if (e.key === 'Enter') void commitEdit()
-                  if (e.key === 'Escape') setEditingId(null)
+                  if (e.key === 'Escape') {
+                    e.stopPropagation() // Esc 另有「收起岛」的全局监听，编辑框内 Esc 只取消编辑
+                    setEditingId(null)
+                  }
                 }}
               />
             ) : (
