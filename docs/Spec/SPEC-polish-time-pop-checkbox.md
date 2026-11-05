@@ -59,14 +59,14 @@
 | 日期 | 执行内容 | 结果 | 未验证部分 |
 |---|---|---|---|
 | 2026-11-05 | 读 `styles.css:1365-1442` 确认滚动条来自 `.time-pop-col` 的 `scrollbar-width: thin` + Chromium 默认 `::-webkit-scrollbar`；读 `App.tsx:1251-1294` 确认日程页用的是原生 `<input type="checkbox">`（待办页早已是 `<button>` + `IcoCheck`） | ✅ 根因确认：两处是不同实现 | — |
-| 待填 | — | — | — |
-
-## 八、验收记录
-
-| 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
-|---|---|---|---|---|
 | 2026-11-05 | `npm run typecheck` | ✅ exit 0（node + web 两套均无输出） | — |
 | 2026-11-05 | `npm run build` | ✅ exit 0（`index-ik2SyyID.css` 33.70 kB、`index-Du88IroK.js` 631.74 kB） | — |
 | 2026-11-05 | 截图核对（开发版 + CDP `Page.captureScreenshot`） | ✅ 时间面板只剩两列数字、无滚动条、宽度明显变窄（132px）；日程页三条日程的勾选框均为圆环，已完成那条是绿圈带勾，与待办页一致 | 截图只看了一个静态帧，未录手感（滚轮滚动的顺滑度需真人操作） |
 | 2026-11-05 | 回归：`e2e-schedule` / `e2e-m2` / `e2e-todo-today` / `e2e-collapsed-todo` | ✅ 全部 PASS（`E2E SCHEDULE PASS` / `E2E M2 PASS` / `E2E TODO-TODAY PASS` / `E2E COLLAPSED-TODO PASS`）。`e2e-schedule.mjs:106` 点的正是 `.sched-list .todo-check`，换成 button 后仍能点中并切换状态 | 其余 e2e（m1/m3/m4/shelf-missing/notify/schedule-day）本次未跑：改动只碰 `.todo-check` 的标签与时间面板 CSS，未涉及它们的断言路径 |
 | 2026-11-05 | `npm run dist` + 卸载旧版 + `/S /D=D:\软件\灵动岛` 安装 + 启动 | ✅ 安装包 121980373 字节 17:23:04；`Get-Process 灵动岛` 4 个进程、主窗口「灵动岛」；`app.asar` 9045431 字节 17:23:02，内检索 `scrollbar-width: none` / `width: 132px` / `overscroll-behavior: contain` 均为 True | — |
+
+## 八、验收记录
+
+| 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
+|---|---|---|---|---|
+| 2026-11-05 | 用户本人（会话记录 m02025「可以」） | `19ec036d7996826dd21bcdb95766519c6c04a9e2`（合并提交 `0fa9f99`） | 用户看过交付里的改动表与截图后同意合并，按「整体通过」记。逐条：①时间面板不再有滚动条、宽度收窄到 132px——交付截图与 asar 字符串核对一致 ②日程页勾选框改成圆环，与待办页同款——交付截图确认 ③功能未变——四个 e2e 回归通过 | 通过（已合并回 `main`） |
