@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
@@ -26,8 +26,56 @@ const TOP_GAP = 6
 const TWEEN_MS = 220
 
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
 let expanded = false
 let tweenTimer: NodeJS.Timeout | null = null
+
+/**
+ * 真正退出应用（US-034）。
+ * 顺序很重要：先停两个轮询（通知 30s、日程提醒 60s），再 app.quit()。
+ * 不先停的话，退出瞬间可能正好轮询到一条到点提醒，弹出一个「点不回去」的通知。
+ */
+function quitApp(): void {
+  stopNotifyStore()
+  stopScheduleStore()
+  app.quit()
+}
+
+/** 岛内右键 / 托盘右键共用的菜单。目前只有退出，留给以后加项 */
+function buildAppMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { label: '退出灵动岛', click: () => quitApp() }
+  ])
+}
+
+/**
+ * 托盘图标（US-034）。窗口是 skipTaskbar: true，任务栏看不到它，
+ * 托盘是用户找回岛和退出应用的入口。
+ * 图标按 32×32 缩放到通知区域合适大小；拿不到图片时不建托盘（不阻塞启动）。
+ */
+function createTray(): void {
+  if (tray) return
+  // 开发版 __dirname = out/main → 上两级是项目根；打包版在 app.asar 内，
+  // 所以 package.json 的 build.files 必须带上 build/icon.png（否则这里取不到）。
+  const iconPath = join(__dirname, '..', '..', 'build', 'icon.png')
+  let image = nativeImage.createFromPath(iconPath)
+  if (image.isEmpty()) {
+    console.warn('[tray] 托盘图标读取失败，跳过托盘：', iconPath)
+    return
+  }
+  image = image.resize({ width: 32, height: 32 })
+  tray = new Tray(image)
+  tray.setToolTip('灵动岛')
+  tray.setContextMenu(buildAppMenu())
+  // 左键单击：把岛显示出来（切屏/被别的窗口挡住时的找回路径）
+  tray.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow()
+      return
+    }
+    mainWindow.showInactive()
+  })
+}
 
 /** 按主显示器工作区算出窗口矩形，水平居中、贴顶 */
 function computeBounds(isExpanded: boolean): Electron.Rectangle {
@@ -149,6 +197,7 @@ app.whenReady().then(() => {
   setupNotifyStore()
   setupScheduleStore()
   createWindow()
+  createTray()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -217,6 +266,25 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown): ShelfRevealResult =>
   if (!existsSync(p)) return { ok: false, reason: 'missing' }
   shell.showItemInFolder(p)
   return { ok: true, reason: 'ok' }
+})
+
+// ---------- 退出入口（US-034） ----------
+// 窗口是 skipTaskbar: true 且 frame: false，没有标题栏关闭按钮，任务栏也没有图标，
+// 加上没有托盘的话，用户想关掉它只能去任务管理器结束进程。这里补两条路：
+//   1）岛内右键 → 渲染层发 app:show-menu → 主进程在光标处弹原生菜单
+//   2）通知区域托盘图标右键 → 同一个菜单
+// 两者最终都调 quitApp()，是真正的进程退出，不是隐藏窗口。
+
+// 岛内右键：在光标处弹出菜单（菜单是系统原生的，不受岛的半透明样式影响）
+ipcMain.on('app:show-menu', () => {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  buildAppMenu().popup({ window: win })
+})
+
+// 渲染层直接请求退出（目前菜单点击走主进程自己的 quitApp，这里留给以后做「确认后退出」）
+ipcMain.on('app:quit', () => {
+  quitApp()
 })
 
 // ---------- 开机自启 ----------

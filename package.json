@@ -36,7 +36,8 @@
       "output": "release"
     },
     "files": [
-      "out/**"
+      "out/**",
+      "build/icon.png"
     ],
     "win": {
       "target": [

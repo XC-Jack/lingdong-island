@@ -48,6 +48,17 @@ const api = {
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)
   },
+  /**
+   * 弹出应用菜单（US-034）：岛内右键时调用，主进程在光标处弹原生菜单，
+   * 里面的「退出灵动岛」是真正的进程退出。
+   */
+  showAppMenu(): void {
+    ipcRenderer.send('app:show-menu')
+  },
+  /** 直接退出应用（供 e2e 验证退出链路；界面上的退出走菜单） */
+  quitApp(): void {
+    ipcRenderer.send('app:quit')
+  },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:list')

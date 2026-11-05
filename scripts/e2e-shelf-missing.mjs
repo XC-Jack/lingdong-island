@@ -113,6 +113,17 @@ const main = async () => {
       return 'ok';
     })()`)
 
+    // US-034 起置物架视图会被记住，用户上次若选了「列表」，这里的图标视图断言就不成立。
+    // 所以先在界面上显式切回「大图标」——顺带也验证了视图菜单本身能用。
+    // 切视图会写 localStorage，先把用户原来的选择记下来，脚本末尾还原。
+    await cdp(wsUrl, `(async()=>{
+      window.__shelfViewBackup = localStorage.getItem('island.shelfView');
+      document.querySelector('.shelf-view-btn').click();
+      await new Promise(r=>setTimeout(r,150));
+      document.querySelectorAll('.shelf-view-item')[0].click();
+      return 'ok';
+    })()`)
+
     // A3：图标视图里失效格子有 missing 类 + 「失效」徽标 + 中文 title
     const iconView = await settle(wsUrl, `(()=>{
       const miss = document.querySelector('.shelf-cell.missing');
@@ -224,6 +235,16 @@ const main = async () => {
     })()`)
     console.log('[A8] 打开失效文件结果:', JSON.stringify(openRes))
     assert(openRes && openRes.ok === false && openRes.reason === 'missing', '打开失效文件应返回 reason=missing')
+
+    // 还原用户原本的视图偏好（本脚本为了断言切过视图，会顺带写 localStorage）
+    await cdp(wsUrl, `(()=>{
+      if (window.__shelfViewBackup === null || window.__shelfViewBackup === undefined) {
+        localStorage.removeItem('island.shelfView');
+      } else {
+        localStorage.setItem('island.shelfView', window.__shelfViewBackup);
+      }
+      return 'ok';
+    })()`)
 
     console.log('E2E SHELF-MISSING PASS')
   } finally {
