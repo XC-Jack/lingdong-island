@@ -1522,12 +1522,33 @@ export default function App(): React.JSX.Element {
     window.island?.setExpanded(expanded)
   }, [expanded])
 
-  // 点了桌面/其他程序（窗口失焦）→ 自动收回
+  // 点了桌面/其他程序（窗口失焦）→ 自动收回。
+  // 坑：中文输入法的候选窗是独立系统窗口，打字/选字时主窗口会瞬时失焦又得焦，
+  // 立即收起会把正在打字的岛收走（用户实测：待办输入框打字、日历输入回车后岛立刻缩小）。
+  // 处理：blur 后延迟确认——800ms 后窗口仍没拿回焦点，才真的收起。
   useEffect(() => {
+    let blurTimer: number | null = null
     window.island.onWindowBlur(() => {
       hoverRef.current = false
-      setExpanded(false)
+      if (blurTimer !== null) window.clearTimeout(blurTimer)
+      blurTimer = window.setTimeout(() => {
+        blurTimer = null
+        // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
+        if (!document.hasFocus()) setExpanded(false)
+      }, 800)
     })
+    const onFocus = (): void => {
+      // 拿回焦点就取消待执行的收起
+      if (blurTimer !== null) {
+        window.clearTimeout(blurTimer)
+        blurTimer = null
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      if (blurTimer !== null) window.clearTimeout(blurTimer)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   const clearCollapseTimer = useCallback(() => {
