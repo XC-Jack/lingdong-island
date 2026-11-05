@@ -1250,13 +1250,15 @@ function SchedulePanel(): React.JSX.Element {
           <ul className="todo-list sched-list">
             {schedSorted.map((it) => (
               <li key={`s${it.id}`} className={`todo-item ${it.done ? 'done' : ''}`}>
-                <input
-                  type="checkbox"
-                  className="todo-check"
-                  checked={it.done}
+                <button
+                  type="button"
+                  className={`todo-check ${it.done ? 'checked' : ''}`}
+                  title={it.done ? '标记为未完成' : '标记为已完成'}
                   aria-label={it.done ? `标记日程 ${it.text} 为未完成` : `标记日程 ${it.text} 为已完成`}
-                  onChange={() => toggle(it.id)}
-                />
+                  onClick={() => void toggle(it.id)}
+                >
+                  {it.done ? <IcoCheck /> : ''}
+                </button>
                 {it.time && (
                   <span
                     className={`sched-badge ${
@@ -1281,13 +1283,15 @@ function SchedulePanel(): React.JSX.Element {
             ))}
             {todoSorted.map((t) => (
               <li key={`t${t.id}`} className={`todo-item ${t.done ? 'done' : ''}`}>
-                <input
-                  type="checkbox"
-                  className="todo-check"
-                  checked={t.done}
+                <button
+                  type="button"
+                  className={`todo-check ${t.done ? 'checked' : ''}`}
+                  title={t.done ? '标记为未完成' : '标记为已完成'}
                   aria-label={t.done ? `标记待办 ${t.text} 为未完成` : `标记待办 ${t.text} 为已完成`}
-                  onChange={() => toggleTodo(t.id)}
-                />
+                  onClick={() => void toggleTodo(t.id)}
+                >
+                  {t.done ? <IcoCheck /> : ''}
+                </button>
                 <span className="sched-badge sched-badge-todo">待办</span>
                 <span className="todo-text">{t.text}</span>
               </li>
