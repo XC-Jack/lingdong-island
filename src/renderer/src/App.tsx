@@ -42,6 +42,37 @@ function localDayKey(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/** 置物架视图的四种形态 */
+type ShelfView = 'lg' | 'md' | 'sm' | 'list'
+
+/** 视图偏好的存储键（存在渲染层 localStorage，落在 userData 下的 Local Storage 里） */
+const SHELF_VIEW_KEY = 'island.shelfView'
+
+/**
+ * 读上次选的置物架视图（US-034）。
+ * 为什么不落成 settings.json：这只是「界面长什么样」的偏好，丢了顶多重置成默认，
+ * 不涉及用户数据；localStorage 不用新增 IPC、不用新建文件、也不参与数据迁移。
+ * 值不认识或读失败（隐私模式/手工改坏）一律回落到「大图标」，不报错不白屏。
+ */
+function loadShelfView(): ShelfView {
+  try {
+    const v = localStorage.getItem(SHELF_VIEW_KEY)
+    if (v === 'lg' || v === 'md' || v === 'sm' || v === 'list') return v
+  } catch {
+    /* localStorage 不可用时用默认值 */
+  }
+  return 'lg'
+}
+
+/** 记住置物架视图；写失败不影响使用（下次还是默认值） */
+function saveShelfView(v: ShelfView): void {
+  try {
+    localStorage.setItem(SHELF_VIEW_KEY, v)
+  } catch {
+    /* 写不进去就算了，不打扰用户 */
+  }
+}
+
 /** 线性小图标（stroke 继承 currentColor，替代 emoji：跨平台渲染一致、可随主题着色、任意缩放不糊） */
 function IconSvg({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
@@ -536,7 +567,8 @@ function ShelfPanel(): React.JSX.Element {
     null
   )
   // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
-  const [view, setView] = useState<'lg' | 'md' | 'sm' | 'list'>('lg')
+  // 初值读上次的选择（US-034）：不记住的话每次重启都回到「大图标」，用户已选过的白选
+  const [view, setView] = useState<ShelfView>(loadShelfView)
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
   // 视图选择菜单展开态：点视图按钮弹出四项菜单（大/中/小/列表）
@@ -716,6 +748,7 @@ function ShelfPanel(): React.JSX.Element {
                   className={`shelf-view-item ${view === v ? 'picked' : ''}`}
                   onClick={() => {
                     setView(v)
+                    saveShelfView(v)
                     setViewPop(false)
                   }}
                 >
@@ -1575,6 +1608,14 @@ export default function App(): React.JSX.Element {
         onClick={() => {
           // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
           if (!expanded) toggle()
+        }}
+        // 岛内右键 → 弹应用菜单（US-034）。窗口无边框、任务栏无图标，
+        // 右键是用户最容易想到的「怎么关掉这个东西」，菜单里给一条真正的退出。
+        // 这里必须拦住浏览器默认右键菜单，否则弹的是 Chromium 的「后退/刷新」那种。
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          window.island.showAppMenu()
         }}
         role="button"
         tabIndex={0}
