@@ -88,9 +88,11 @@ async function settle(wsUrl, expression, ms = 400) {
   return cdp(wsUrl, expression)
 }
 
-/** 通过真实鼠标事件路径收起：派发原生 mouseout（合成 mouseleave 无效，实测踩坑） */
+/** 通过真实鼠标事件路径收起：派发原生 mouseout（合成 mouseleave 无效，实测踩坑）。
+ * 收起前先让输入框失焦——US-036 后收起逻辑会跳过「输入框聚焦中」的岛（防打字被收走），
+ * 测试里 A2-A8 用过添加框，activeElement 停在上面会让 collapse 失效。 */
 async function collapse(wsUrl) {
-  await cdp(wsUrl, `document.querySelector('.island').dispatchEvent(new MouseEvent('mouseout', {bubbles:true})); 1`)
+  await cdp(wsUrl, `document.activeElement?.blur?.(); document.querySelector('.island').dispatchEvent(new MouseEvent('mouseout', {bubbles:true})); 1`)
   await sleep(AUTO_COLLAPSE_MS + 250)
 }
 

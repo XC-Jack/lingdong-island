@@ -54,6 +54,9 @@ async function main() {
     cwd: ROOT, stdio: 'ignore',
     env: childEnv,
   })
+  // 模块级 finally 的 restore 需要等本进程退出后才能写回真实数据（US-036 踩坑：
+  // electron 退出时会 save() 内存态，restore 先跑会被它覆盖）
+  globalThis.__e2eChild = child
 
   // 等 CDP 就绪
   let wsUrl = null
@@ -225,7 +228,19 @@ main()
     process.exitCode = 1
   })
   .finally(() => {
-    // 还原真实数据
+    // 还原真实数据。必须先等 electron 子进程完全退出——它退出时会 save() 内存态，
+    // 若 restore 先跑，进程退出时的 save 会把种子数据写回去，覆盖用户真实数据（US-036 踩坑）。
+    const child = globalThis.__e2eChild
+    try {
+      if (child && child.exitCode === null) {
+        child.kill()
+        // 轮询等待进程真正退出（最多 5 秒）
+        const deadline = Date.now() + 5000
+        while (child.exitCode === null && Date.now() < deadline) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+        }
+      }
+    } catch { /* 进程可能已退出 */ }
     try {
       if (backup === null) {
         if (existsSync(SCHED)) renameSync(SCHED, join(tmpdir(), `us036-sched-del-${Date.now()}.json`))

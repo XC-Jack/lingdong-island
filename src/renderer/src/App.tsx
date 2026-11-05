@@ -1544,9 +1544,13 @@ export default function App(): React.JSX.Element {
       blurTimer = window.setTimeout(() => {
         blurTimer = null
         const focused = document.hasFocus()
-        window.island.logDiag(`render blur-resolve after 800ms; hasFocus=${focused}`)
+        // 用户还停在输入框里（正在打字/选字）→ 不管窗口焦点抖成什么样都不收。
+        // IME 组合期间 hasFocus() 会瞬时抖成 false，不能只信它（US-036）。
+        const el = document.activeElement
+        const typing = !!(el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
+        window.island.logDiag(`render blur-resolve after 800ms; hasFocus=${focused} typing=${typing}`)
         // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
-        if (!focused) setExpanded(false)
+        if (!focused && !typing) setExpanded(false)
       }, 800)
     })
     const onFocus = (): void => {
@@ -1574,13 +1578,15 @@ export default function App(): React.JSX.Element {
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
-      // 到点后先问一句「窗口还有没有焦点」：用户正在输入框打字时窗口必然有焦点，
-      // 不能收（US-036 真凶：展开/切页的窗口尺寸动画会误触发一次 mouseleave，
-      // 打字期间手不在鼠标上、没有 mousemove 来重新触发 mouseenter，定时器到点就把岛收走了）。
-      // 点桌面/点其他窗口的场景窗口必然失焦，收起行为不受影响。
-      if (hoverRef.current || document.hasFocus()) return
+      // 到点后先看「用户是不是正在输入框里」：输入框聚焦（activeElement 是输入控件）时绝不能收。
+      // US-036 真凶：展开/切页的窗口尺寸动画会误触发一次 mouseleave，定时器到点时用户
+      // 正在添加框打字（手不在鼠标上、没有 mousemove 来重新触发 mouseenter），岛就被收走了。
+      // 之前用 document.hasFocus() 判断不行——中文输入法组合瞬间它也会抖成 false。
+      // 点桌面/点其他窗口时输入框必然失焦（activeElement 回到 body），收起行为不受影响。
+      const el = document.activeElement
+      if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
       setExpanded(false)
-      window.island.logDiag('collapse by schedule timer; window unfocused')
+      window.island.logDiag('collapse by schedule timer; no active input')
     }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
   }, [clearCollapseTimer, page])
 
