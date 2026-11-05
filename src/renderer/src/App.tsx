@@ -388,7 +388,13 @@ function FileIcon({ name, path }: { name: string; path: string }): React.JSX.Ele
 function ShelfPanel(): React.JSX.Element {
   const [items, setItems] = useState<ShelfItem[]>([])
   const [dragOver, setDragOver] = useState(false)
-  const [error, setError] = useState('')
+  /**
+   * 底部提示条。kind=missing 时说明文件已不在，并带「从架子上移除」按钮；
+   * kind=failed 是系统打开失败（极少见），只显示中文说明 + 原始报错。
+   */
+  const [notice, setNotice] = useState<{ kind: 'missing' | 'failed'; text: string; removeId?: string } | null>(
+    null
+  )
   // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
   const [view, setView] = useState<'lg' | 'md' | 'sm' | 'list'>('lg')
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
@@ -456,21 +462,56 @@ function ShelfPanel(): React.JSX.Element {
     window.island.onShelfAdded((list) => {
       setItems(list)
       setDragOver(false)
-      setError('')
+      setNotice(null)
     })
   }, [])
 
   const remove = useCallback(async (id: string) => {
     setItems(await window.island.shelfRemove(id))
+    setNotice(null)
   }, [])
 
   const clear = useCallback(async () => {
     setItems(await window.island.shelfClear())
+    setNotice(null)
   }, [])
 
-  const open = useCallback(async (item: ShelfItem) => {
-    const r = await window.island.shelfOpen(item.path)
-    if (r !== 'ok') setError(`打不开：${r}`)
+  /**
+   * 打开条目。文件已不在时不再显示英文系统报错，而是给一句中文说明 + 一键移除；
+   * 真的打开失败（权限、关联程序缺失等）也翻成人话，英文原文放在括号里兜底。
+   */
+  const open = useCallback(async (it: ShelfItem) => {
+    const r = await window.island.shelfOpen(it.path)
+    if (r.ok) {
+      setNotice(null)
+      return
+    }
+    if (r.reason === 'missing') {
+      setNotice({ kind: 'missing', text: `「${it.name}」已经不在了，可能被移走或删除。`, removeId: it.id })
+      return
+    }
+    if (r.reason === 'empty') {
+      setNotice({ kind: 'failed', text: '这个条目没有记录文件路径，无法打开。' })
+      return
+    }
+    setNotice({
+      kind: 'failed',
+      text: `「${it.name}」打不开：系统没能用默认程序打开它。${r.detail ? `（${r.detail}）` : ''}`
+    })
+  }, [])
+
+  /** 「在文件夹中显示」：失效条目直接说明原因，不再静默失败 */
+  const reveal = useCallback(async (it: ShelfItem) => {
+    const r = await window.island.shelfShowInFolder(it.path)
+    if (r.ok) {
+      setNotice(null)
+      return
+    }
+    if (r.reason === 'missing') {
+      setNotice({ kind: 'missing', text: `「${it.name}」已经不在了，找不到它的文件夹。`, removeId: it.id })
+      return
+    }
+    setNotice({ kind: 'failed', text: `「${it.name}」没有可定位的路径。` })
   }, [])
 
   // 网格内拖动换位：拖起记 id，落到另一个格子上与目标**互换位置**（最直觉的桌面语义）。
@@ -572,23 +613,36 @@ function ShelfPanel(): React.JSX.Element {
         ) : view === 'list' ? (
           <ul className="shelf-list">
             {items.map((it) => (
-              <li key={it.id} className="shelf-item" title={it.path}>
+              <li
+                key={it.id}
+                className={`shelf-item ${it.missing ? 'missing' : ''}`}
+                title={it.missing ? `文件已不在：${it.path}` : it.path}
+              >
                 <FileIcon name={it.name} path={it.path} />
                 <button
                   type="button"
                   className="shelf-name"
-                  title="双击打开"
+                  title={it.missing ? '文件已不在（点击查看）' : '双击打开'}
+                  onClick={() => {
+                    if (it.missing) void open(it)
+                  }}
                   onDoubleClick={() => void open(it)}
                 >
                   {it.name}
                 </button>
+                {it.missing && (
+                  <span className="shelf-badge-missing" aria-label="文件已不在">
+                    失效
+                  </span>
+                )}
                 <span className="shelf-size">{fmtSize(it.size)}</span>
                 <button
                   type="button"
                   className="todo-del shelf-row-folder"
-                  title="在文件夹中显示"
-                  aria-label={`在文件夹中显示 ${it.name}`}
-                  onClick={() => window.island.shelfShowInFolder(it.path)}
+                  title={it.missing ? '文件已不在，无法定位' : '在文件夹中显示'}
+                  aria-label={it.missing ? `${it.name} 文件已不在，无法定位` : `在文件夹中显示 ${it.name}`}
+                  disabled={it.missing}
+                  onClick={() => void reveal(it)}
                 >
                   <IcoFolder />
                 </button>
@@ -617,8 +671,8 @@ function ShelfPanel(): React.JSX.Element {
                 {items.map((it) => (
                   <li
                     key={it.id}
-                    className="shelf-cell"
-                    title={it.path}
+                    className={`shelf-cell ${it.missing ? 'missing' : ''}`}
+                    title={it.missing ? `文件已不在：${it.path}` : it.path}
                     draggable
                     onDragStart={(e) => {
                       reorderFrom.current = it.id
@@ -656,18 +710,27 @@ function ShelfPanel(): React.JSX.Element {
                     <button
                       type="button"
                       className="shelf-cell-body"
-                      title="双击打开"
+                      title={it.missing ? '文件已不在（点击查看）' : '双击打开'}
+                      onClick={() => {
+                        if (it.missing) void open(it)
+                      }}
                       onDoubleClick={() => void open(it)}
                     >
                       <FileIcon name={it.name} path={it.path} />
                       <span className="shelf-cell-name">{it.name}</span>
+                      {it.missing && (
+                        <span className="shelf-badge-missing" aria-label="文件已不在">
+                          失效
+                        </span>
+                      )}
                     </button>
                     <button
                       type="button"
                       className="shelf-cell-folder"
-                      title="在文件夹中显示"
-                      aria-label={`在文件夹中显示 ${it.name}`}
-                      onClick={() => window.island.shelfShowInFolder(it.path)}
+                      title={it.missing ? '文件已不在，无法定位' : '在文件夹中显示'}
+                      aria-label={it.missing ? `${it.name} 文件已不在，无法定位` : `在文件夹中显示 ${it.name}`}
+                      disabled={it.missing}
+                      onClick={() => void reveal(it)}
                     >
                       <IcoFolder />
                     </button>
@@ -683,7 +746,20 @@ function ShelfPanel(): React.JSX.Element {
           </div>
         )}
       </div>
-      {error && <div className="shelf-error">{error}</div>}
+      {notice && (
+        <div className={`shelf-notice ${notice.kind}`} role="status">
+          <span className="shelf-notice-text">{notice.text}</span>
+          {notice.removeId && (
+            <button
+              type="button"
+              className="shelf-notice-btn"
+              onClick={() => void remove(notice.removeId as string)}
+            >
+              从架子上移除
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
