@@ -336,6 +336,21 @@ function TodoPanel({
     setItems(await window.island.scheduleRemove(id))
   }, [])
 
+  // 日程条目双击改名（与日程页同款交互，复用 schedule:edit）
+  const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
+  const [schedEditDraft, setSchedEditDraft] = useState('')
+  const startSchedEdit = useCallback((it: ScheduleItem) => {
+    setEditingSchedId(it.id)
+    setSchedEditDraft(it.text)
+  }, [])
+  const commitSchedEdit = useCallback(async () => {
+    const id = editingSchedId
+    const t = schedEditDraft.trim()
+    setEditingSchedId(null)
+    if (!id || !t) return // 空文本视为取消，不误清内容
+    setItems(await window.island.scheduleEdit(id, { text: t }))
+  }, [editingSchedId, schedEditDraft])
+
   // 双击进入编辑：草稿先填当前文本，下次渲染时选中全部
   const startEdit = useCallback((t: Todo) => {
     setEditingId(t.id)
@@ -448,7 +463,33 @@ function TodoPanel({
             {it.time && (
               <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>{it.time}</span>
             )}
-            <span className="todo-text">{it.text}</span>
+            {editingSchedId === it.id ? (
+              <input
+                className="todo-edit"
+                autoFocus
+                value={schedEditDraft}
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) => setSchedEditDraft(e.target.value)}
+                onBlur={() => void commitSchedEdit()}
+                onKeyDown={(e) => {
+                  // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）
+                  e.stopPropagation()
+                  if (e.key === 'Enter') void commitSchedEdit()
+                  if (e.key === 'Escape') {
+                    e.stopPropagation() // Esc 另有「收起岛」的全局监听，编辑框内 Esc 只取消编辑
+                    setEditingSchedId(null)
+                  }
+                }}
+              />
+            ) : (
+              <span
+                className="todo-text"
+                title="双击编辑"
+                onDoubleClick={() => startSchedEdit(it)}
+              >
+                {it.text}
+              </span>
+            )}
             <button
               type="button"
               className="todo-del"
