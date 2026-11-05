@@ -90,23 +90,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 待办剩余（收起态，时钟右侧）：一枚对勾 + 未完成条数。
+/* 待办剩余（收起态，电量环右侧）：只显示未完成条数一个数字。
    只在有待办没做完时出现；全部完成后不渲染，省出视觉空间 */
 .collapsed-todo {
   display: flex;
   align-items: center;
-  gap: 3px;
   color: rgba(125, 216, 125, 0.9);
 }
 
-.collapsed-todo svg {
-  width: 12px;
-  height: 12px;
-  stroke-width: 2.2;
-}
-
 .collapsed-todo-num {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;

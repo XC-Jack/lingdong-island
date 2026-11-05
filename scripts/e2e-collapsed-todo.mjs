@@ -149,6 +149,8 @@ const main = async () => {
           num: document.querySelector('.collapsed-todo-num')?.textContent ?? null,
           title: document.querySelector('.collapsed-todo')?.getAttribute('title') ?? null,
           aria: document.querySelector('.collapsed-todo')?.getAttribute('aria-label') ?? null,
+          inner: document.querySelector('.collapsed-todo')?.textContent ?? null,
+          svgCount: document.querySelectorAll('.collapsed-todo svg').length,
           expanded: !!document.querySelector('.island.expanded')
         })`
       )
@@ -156,6 +158,8 @@ const main = async () => {
     assert(!a1.expanded, 'A1 没收回成收起态: ' + JSON.stringify(a1))
     assert(a1.has, 'A1 收起态没有待办标记')
     assert(a1.num === '2', 'A1 数字应为 2，实际 ' + a1.num)
+    assert(a1.svgCount === 0, 'A1 只应显示数字，不应带图标，实际 svg 数 ' + a1.svgCount)
+    assert(a1.inner.trim() === '2', 'A1 标记内文字应只有数字，实际 ' + JSON.stringify(a1.inner))
     assert(a1.title === '还有 2 件待办（共 3 件）', 'A1 悬停文案不对: ' + a1.title)
     assert(a1.aria === '还有 2 件待办未完成', 'A1 无障碍文案不对: ' + a1.aria)
     console.log('[2] A1 通过：标记出现、数字 2、文案正确')

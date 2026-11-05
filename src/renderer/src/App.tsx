@@ -1581,7 +1581,6 @@ export default function App(): React.JSX.Element {
                 role="img"
                 aria-label={`还有 ${todoStats.total - todoStats.done} 件待办未完成`}
               >
-                <IcoCheck />
                 <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
               </span>
             )}
