@@ -79,6 +79,8 @@
 - 在**已有安装**上直接静默重装会报 `Failed to uninstall old application files. Please try running the installer again.: 2`（旧安装目录里有残留 `resources\app.asar` 使卸载器无法完全删除）。处理办法：先跑一次旧卸载器，再删掉残留目录，然后重装。
 - 静默安装 `/S` 不复用上次目录，必须带 `/D=` 才能落到 `D:\软件\灵动岛\`。
 - 自定义 NSIS 文案的符号名**不带 UN 前缀**：`MUI_WELCOMEPAGE_TITLE/TEXT`、`MUI_FINISHPAGE_TITLE/TEXT`，不是 `MUI_UNWELCOMEPAGE_*`（`UN` 只出现在语言字符串 ID 里）。写错会静默失效、不报错。
+- [实测] 卸载器结束（进程已退、注册表项已删）后，`resources\app.asar` 仍被一个不可见句柄锁住，`DeleteFile` / `MoveFileEx(…, DELAY_UNTIL_REBOOT)` / `Remove-Item` 全部报 `being used by another process`，无法在本次会话内清掉；但对该目录直接「覆盖安装」可以成功（新 asar 覆盖旧 asar），功能不受影响，只是目录清理不彻底。用户侧表现 = 卸载后安装目录里剩一个 `resources` 文件夹。疑似火绒（`HipsDaemon`）或系统索引器持有句柄，未验证。
+- [实测] 卸载向导**没有任何勾选项** —— 数据说明是欢迎页的正文段落，不是复选框。用户反馈「没看到有不动你的数据这个选项」符合设计：这一版只做说明文案，不提供选项。
 
 ## 八、验收记录
 
