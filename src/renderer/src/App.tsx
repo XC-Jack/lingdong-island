@@ -1451,6 +1451,9 @@ export default function App(): React.JSX.Element {
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
   const [notifyUnread, setNotifyUnread] = useState(0)
   const hoverRef = useRef(false)
+  // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
+  const expandedRef = useRef(false)
+  expandedRef.current = expanded
   const collapseTimer = useRef<number | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
   // 一次拖动只处理一次 dragEnter 的去重标记（dragleave/drop 时复位）
@@ -1537,10 +1540,13 @@ export default function App(): React.JSX.Element {
     window.island.onWindowBlur(() => {
       hoverRef.current = false
       if (blurTimer !== null) window.clearTimeout(blurTimer)
+      window.island.logDiag(`render got blur; expanded=${expandedRef.current}`)
       blurTimer = window.setTimeout(() => {
         blurTimer = null
+        const focused = document.hasFocus()
+        window.island.logDiag(`render blur-resolve after 800ms; hasFocus=${focused}`)
         // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
-        if (!document.hasFocus()) setExpanded(false)
+        if (!focused) setExpanded(false)
       }, 800)
     })
     const onFocus = (): void => {
@@ -1548,6 +1554,7 @@ export default function App(): React.JSX.Element {
       if (blurTimer !== null) {
         window.clearTimeout(blurTimer)
         blurTimer = null
+        window.island.logDiag('render focus cancels pending collapse')
       }
     }
     window.addEventListener('focus', onFocus)
@@ -1567,7 +1574,13 @@ export default function App(): React.JSX.Element {
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
-      if (!hoverRef.current) setExpanded(false)
+      // 到点后先问一句「窗口还有没有焦点」：用户正在输入框打字时窗口必然有焦点，
+      // 不能收（US-036 真凶：展开/切页的窗口尺寸动画会误触发一次 mouseleave，
+      // 打字期间手不在鼠标上、没有 mousemove 来重新触发 mouseenter，定时器到点就把岛收走了）。
+      // 点桌面/点其他窗口的场景窗口必然失焦，收起行为不受影响。
+      if (hoverRef.current || document.hasFocus()) return
+      setExpanded(false)
+      window.island.logDiag('collapse by schedule timer; window unfocused')
     }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
   }, [clearCollapseTimer, page])
 
@@ -1686,9 +1699,8 @@ export default function App(): React.JSX.Element {
     // 悬停期间不断续命，防止拖着拖着岛收走
     if (collapseTimer.current !== null) {
       window.clearTimeout(collapseTimer.current)
-      collapseTimer.current = window.setTimeout(() => {
-        if (!hoverRef.current) setExpanded(false)
-      }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
+      window.island.logDiag('collapse suppressed by drag-over')
+      collapseTimer.current = null
     }
   }
 

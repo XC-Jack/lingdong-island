@@ -169,6 +169,8 @@ function createWindow(): void {
 
   // 点桌面/其他窗口（岛失焦）→ 自动收回。展开时点空白处同理
   mainWindow.on('blur', () => {
+    // US-036 诊断探针：记录 blur 时刻，配合渲染层日志区分「真点桌面」与「IME 瞬时失焦」
+    appendDiagLog(`main window blur; focused-after=${mainWindow?.isFocused() ?? 'no-win'}`)
     mainWindow?.webContents.send('island:window-blur')
   })
   // 注意：不开整窗穿透。收起态窗口仅 240×42，几乎全是胶囊本体；
@@ -213,7 +215,27 @@ app.on('window-all-closed', () => {
 // 渲染进程请求改变展开状态
 ipcMain.on('island:set-expanded', (_event, value: boolean) => {
   if (value === expanded) return
+  // US-036 诊断探针：收起发生时记录一行，便于定位「打字时岛自己收起」的真实路径。
+  // 诊断稳定后可整体移除（连同 logDiag 通道）。
+  if (!value) appendDiagLog(`render set-expanded=false; hasFocus(主进程视角)=${mainWindow?.isFocused() ?? 'no-win'}`)
   animateTo(value)
+})
+
+// 诊断日志：追加写 userData/collapse-log.txt（探针，US-036 定位用）
+function appendDiagLog(line: string): void {
+  try {
+    const fs = require('node:fs') as typeof import('node:fs')
+    const path = require('node:path') as typeof import('node:path')
+    const file = path.join(app.getPath('userData'), 'collapse-log.txt')
+    fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`, 'utf8')
+  } catch {
+    /* 探针日志失败不影响功能 */
+  }
+}
+
+// 渲染层诊断上报（探针）：blur 去抖判定结果、键盘事件等
+ipcMain.on('island:log-diag', (_event, line: unknown) => {
+  appendDiagLog(String(line ?? ''))
 })
 
 // 渲染层量出收起态内容宽度后下发（随信息数量自适应：有电量时宽、无电量时窄）
