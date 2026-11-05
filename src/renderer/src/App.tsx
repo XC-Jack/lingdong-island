@@ -1543,7 +1543,10 @@ export default function App(): React.JSX.Element {
   // 点了桌面/其他程序（窗口失焦）→ 自动收回。
   // 坑：中文输入法的候选窗是独立系统窗口，打字/选字时主窗口会瞬时失焦又得焦，
   // 立即收起会把正在打字的岛收走（用户实测：待办输入框打字、日历输入回车后岛立刻缩小）。
-  // 处理：blur 后延迟确认——800ms 后窗口仍没拿回焦点，才真的收起。
+  // 处理：blur 后延迟确认——窗口没拿回焦点才真的收起。延迟取 300ms：
+  // 输入法选字后焦点回归通常远快于这个值（US-036 定位后已证明真正误收岛的
+  // 是收起定时器路径，blur 延迟只是兜底，300ms 足够）；点桌面收起走这 300ms
+  // 再加 220ms 收起动画，用户实测 800ms 等待「反应慢」，缩短到 300ms（US-037 后续反馈）。
   useEffect(() => {
     let blurTimer: number | null = null
     window.island.onWindowBlur(() => {
@@ -1557,10 +1560,10 @@ export default function App(): React.JSX.Element {
         // IME 组合期间 hasFocus() 会瞬时抖成 false，不能只信它（US-036）。
         const el = document.activeElement
         const typing = !!(el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
-        window.island.logDiag(`render blur-resolve after 800ms; hasFocus=${focused} typing=${typing}`)
+        window.island.logDiag(`render blur-resolve after 300ms; hasFocus=${focused} typing=${typing}`)
         // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
         if (!focused && !typing) setExpanded(false)
-      }, 800)
+      }, 300)
     })
     const onFocus = (): void => {
       // 拿回焦点就取消待执行的收起
