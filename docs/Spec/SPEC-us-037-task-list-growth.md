@@ -63,6 +63,9 @@
 | 2026-11-05 | 真实滚轮手感 / 打包安装 | 打包安装已完成（见下行）；滚轮手感待用户实机 | 真实滚轮手感 |
 | 2026-11-05 | `npm run dist` + 静默安装 `D:\软件\灵动岛` | exit 0；4 进程存活；asar 含新代码特征 | — |
 | 2026-11-05 | 提交 `56ba8df`（分支 `us-037-task-list-growth`） | 6 文件 +121/−5 | — |
+| 2026-11-05 | 用户报告「我滑动不了」→ 排查 | 开发版实测滚轮正常（条目上/输入框上都能滚，scrollTop 0→600→0）；**安装版是 20:21 中间构建**（asar 无 `align-self:stretch`），最终构建 20:59 完成后未重新打包 | — |
+| 2026-11-05 | 重新打包安装遇阻：NSIS 报 `Failed to uninstall old application files: 2` | 根因：DeepSeek Harness（开发工具宿主）持有旧 `app.asar` 读句柄（Restart Manager 实测锁主），卸载器删不掉；用户重启 DSH 后句柄释放，清残留 + 重装成功 | — |
+| 2026-11-05 | 安装版验活 + 最终滚动验证（同一份代码的开发版 CDP 实测） | 4 进程存活；asar 含 `align-self:stretch`（21:00:06）；scrollH=3034/clientH=262、滚动条宽度 0、滚轮下滚 scrollTop=600、上滚回 0，SCROLL VERIFY PASS | 真实滚轮手感（用户实机） |
 
 ## 八、验收记录
 
