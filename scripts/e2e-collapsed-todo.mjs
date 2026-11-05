@@ -1,8 +1,8 @@
-// e2e-collapsed-todo.mjs：验证 US-004「收起态看待办剩余」
+// e2e-collapsed-todo.mjs：验证 US-004「收起态看待办剩余」（US-033 起口径 = 待办 + 今天的日程）
 // 覆盖：收起态标记出现/数字正确/悬停文案 → 全部完成后标记消失 → 新增后收回数字刷新
 //      → 标记位置在时钟右边（不挤压时钟）→ 待办页完成度不受影响
 // 用法：node scripts/e2e-collapsed-todo.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
-// 注意：会临时清空并改写用户的 todos.json，结束时原样恢复。
+// 注意：会临时清空并改写用户的 todos.json 与 schedule.json，结束时原样恢复。
 import { spawn } from 'node:child_process'
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -10,11 +10,10 @@ import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
-const TODOS_JSON = join(
-  process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'),
-  'lingdong-island',
-  'todos.json'
-)
+const USER_DATA = join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'lingdong-island')
+const TODOS_JSON = join(USER_DATA, 'todos.json')
+// US-033 起收起态数字 = 待办 + 今天的日程，所以必须把用户的真实日程也清掉，否则数字被污染
+const SCHEDULE_JSON = join(USER_DATA, 'schedule.json')
 const AUTO_COLLAPSE_MS = 700
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -92,10 +91,15 @@ async function expand(wsUrl) {
 }
 
 const main = async () => {
-  // 备份用户真实待办，测试结束原样恢复
+  // 备份用户真实待办与日程，测试结束原样恢复
   const hadFile = existsSync(TODOS_JSON)
   const backup = hadFile ? readFileSync(TODOS_JSON, 'utf8') : null
+  const hadSchedule = existsSync(SCHEDULE_JSON)
+  const scheduleBackup = hadSchedule ? readFileSync(SCHEDULE_JSON, 'utf8') : null
   console.log('[准备] todos.json 备份:', hadFile ? `${backup.length} 字节` : '(原本不存在)')
+  // 清空今天的日程来源：本次断言只关心待办，日程留空才能算出确定数字
+  writeFileSync(SCHEDULE_JSON, JSON.stringify({ items: [] }, null, 2), 'utf8')
+  console.log('[准备] schedule.json 已清空（US-033 起该页数字含今天的日程）')
 
   const exe = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
   const env = { ...process.env }
@@ -110,7 +114,8 @@ const main = async () => {
     try {
       if (backup !== null) writeFileSync(TODOS_JSON, backup, 'utf8')
       else if (existsSync(TODOS_JSON)) unlinkSync(TODOS_JSON)
-      console.log('[收尾] todos.json 已恢复')
+      if (scheduleBackup !== null) writeFileSync(SCHEDULE_JSON, scheduleBackup, 'utf8')
+      console.log('[收尾] todos.json 已恢复，schedule.json 已恢复')
     } catch (e) {
       console.error('[收尾] 恢复失败:', e.message)
     }
@@ -160,8 +165,8 @@ const main = async () => {
     assert(a1.num === '2', 'A1 数字应为 2，实际 ' + a1.num)
     assert(a1.svgCount === 0, 'A1 只应显示数字，不应带图标，实际 svg 数 ' + a1.svgCount)
     assert(a1.inner.trim() === '2', 'A1 标记内文字应只有数字，实际 ' + JSON.stringify(a1.inner))
-    assert(a1.title === '还有 2 件待办（共 3 件）', 'A1 悬停文案不对: ' + a1.title)
-    assert(a1.aria === '还有 2 件待办未完成', 'A1 无障碍文案不对: ' + a1.aria)
+    assert(a1.title === '今天还有 2 件没做完（共 3 件）', 'A1 悬停文案不对: ' + a1.title)
+    assert(a1.aria === '今天还有 2 件没做完', 'A1 无障碍文案不对: ' + a1.aria)
     console.log('[2] A1 通过：标记出现、数字 2、文案正确')
 
     // —— A2：位置在时钟右边、电量环左边，且不挤压时钟 ——
@@ -239,7 +244,7 @@ const main = async () => {
       )
     )
     assert(a5.num === '1', 'A5 收回后数字应为 1，实际 ' + a5.num)
-    assert(a5.title === '还有 1 件待办（共 1 件）', 'A5 文案不对: ' + a5.title)
+    assert(a5.title === '今天还有 1 件没做完（共 1 件）', 'A5 文案不对: ' + a5.title)
     console.log('[6] A5 通过：收到 1 件未办，收回后数字立即刷新')
 
     // —— A6：展开态头部完成度仍在（0/1），本次改动没碰它 ——
