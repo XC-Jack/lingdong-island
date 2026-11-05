@@ -156,6 +156,36 @@ export function setupScheduleStore(): void {
     save()
     return items
   })
+  // 编辑日程：payload 里给哪个字段改哪个；text/time/day 分别按 add 的规则规范化。
+  // 改 time 或 day 时把 reminded 重置 —— 改了「什么时候提醒」，旧的已提醒标记必须作废，
+  // 否则日程到了新时间不会弹提醒。只改文字不动提醒标记，避免重复弹。
+  ipcMain.handle('schedule:edit', (_e, id: string, payload: unknown) => {
+    const it = items.find((i) => i.id === id)
+    if (!it) return items
+    const p = (payload ?? {}) as { text?: unknown; time?: unknown; day?: unknown }
+    if (p.text !== undefined) {
+      const t = String(p.text ?? '').trim()
+      if (t) it.text = t // 空文本视为取消编辑，不误清内容
+    }
+    if (p.time !== undefined) {
+      const norm = typeof p.time === 'string' && /^\d{1,2}:\d{2}$/.test(p.time.trim())
+        ? p.time.trim().padStart(5, '0')
+        : null
+      if (norm !== it.time) {
+        it.time = norm
+        it.reminded = false
+      }
+    }
+    if (p.day !== undefined) {
+      const d = typeof p.day === 'string' && DAY_RE.test(p.day.trim()) ? p.day.trim() : null
+      if (d && d !== it.day) {
+        it.day = d
+        it.reminded = false
+      }
+    }
+    save()
+    return items
+  })
 }
 
 export function stopScheduleStore(): void {

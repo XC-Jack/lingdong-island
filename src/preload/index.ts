@@ -159,6 +159,10 @@ const api = {
   },
   scheduleRemove(id: string): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:remove', id)
+  },
+  /** 编辑日程：payload 给哪个字段改哪个（text/time/day），主进程负责规范化与提醒标记重置 */
+  scheduleEdit(id: string, payload: { text?: string; time?: string | null; day?: string | null }): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:edit', id, payload)
   }
 }
 
