@@ -24,6 +24,7 @@ interface NotifyListResult {
 interface ScheduleItem {
   id: string
   text: string
+  day: string // 'YYYY-MM-DD'
   time: string | null
   done: boolean
   reminded: boolean
@@ -982,13 +983,13 @@ function SchedulePanel(): React.JSX.Element {
   const add = useCallback(() => {
     const t = text.trim()
     if (!t) return
-    void window.island.scheduleAdd(t, time || null).then((list) => {
+    void window.island.scheduleAdd(t, time || null, selDay).then((list) => {
       setItems(list)
       setText('')
       setTime('')
       setTimePop(false)
     })
-  }, [text, time])
+  }, [text, time, selDay])
 
   const toggle = useCallback((id: string) => {
     void window.island.scheduleToggle(id).then(setItems)
@@ -1002,18 +1003,25 @@ function SchedulePanel(): React.JSX.Element {
     void window.island.scheduleRemove(id).then(setItems)
   }, [])
 
-  // 日程全部按「今天」处理（数据模型暂无日期字段）；有日程的日子标蓝点
-  const todayKey = selDay
-  const markedDays = new Set<string>([todayKey, ...items.map(() => todayKey)])
-  // 选中日的混排列表：日程（带时间在前）+ 待办
-  const schedSorted = [...items].sort((a, b) => {
+  // 今天（本地时区），用于「待办只在今天混排」与过期判定
+  const todayKey = (() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+  // 有日程的日子标蓝点
+  const markedDays = new Set<string>(items.map((it) => it.day))
+  // 选中日当天的日程（按 done / 时间排序）
+  const dayItems = items.filter((it) => it.day === selDay)
+  const schedSorted = [...dayItems].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
     if (a.time && b.time) return a.time.localeCompare(b.time)
     if (a.time) return -1
     if (b.time) return 1
     return a.createdAt - b.createdAt
   })
-  const todoSorted = [...todos].sort((a, b) => Number(a.done) - Number(b.done))
+  // 待办不分日期，只在看「今天」时与日程混排，避免被误当成那一天的待办
+  const showTodos = selDay === todayKey
+  const todoSorted = showTodos ? [...todos].sort((a, b) => Number(a.done) - Number(b.done)) : []
   const hm = formatClock(new Date())
   const dayLabel = `${Number(selDay.slice(5, 7))}月${Number(selDay.slice(8, 10))}日`
 
@@ -1025,7 +1033,9 @@ function SchedulePanel(): React.JSX.Element {
       <div className="sched-day">
         <div className="sched-day-head">
           <span className="sched-day-title">{dayLabel}</span>
-          <span className="sched-day-sub">{items.length} 条日程 · {todos.length} 条待办</span>
+          <span className="sched-day-sub">
+            {dayItems.length} 条日程 · {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
+          </span>
         </div>
         <div className="sched-add">
           <input
@@ -1115,10 +1125,15 @@ function SchedulePanel(): React.JSX.Element {
                   onChange={() => toggle(it.id)}
                 />
                 {it.time && (
-                  <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>
+                  <span
+                    className={`sched-badge ${
+                      !it.done && (it.day < todayKey || (it.day === todayKey && it.time <= hm)) ? 'sched-past' : ''
+                    }`}
+                  >
                     {it.time}
                   </span>
                 )}
+                {!it.time && !it.done && it.day < todayKey && <span className="sched-badge sched-past">逾期</span>}
                 <span className="todo-text">{it.text}</span>
                 <button
                   type="button"

@@ -1,20 +1,22 @@
 import { app, ipcMain } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 /**
- * 日程（M8）：今天的安排列表。
+ * 日程（M8 → US-014 跨天）。
  *
- * - 每条：{ id, text, time: 'HH:mm' | null, done, createdAt }
- * - time 为空 = 全天无具体时间；有时到点前 5 分钟触发提醒（Electron Notification）
+ * - 每条：{ id, text, day: 'YYYY-MM-DD', time: 'HH:mm' | null, done, reminded, createdAt }
+ * - day 是日程归属的日期；旧数据（没有 day 字段）在首次启动时迁移到「迁移当天」
+ * - time 为空 = 当天无具体时间；有时到点前触发提醒（Electron Notification）
  * - 持久化到 userData\schedule.json，与待办/置物架同模式
- * - 提醒触发时置 done 不变，只发一次（reminded 标记持久化防重复弹）
+ * - 提醒只在日程自己那一天触发，reminded 标记持久化防重复弹
  */
 
 export interface ScheduleItem {
   id: string
   text: string
+  day: string // 'YYYY-MM-DD'
   time: string | null // 'HH:mm' 24 小时制，null = 无具体时间
   done: boolean
   reminded: boolean
@@ -24,16 +26,55 @@ export interface ScheduleItem {
 let items: ScheduleItem[] = []
 let timer: ReturnType<typeof setInterval> | null = null
 
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+
 function filePath(): string {
   return join(app.getPath('userData'), 'schedule.json')
 }
 
+/** 本地时间的 'YYYY-MM-DD'（不能用 toISOString，那是 UTC，会差一天） */
+function dayKey(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function load(): void {
+  let raw: { items?: unknown }
   try {
-    const raw = JSON.parse(readFileSync(filePath(), 'utf8'))
-    items = Array.isArray(raw.items) ? raw.items : []
+    raw = JSON.parse(readFileSync(filePath(), 'utf8'))
   } catch {
     items = []
+    return
+  }
+  const list = Array.isArray(raw.items) ? (raw.items as Partial<ScheduleItem>[]) : []
+  const today = dayKey()
+  let migrated = 0
+  items = list.map((it) => {
+    const okDay = typeof it.day === 'string' && DAY_RE.test(it.day)
+    if (!okDay) migrated += 1
+    return {
+      id: String(it.id ?? randomUUID()),
+      text: String(it.text ?? ''),
+      day: okDay ? (it.day as string) : today,
+      time: typeof it.time === 'string' ? it.time : null,
+      done: Boolean(it.done),
+      reminded: Boolean(it.reminded),
+      createdAt: typeof it.createdAt === 'number' ? it.createdAt : Date.now(),
+    }
+  })
+  if (migrated > 0) {
+    // 迁移前先把原文件整份留底，出问题可以人工找回
+    const stamp = new Date()
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\..+$/, '')
+      .replace('T', '-')
+    try {
+      copyFileSync(filePath(), `${filePath()}.bak-${stamp}`)
+    } catch {
+      /* 备份失败不阻断迁移：内存里的数据仍可用，下一次写盘会落新格式 */
+    }
+    save()
+    console.log(`[schedule] 已迁移 ${migrated} 条旧日程到日期字段，备份 schedule.json.bak-${stamp}`)
   }
 }
 
@@ -42,19 +83,23 @@ function save(): void {
   writeFileSync(filePath(), JSON.stringify({ items }, null, 2), 'utf8')
 }
 
-/** 今天的 'HH:mm'；跨天时重置 reminded（第二天的日程重新可提醒） */
+/** 当前时刻的 'HH:mm' */
 function nowHm(): string {
   const d = new Date()
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+/** 只提醒「今天」的、还没提醒过的、时间已到的条目 */
 function remindDue(): void {
   const hm = nowHm()
+  const today = dayKey()
+  let changed = false
   for (const it of items) {
     if (!it.time || it.reminded) continue
+    if (it.day !== today) continue
     if (it.time <= hm) {
-      // 已过点（含刚好）且未提醒过 → 弹系统通知
       it.reminded = true
+      changed = true
       try {
         // 动态 import 避免测试环境无窗口时报错
         const { Notification } = require('electron') as typeof import('electron')
@@ -70,8 +115,7 @@ function remindDue(): void {
       }
     }
   }
-  // 有过期未提醒的才写盘，避免每分钟白写
-  if (items.some((i) => i.reminded)) save()
+  if (changed) save()
 }
 
 export function setupScheduleStore(): void {
@@ -80,16 +124,19 @@ export function setupScheduleStore(): void {
   timer = setInterval(remindDue, 60_000)
 
   ipcMain.handle('schedule:list', () => items)
-  ipcMain.handle('schedule:add', (_e, text: string, time: string | null) => {
+  ipcMain.handle('schedule:add', (_e, text: string, time: string | null, day?: string | null) => {
     const t = String(text ?? '').trim()
     if (!t) return items
     // time 规范化：接受 'HH:mm'，其它/null 一律存 null
     const norm = typeof time === 'string' && /^\d{1,2}:\d{2}$/.test(time.trim())
       ? time.trim().padStart(5, '0')
       : null
+    // day 规范化：接受 'YYYY-MM-DD'，其它/缺省一律落到今天
+    const d = typeof day === 'string' && DAY_RE.test(day.trim()) ? day.trim() : dayKey()
     items.push({
       id: randomUUID(),
       text: t,
+      day: d,
       time: norm,
       done: false,
       reminded: false,

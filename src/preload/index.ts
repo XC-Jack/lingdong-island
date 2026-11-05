@@ -136,12 +136,12 @@ const api = {
   notifyOpenSource(appName: string): Promise<boolean> {
     return ipcRenderer.invoke('notify:open-source', appName)
   },
-  /** 日程：列 / 增（文本+可选 'HH:mm'）/ 勾选切换 / 删，全部返回最新全量列表 */
+  /** 日程：列 / 增（文本 + 可选 'HH:mm' + 可选 'YYYY-MM-DD'）/ 勾选切换 / 删，全部返回最新全量列表 */
   scheduleList(): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:list')
   },
-  scheduleAdd(text: string, time: string | null): Promise<ScheduleItem[]> {
-    return ipcRenderer.invoke('schedule:add', text, time)
+  scheduleAdd(text: string, time: string | null, day?: string | null): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:add', text, time, day ?? null)
   },
   scheduleToggle(id: string): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:toggle', id)
@@ -155,6 +155,7 @@ const api = {
 export interface ScheduleItem {
   id: string
   text: string
+  day: string // 'YYYY-MM-DD'
   time: string | null
   done: boolean
   reminded: boolean
