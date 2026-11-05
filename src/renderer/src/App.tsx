@@ -1540,44 +1540,17 @@ export default function App(): React.JSX.Element {
     window.island?.setExpanded(expanded)
   }, [expanded])
 
-  // 点了桌面/其他程序（窗口失焦）→ 自动收回。
-  // 坑：中文输入法的候选窗是独立系统窗口，打字/选字时主窗口会瞬时失焦又得焦，
-  // 立即收起会把正在打字的岛收走（用户实测：待办输入框打字、日历输入回车后岛立刻缩小）。
-  // 处理：blur 后延迟确认——窗口没拿回焦点才真的收起。延迟取 300ms：
-  // 输入法选字后焦点回归通常远快于这个值（US-036 定位后已证明真正误收岛的
-  // 是收起定时器路径，blur 延迟只是兜底，300ms 足够）；点桌面收起走这 300ms
-  // 再加 220ms 收起动画，用户实测 800ms 等待「反应慢」，缩短到 300ms（US-037 后续反馈）。
+  // 点了桌面/其他程序（窗口失焦）→ 立即收回。
+  // 坑（历史）：中文输入法的候选窗不会夺走主窗口焦点（微软拼音等 TSF 输入法不触发 window blur，
+  // US-036 诊断日志实锤：打字收岛发生时窗口 hasFocus=true、无 blur），所以 blur 路径
+  // 不需要为输入法留延迟——当年的延迟确认是误诊产物，只拖慢了点桌面收起（用户反馈「点桌面
+  // 要等一会才开始缩」）。输入法的保护由收起定时器路径的 typing 判据负责（US-036 已修）。
   useEffect(() => {
-    let blurTimer: number | null = null
     window.island.onWindowBlur(() => {
       hoverRef.current = false
-      if (blurTimer !== null) window.clearTimeout(blurTimer)
-      window.island.logDiag(`render got blur; expanded=${expandedRef.current}`)
-      blurTimer = window.setTimeout(() => {
-        blurTimer = null
-        const focused = document.hasFocus()
-        // 用户还停在输入框里（正在打字/选字）→ 不管窗口焦点抖成什么样都不收。
-        // IME 组合期间 hasFocus() 会瞬时抖成 false，不能只信它（US-036）。
-        const el = document.activeElement
-        const typing = !!(el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
-        window.island.logDiag(`render blur-resolve after 300ms; hasFocus=${focused} typing=${typing}`)
-        // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
-        if (!focused && !typing) setExpanded(false)
-      }, 300)
+      window.island.logDiag('render blur -> collapse now')
+      setExpanded(false)
     })
-    const onFocus = (): void => {
-      // 拿回焦点就取消待执行的收起
-      if (blurTimer !== null) {
-        window.clearTimeout(blurTimer)
-        blurTimer = null
-        window.island.logDiag('render focus cancels pending collapse')
-      }
-    }
-    window.addEventListener('focus', onFocus)
-    return () => {
-      if (blurTimer !== null) window.clearTimeout(blurTimer)
-      window.removeEventListener('focus', onFocus)
-    }
   }, [])
 
   const clearCollapseTimer = useCallback(() => {
