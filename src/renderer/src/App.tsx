@@ -249,6 +249,8 @@ function TodoPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState('')
   const draftInputRef = useRef<HTMLInputElement | null>(null)
+  // 列表超长时岛内滚动，新加的条目在可视区外 → 加完滚到底让用户看见（US-037）
+  const todoListRef = useRef<HTMLUListElement | null>(null)
   // 新增时可选的时间（HH:mm 或空），复用日程页那套自绘深色时间面板
   const [time, setTime] = useState('')
   const [timePop, setTimePop] = useState(false)
@@ -309,6 +311,8 @@ function TodoPanel({
     setItems(await window.island.scheduleAdd(text, t || null, today))
     // 加完保持输入框焦点，方便连着录几条
     draftInputRef.current?.focus()
+    // 新条目在列表尾部，列表超长时会滚出可视区——滚到底让用户看见它加上了（US-037）
+    requestAnimationFrame(() => todoListRef.current?.scrollTo({ top: todoListRef.current.scrollHeight }))
   }, [draft, time, today])
 
   const toggle = useCallback(
@@ -447,7 +451,7 @@ function TodoPanel({
           </div>
         )}
       </div>
-      <ul className="todo-list">
+      <ul className="todo-list" ref={todoListRef}>
         {schedSorted.length === 0 && todoSorted.length === 0 && (
           <li className="todo-empty">今天还没有安排，加一条吧</li>
         )}
@@ -1186,6 +1190,8 @@ function SchedulePanel(): React.JSX.Element {
   // 行内编辑（与待办页双击编辑同款交互）：editingSchedId 是正在编辑的日程 id
   const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
   const [schedEditDraft, setSchedEditDraft] = useState('')
+  // 当日列表超长时岛内滚动，新加的条目可能在可视区外 → 加完滚到底（US-037）
+  const schedListRef = useRef<HTMLUListElement | null>(null)
 
   const startSchedEdit = useCallback((it: ScheduleItem) => {
     setEditingSchedId(it.id)
@@ -1223,6 +1229,9 @@ function SchedulePanel(): React.JSX.Element {
       setText('')
       setTime('')
       setTimePop(false)
+      // 列表超长时新条目会滚出可视区——滚到底让用户看见它加上了（US-037；
+      // 新条目带时间时排在时间组里，滚到底不一定精确盖住它，但多数场景（无时间）在尾部）
+      requestAnimationFrame(() => schedListRef.current?.scrollTo({ top: schedListRef.current.scrollHeight }))
     })
   }, [text, time, selDay])
 
@@ -1349,7 +1358,7 @@ function SchedulePanel(): React.JSX.Element {
             </div>
           </div>
         ) : (
-          <ul className="todo-list sched-list">
+          <ul className="todo-list sched-list" ref={schedListRef}>
             {schedSorted.map((it) => (
               <li key={`s${it.id}`} className={`todo-item ${it.done ? 'done' : ''}`}>
                 <button

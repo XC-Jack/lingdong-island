@@ -45,6 +45,15 @@ body {
 /* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画 */
 .page-fade {
   animation: page-fade-in 180ms ease-out;
+  /* flex 收缩链：允许被父级压矮，否则列表内容会把岛撑到 max-height 之外溢出被裁
+     （US-037：「任务加到后面看不见」的根因之一） */
+  min-height: 0;
+  /* panel-body 是 align-items:flex-start（子项默认取内容高度，可超出容器被窗口裁掉）；
+     align-self:stretch 把本块压回 panel-body 的实际高度，列表超长时让 .todo-list 自己滚（US-037）。
+     只影响垂直方向，各页水平 max-content 布局不受影响。 */
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 置物架/通知页：内容宽度自适应，但工具条必须贴岛右缘（与头部右侧对齐），
@@ -433,6 +442,10 @@ body {
   flex-direction: column;
   gap: 10px;
   width: 100%;
+  /* flex 收缩链关键：默认 min-height:auto 会拒绝收缩到内容高度以下，
+     内容多时列表溢出岛底被窗口裁掉（看起来像「加不上任务」）。
+     加 min-height:0 后 .todo-list 的 overflow-y:auto 才能真正出滚动条（US-037）。 */
+  min-height: 0;
 }
 
 /* 双击编辑待办文本时的行内输入框（视觉上贴 .todo-input） */
@@ -450,14 +463,23 @@ body {
   outline: none;
 }
 
-/* 列表随内容撑开；超出 .island.expanded 的 max-height 时在内部滚动 */
+/* 列表随内容撑开；超出 .island.expanded 的 max-height 时在内部滚动。
+   滚动条不显示（用户要求）：列表仍可滚动（滚轮/拖动），只藏视觉条（US-037） */
 .todo-list {
   flex: 0 1 auto;
+  min-height: 0; /* 父级收缩链贯通后这里才能真的滚起来（US-037） */
   list-style: none;
   overflow-y: auto;
+  scrollbar-width: none; /* Firefox 写法，Chromium 121+ 也支持 */
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.todo-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 .todo-empty {
@@ -1101,10 +1123,18 @@ body {
   padding: 2px 4px;
   width: 100%;
   flex: 0 1 auto;
+  min-height: 0; /* 收缩链贯通后通知多了在岛内滚动（US-037） */
   overflow-y: auto;
+  scrollbar-width: none; /* 不显示滚动条，与待办/日程列表一致（US-037） */
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.notify-list::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /* 通知页顶部的"已读"按钮是文字按钮，不能继承 todo-del 的 20px 方形 */
@@ -1154,6 +1184,8 @@ body {
   gap: 14px;
   align-items: stretch;
   width: max-content;
+  /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
+  min-height: 0;
 }
 
 /* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
@@ -1162,6 +1194,7 @@ body {
   min-width: 252px;
   display: flex;
   flex-direction: column;
+  min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
 }
 
 .sched-day-head {
