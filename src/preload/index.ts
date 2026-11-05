@@ -48,6 +48,10 @@ const api = {
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)
   },
+  /** 诊断日志（US-036 探针）：渲染层把收起判定写进 userData/collapse-log.txt */
+  logDiag(line: string): void {
+    ipcRenderer.send('island:log-diag', line)
+  },
   /**
    * 弹出应用菜单（US-034）：岛内右键时调用，主进程在光标处弹原生菜单，
    * 里面的「退出灵动岛」是真正的进程退出。
@@ -159,6 +163,10 @@ const api = {
   },
   scheduleRemove(id: string): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:remove', id)
+  },
+  /** 编辑日程：payload 给哪个字段改哪个（text/time/day），主进程负责规范化与提醒标记重置 */
+  scheduleEdit(id: string, payload: { text?: string; time?: string | null; day?: string | null }): Promise<ScheduleItem[]> {
+    return ipcRenderer.invoke('schedule:edit', id, payload)
   }
 }
 

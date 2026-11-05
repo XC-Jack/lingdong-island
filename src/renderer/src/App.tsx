@@ -336,6 +336,21 @@ function TodoPanel({
     setItems(await window.island.scheduleRemove(id))
   }, [])
 
+  // 日程条目双击改名（与日程页同款交互，复用 schedule:edit）
+  const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
+  const [schedEditDraft, setSchedEditDraft] = useState('')
+  const startSchedEdit = useCallback((it: ScheduleItem) => {
+    setEditingSchedId(it.id)
+    setSchedEditDraft(it.text)
+  }, [])
+  const commitSchedEdit = useCallback(async () => {
+    const id = editingSchedId
+    const t = schedEditDraft.trim()
+    setEditingSchedId(null)
+    if (!id || !t) return // 空文本视为取消，不误清内容
+    setItems(await window.island.scheduleEdit(id, { text: t }))
+  }, [editingSchedId, schedEditDraft])
+
   // 双击进入编辑：草稿先填当前文本，下次渲染时选中全部
   const startEdit = useCallback((t: Todo) => {
     setEditingId(t.id)
@@ -361,6 +376,9 @@ function TodoPanel({
           placeholder="加一条今天要做的事，回车连记…"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
+            // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）。
+            // 拼音输入用空格选字、回车上屏都会冒泡到这里，把正在输入的岛收走。
+            e.stopPropagation()
             if (e.key === 'Enter') void add()
           }}
         />
@@ -448,7 +466,33 @@ function TodoPanel({
             {it.time && (
               <span className={`sched-badge ${!it.done && it.time <= hm ? 'sched-past' : ''}`}>{it.time}</span>
             )}
-            <span className="todo-text">{it.text}</span>
+            {editingSchedId === it.id ? (
+              <input
+                className="todo-edit"
+                autoFocus
+                value={schedEditDraft}
+                onFocus={(e) => e.currentTarget.select()}
+                onChange={(e) => setSchedEditDraft(e.target.value)}
+                onBlur={() => void commitSchedEdit()}
+                onKeyDown={(e) => {
+                  // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）
+                  e.stopPropagation()
+                  if (e.key === 'Enter') void commitSchedEdit()
+                  if (e.key === 'Escape') {
+                    e.stopPropagation() // Esc 另有「收起岛」的全局监听，编辑框内 Esc 只取消编辑
+                    setEditingSchedId(null)
+                  }
+                }}
+              />
+            ) : (
+              <span
+                className="todo-text"
+                title="双击编辑"
+                onDoubleClick={() => startSchedEdit(it)}
+              >
+                {it.text}
+              </span>
+            )}
             <button
               type="button"
               className="todo-del"
@@ -480,8 +524,14 @@ function TodoPanel({
                 onChange={(e) => setEditDraft(e.target.value)}
                 onBlur={() => void commitEdit()}
                 onKeyDown={(e) => {
+                  // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛，
+                  // 编辑框里回车提交会把整座岛收走（US-036 实测踩坑，待办编辑框同修）
+                  e.stopPropagation()
                   if (e.key === 'Enter') void commitEdit()
-                  if (e.key === 'Escape') setEditingId(null)
+                  if (e.key === 'Escape') {
+                    e.stopPropagation() // Esc 另有「收起岛」的全局监听，编辑框内 Esc 只取消编辑
+                    setEditingId(null)
+                  }
                 }}
               />
             ) : (
@@ -1133,6 +1183,22 @@ function SchedulePanel(): React.JSX.Element {
   const timePopRef = useRef<HTMLDivElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => localDayKey())
+  // 行内编辑（与待办页双击编辑同款交互）：editingSchedId 是正在编辑的日程 id
+  const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
+  const [schedEditDraft, setSchedEditDraft] = useState('')
+
+  const startSchedEdit = useCallback((it: ScheduleItem) => {
+    setEditingSchedId(it.id)
+    setSchedEditDraft(it.text)
+  }, [])
+
+  const commitSchedEdit = useCallback(async () => {
+    const id = editingSchedId
+    const t = schedEditDraft.trim()
+    setEditingSchedId(null)
+    if (!id || !t) return // 空文本视为取消，不误清内容
+    setItems(await window.island.scheduleEdit(id, { text: t }))
+  }, [editingSchedId, schedEditDraft])
 
   useEffect(() => {
     void window.island.scheduleList().then(setItems)
@@ -1210,6 +1276,9 @@ function SchedulePanel(): React.JSX.Element {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑，
+              // 日程页输入框与待办页同修：空格选字/回车提交都会冒泡）
+              e.stopPropagation()
               if (e.key === 'Enter') add()
             }}
           />
@@ -1302,7 +1371,34 @@ function SchedulePanel(): React.JSX.Element {
                   </span>
                 )}
                 {!it.time && !it.done && it.day < todayKey && <span className="sched-badge sched-past">逾期</span>}
-                <span className="todo-text">{it.text}</span>
+                {editingSchedId === it.id ? (
+                  <input
+                    className="todo-edit"
+                    autoFocus
+                    value={schedEditDraft}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onChange={(e) => setSchedEditDraft(e.target.value)}
+                    onBlur={() => void commitSchedEdit()}
+                    onKeyDown={(e) => {
+                      // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛，
+                      // 编辑框里回车提交会把整座岛收走（US-036 实测踩坑）
+                      e.stopPropagation()
+                      if (e.key === 'Enter') void commitSchedEdit()
+                      if (e.key === 'Escape') {
+                        e.stopPropagation() // Esc 另有「收起岛」的全局监听，编辑框内 Esc 只取消编辑
+                        setEditingSchedId(null)
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="todo-text"
+                    title="双击编辑"
+                    onDoubleClick={() => startSchedEdit(it)}
+                  >
+                    {it.text}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="todo-del"
@@ -1355,6 +1451,9 @@ export default function App(): React.JSX.Element {
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
   const [notifyUnread, setNotifyUnread] = useState(0)
   const hoverRef = useRef(false)
+  // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
+  const expandedRef = useRef(false)
+  expandedRef.current = expanded
   const collapseTimer = useRef<number | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
   // 一次拖动只处理一次 dragEnter 的去重标记（dragleave/drop 时复位）
@@ -1432,12 +1531,41 @@ export default function App(): React.JSX.Element {
     window.island?.setExpanded(expanded)
   }, [expanded])
 
-  // 点了桌面/其他程序（窗口失焦）→ 自动收回
+  // 点了桌面/其他程序（窗口失焦）→ 自动收回。
+  // 坑：中文输入法的候选窗是独立系统窗口，打字/选字时主窗口会瞬时失焦又得焦，
+  // 立即收起会把正在打字的岛收走（用户实测：待办输入框打字、日历输入回车后岛立刻缩小）。
+  // 处理：blur 后延迟确认——800ms 后窗口仍没拿回焦点，才真的收起。
   useEffect(() => {
+    let blurTimer: number | null = null
     window.island.onWindowBlur(() => {
       hoverRef.current = false
-      setExpanded(false)
+      if (blurTimer !== null) window.clearTimeout(blurTimer)
+      window.island.logDiag(`render got blur; expanded=${expandedRef.current}`)
+      blurTimer = window.setTimeout(() => {
+        blurTimer = null
+        const focused = document.hasFocus()
+        // 用户还停在输入框里（正在打字/选字）→ 不管窗口焦点抖成什么样都不收。
+        // IME 组合期间 hasFocus() 会瞬时抖成 false，不能只信它（US-036）。
+        const el = document.activeElement
+        const typing = !!(el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))
+        window.island.logDiag(`render blur-resolve after 800ms; hasFocus=${focused} typing=${typing}`)
+        // 焦点回来了（IME 选字完成/候选窗关闭）→ 不收起
+        if (!focused && !typing) setExpanded(false)
+      }, 800)
     })
+    const onFocus = (): void => {
+      // 拿回焦点就取消待执行的收起
+      if (blurTimer !== null) {
+        window.clearTimeout(blurTimer)
+        blurTimer = null
+        window.island.logDiag('render focus cancels pending collapse')
+      }
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      if (blurTimer !== null) window.clearTimeout(blurTimer)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   const clearCollapseTimer = useCallback(() => {
@@ -1450,7 +1578,15 @@ export default function App(): React.JSX.Element {
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
     collapseTimer.current = window.setTimeout(() => {
-      if (!hoverRef.current) setExpanded(false)
+      // 到点后先看「用户是不是正在输入框里」：输入框聚焦（activeElement 是输入控件）时绝不能收。
+      // US-036 真凶：展开/切页的窗口尺寸动画会误触发一次 mouseleave，定时器到点时用户
+      // 正在添加框打字（手不在鼠标上、没有 mousemove 来重新触发 mouseenter），岛就被收走了。
+      // 之前用 document.hasFocus() 判断不行——中文输入法组合瞬间它也会抖成 false。
+      // 点桌面/点其他窗口时输入框必然失焦（activeElement 回到 body），收起行为不受影响。
+      const el = document.activeElement
+      if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
+      setExpanded(false)
+      window.island.logDiag('collapse by schedule timer; no active input')
     }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
   }, [clearCollapseTimer, page])
 
@@ -1569,9 +1705,8 @@ export default function App(): React.JSX.Element {
     // 悬停期间不断续命，防止拖着拖着岛收走
     if (collapseTimer.current !== null) {
       window.clearTimeout(collapseTimer.current)
-      collapseTimer.current = window.setTimeout(() => {
-        if (!hoverRef.current) setExpanded(false)
-      }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
+      window.island.logDiag('collapse suppressed by drag-over')
+      collapseTimer.current = null
     }
   }
 
