@@ -1290,11 +1290,24 @@ export default function App(): React.JSX.Element {
   // 拖文件落进岛也表扬一下
   const onDonePulse = pulseHappy
 
-  // 待办完成度（右上角 n/m 已完成）
+  // 待办完成度（展开态右上角 n/m 已完成 + 收起态「还剩 N」共用一份）
   const [todoStats, setTodoStats] = useState<{ done: number; total: number }>({ done: 0, total: 0 })
   const onTodoStats = useCallback((done: number, total: number) => {
     setTodoStats({ done, total })
   }, [])
+
+  // 收起态不渲染 TodoPanel，拿不到它上抛的统计，这里直接问一次主进程现算。
+  // 只在「首次挂载」和「每次收回」时算（expanded 初值就是 false，挂载即覆盖），
+  // 不挂轮询：收起态没有待办编辑入口，唯一的变动来源是展开态里的操作。
+  const refreshTodoStats = useCallback(() => {
+    void window.island.todosList().then((list) => {
+      setTodoStats({ done: list.filter((t) => t.done).length, total: list.length })
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!expanded) refreshTodoStats()
+  }, [expanded, refreshTodoStats])
 
   // 通知未读回调（NotifyPanel 上抛）
   const onNotifyUnread = useCallback((n: number) => setNotifyUnread(n), [])
@@ -1558,6 +1571,17 @@ export default function App(): React.JSX.Element {
                   />
                 </svg>
                 <span className="ring-num">{battery}</span>
+              </span>
+            )}
+            {/* 待办剩余（收起态）：只在真有未完成待办时出现，全部做完就收起不再催 */}
+            {todoStats.total - todoStats.done > 0 && (
+              <span
+                className="collapsed-todo"
+                title={`还有 ${todoStats.total - todoStats.done} 件待办（共 ${todoStats.total} 件）`}
+                role="img"
+                aria-label={`还有 ${todoStats.total - todoStats.done} 件待办未完成`}
+              >
+                <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
               </span>
             )}
             {notifyUnread > 0 && <span className="collapsed-dot" title={`${notifyUnread} 条未读通知`} />}
