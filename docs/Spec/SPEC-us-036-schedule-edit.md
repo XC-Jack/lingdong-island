@@ -80,7 +80,7 @@
 
 ## 已知踩坑（留给后续任务）
 
-- **岛根 onKeyDown 会吞编辑框的 Enter/Esc**：岛根对 Enter/空格调 `toggle()`（收起/展开岛），对 Esc 有全局「收起岛」监听。任何「行内编辑框」都必须在 `onKeyDown` 里 `e.stopPropagation()`。本次只修了日程编辑框；**待办编辑框（`TodoPanel` 的 `commitEdit` 路径）存在同样的既有问题**——回车提交改名后岛会被收走，属既有缺陷，不在本任务范围内，建议另开小任务修复。
+- **岛根 onKeyDown 会吞编辑框的 Enter/Esc**：岛根对 Enter/空格调 `toggle()`（收起/展开岛），对 Esc 有全局「收起岛」监听。任何「行内编辑框」都必须在 `onKeyDown` 里 `e.stopPropagation()`。日程编辑框已修；**待办编辑框（`TodoPanel` 的 `commitEdit` 路径）曾有同样问题，2026-11-05 应用户要求在同一分支顺手修复（`290b499`），待办 e2e 回归通过。**
 
 ## 八、验收记录
 
