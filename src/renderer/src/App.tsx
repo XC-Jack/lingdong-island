@@ -31,11 +31,13 @@ interface ScheduleItem {
   createdAt: number
 }
 
-/** Wi-Fi 快照（收起态 US-005，与主进程 statusStore 保持一致；独立声明避免跨 tsconfig project 引用） */
+/** 网络快照（收起态 US-005，与主进程 statusStore 保持一致；独立声明避免跨 tsconfig project 引用） */
 interface WifiSnapshot {
   connected: boolean
   online: boolean
   name: string | null
+  /** 连接方式：'wifi' 无线 / 'ethernet' 网线（插了网线显示网线图标，不显示 Wi-Fi 弧线） */
+  kind: 'wifi' | 'ethernet'
 }
 
 function formatClock(d: Date): string {
@@ -127,6 +129,15 @@ const IcoWifi = (): React.JSX.Element => (
     <path d="M5.5 13a9.5 9.5 0 0 1 13 0" />
     <path d="M8.5 16.5a5 5 0 0 1 7 0" />
     <circle cx="12" cy="19.5" r="1" fill="currentColor" stroke="none" />
+  </IconSvg>
+)
+
+/** 网线（收起态 US-005 插网线时）：RJ45 水晶头插口图标，与 Wi-Fi 弧线区分开 */
+const IcoEthernet = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M7.5 9.5v-3a1.5 1.5 0 0 1 1.5-1.5h6a1.5 1.5 0 0 1 1.5 1.5v3" />
+    <path d="M7.5 9.5h-2a1.5 1.5 0 0 0-1.5 1.5v4a1.5 1.5 0 0 0 1.5 1.5h13a1.5 1.5 0 0 0 1.5-1.5v-4a1.5 1.5 0 0 0-1.5-1.5h-2" />
+    <path d="M9.5 16.5v2M12 16.5v2M14.5 16.5v2" />
   </IconSvg>
 )
 
@@ -1914,16 +1925,28 @@ export default function App(): React.JSX.Element {
                 <span className="ring-num">{battery}</span>
               </span>
             )}
-            {/* Wi-Fi（收起态 US-005）：电量环右侧。有网白色，连上但没网橙色警示；
-                读不到（未连 Wi-Fi / 命令失败）不渲染，不打扰 */}
+            {/* 网络（收起态 US-005）：电量环右侧。Wi-Fi 弧线 / 插网线显示水晶头图标；
+                有网白色，连上但没网橙色警示；读不到（没联网 / 命令失败）不渲染，不打扰 */}
             {wifi !== null && (
               <span
                 className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
-                title={wifi.online ? `Wi-Fi：${wifi.name ?? ''}（网络正常）` : `Wi-Fi：${wifi.name ?? ''}（连上了但上不了网）`}
+                title={
+                  wifi.kind === 'ethernet'
+                    ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+                    : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+                }
                 role="img"
-                aria-label={wifi.online ? 'Wi-Fi 已连接，网络正常' : 'Wi-Fi 已连接但没有网络'}
+                aria-label={
+                  wifi.kind === 'ethernet'
+                    ? wifi.online
+                      ? '网线已连接，网络正常'
+                      : '网线已连接但没有网络'
+                    : wifi.online
+                      ? 'Wi-Fi 已连接，网络正常'
+                      : 'Wi-Fi 已连接但没有网络'
+                }
               >
-                <IcoWifi />
+                {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
               </span>
             )}
             {/* 待办剩余（收起态）：只在真有未完成的事时出现，全部做完就收起不再催。

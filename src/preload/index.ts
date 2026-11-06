@@ -3,11 +3,13 @@ import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult } from '../sha
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult }
 
-/** Wi-Fi 状态（收起态 US-005，与主进程 statusStore 保持一致） */
+/** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
   connected: boolean
   online: boolean
   name: string | null
+  /** 连接方式：'wifi' 无线 / 'ethernet' 网线 */
+  kind: 'wifi' | 'ethernet'
 }
 
 /** 收起态状态栏的数据快照（与主进程 statusStore 保持一致） */
@@ -88,7 +90,7 @@ const api = {
   todosRename(id: string, text: string): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:rename', { id, text })
   },
-  /** 收起态状态栏快照：电量、充电状态 */
+  /** 收起态状态栏快照：电量、充电状态、网络（Wi-Fi / 网线） */
   statusSnapshot(): Promise<StatusSnapshot> {
     return ipcRenderer.invoke('status:snapshot')
   },

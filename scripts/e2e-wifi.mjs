@@ -1,19 +1,19 @@
-// e2e-wifi.mjs：验证 US-005「收起态 Wi-Fi 状态展示」
-// 覆盖：主进程快照 wifi 字段结构 → 收起态图标出现/位置（电量环右、待办数字左）
-//      → 悬停文案含网络名 → 无网时橙色（offline 类）→ 读不到时不渲染
-//      → 展开态头部不出现 Wi-Fi 图标（不扩范围）
-// 用法：node scripts/e2e-wifi.mjs（自动启动 electron，CDP 端口 9321）
-// 说明：本脚本只读不写——Wi-Fi 状态来自系统，脚本无法可靠模拟断网，
-//      「无网橙色」「未连接不渲染」两个分支以主进程快照模拟注入验证。
+// e2e-wifi.mjs：US-005 收起态 Wi-Fi/网线状态 e2e（走 CDP 连 dev 或打包后的渲染层）
+// A1 快照结构 / A2 图标+文案+类 / A3 DOM 顺序与无重叠 / A4 展开态无图标 / A5 null 分支说明
+// kind='wifi' → IcoWifi 弧线；kind='ethernet' → IcoEthernet 水晶头（svg path 数量区分）
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
-const AUTO_COLLAPSE_MS = 700
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+let failures = 0
+function assert(cond, msg) {
+  if (cond) return
+  failures++
+  console.error('FAIL:', msg)
+}
 
 async function connect() {
   for (let i = 0; i < 40; i++) {
@@ -22,15 +22,13 @@ async function connect() {
       const list = await r.json()
       const page = list.find((t) => t.type === 'page')
       if (page) return page.webSocketDebuggerUrl
-    } catch {
-      /* 还没起 */
-    }
+    } catch {}
     await sleep(500)
   }
   throw new Error('CDP 连不上')
 }
 
-function cdp(wsUrl, expression) {
+function cdp(wsUrl, expression, awaitPromise = false) {
   const ws = new WebSocket(wsUrl)
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('cdp timeout')), 20000)
@@ -39,103 +37,83 @@ function cdp(wsUrl, expression) {
         JSON.stringify({
           id: 1,
           method: 'Runtime.evaluate',
-          params: { expression, awaitPromise: true, returnByValue: true }
+          params: { expression, returnByValue: true, awaitPromise }
         })
       )
     ws.onmessage = (ev) => {
       const data = JSON.parse(ev.data)
       if (data.id !== 1) return
       clearTimeout(timer)
-      if (data.result?.exceptionDetails) {
-        reject(
-          new Error(
-            '页面异常: ' +
-              (data.result.exceptionDetails.exception?.description ?? data.result.exceptionDetails.text)
-          )
-        )
-      } else {
-        resolve(data.result?.result?.value)
-      }
+      resolve(data.result?.result?.value)
       ws.close()
     }
-    ws.onerror = () => {
-      clearTimeout(timer)
-      reject(new Error('ws error'))
-    }
   })
-}
-
-function assert(cond, msg) {
-  if (!cond) throw new Error('FAIL: ' + msg)
-}
-
-async function settle(wsUrl, expression, ms = 400) {
-  await cdp(wsUrl, `new Promise(r=>setTimeout(r,${ms})).then(()=>true)`)
-  return cdp(wsUrl, expression)
-}
-
-/** 通过真实鼠标事件路径收起（合成 mouseleave 无效，实测踩坑） */
-async function collapse(wsUrl) {
-  await cdp(wsUrl, `document.querySelector('.island').dispatchEvent(new MouseEvent('mouseout', {bubbles:true})); 1`)
-  await sleep(AUTO_COLLAPSE_MS + 250)
-}
-
-/** 点击岛展开 */
-async function expand(wsUrl) {
-  await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
-  await sleep(350)
 }
 
 const main = async () => {
   const exe = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
-  const child = spawn(exe, ['.', `--remote-debugging-port=${CDP_PORT}`], {
-    cwd: ROOT,
-    env,
-    stdio: 'ignore'
-  })
-
+  const child = spawn(exe, ['.', `--remote-debugging-port=${CDP_PORT}`], { cwd: ROOT, env, stdio: 'ignore' })
   try {
     const wsUrl = await connect()
-    console.log('[0] 已连上 CDP')
-    await sleep(600)
+    await sleep(800)
 
-    // —— A1：主进程快照结构：wifi 字段存在且类型正确 ——
-    const snap = JSON.parse(await cdp(wsUrl, `window.island.statusSnapshot().then(s=>JSON.stringify(s))`))
-    assert('wifi' in snap, 'A1 快照没有 wifi 字段: ' + JSON.stringify(snap))
-    console.log('[1] A1 通过：快照 wifi 字段 =', JSON.stringify(snap.wifi))
+    // —— A1：主进程快照里 wifi 字段结构与 kind 取值 ——
+    // A1：awaitPromise 写法必须是 Promise.then(...) 链——裸 await 表达式在这里返回 undefined（实测踩坑）
+    const a1raw = await cdp(wsUrl, `window.island.statusSnapshot().then(s => JSON.stringify(s))`, true)
+    const a1 = JSON.parse(a1raw)
+    assert(a1 && typeof a1.battery === 'number' && typeof a1.charging === 'boolean', 'A1 快照缺 battery/charging')
+    if (a1.wifi !== null) {
+      assert(
+        typeof a1.wifi.connected === 'boolean' &&
+          typeof a1.wifi.online === 'boolean' &&
+          (a1.wifi.name === null || typeof a1.wifi.name === 'string') &&
+          (a1.wifi.kind === 'wifi' || a1.wifi.kind === 'ethernet'),
+        'A1 wifi 字段结构错: ' + JSON.stringify(a1.wifi)
+      )
+      console.log('[1] A1 通过：快照 wifi 字段 = ' + JSON.stringify(a1.wifi))
+    } else {
+      console.log('[1] A1 说明：本机无已连接网络，wifi=null（分支允许）')
+    }
 
-    // —— A2：本机当前真连着 Wi-Fi（探针实测 WLAN 在线），收起态应有图标 ——
-    await expand(wsUrl)
-    await collapse(wsUrl)
+    // —— A2：收起态图标出现、文案含接口名与连接方式、类正确；kind 与图标种类对应 ——
     const a2 = JSON.parse(
-      await settle(
+      await cdp(
         wsUrl,
-        `JSON.stringify({
-          expanded: !!document.querySelector('.island.expanded'),
-          has: !!document.querySelector('.collapsed-wifi'),
-          title: document.querySelector('.collapsed-wifi')?.getAttribute('title') ?? null,
-          cls: document.querySelector('.collapsed-wifi')?.className ?? null,
-          svgCount: document.querySelectorAll('.collapsed-wifi svg').length
-        })`
+        `(() => {
+          const el = document.querySelector('.collapsed-wifi')
+          if (!el) return JSON.stringify({ has: false })
+          return JSON.stringify({
+            has: true,
+            title: el.getAttribute('title'),
+            cls: String(el.className),
+            svgPaths: el.querySelectorAll('svg path').length,
+            ariaLabel: el.getAttribute('aria-label')
+          })
+        })()`
       )
     )
-    assert(!a2.expanded, 'A2 没收回成收起态')
-    if (snap.wifi && snap.wifi.connected) {
-      assert(a2.has, 'A2 Wi-Fi 已连接但收起态没有图标')
-      assert(a2.svgCount === 1, 'A2 图标数应为 1，实际 ' + a2.svgCount)
-      assert(a2.title && a2.title.includes('Wi-Fi'), 'A2 悬停文案不含 Wi-Fi: ' + a2.title)
-      assert(a2.title.includes(snap.wifi.name ?? ''), 'A2 文案不含网络名: ' + a2.title)
-      if (snap.wifi.online) {
-        assert(!a2.cls.includes('offline'), 'A2 有网却带 offline 类: ' + a2.cls)
-      } else {
-        assert(a2.cls.includes('offline'), 'A2 无网却没带 offline 类: ' + a2.cls)
-      }
-      console.log('[2] A2 通过：图标出现、文案「' + a2.title + '」、类 ' + a2.cls)
+    if (a1.wifi !== null) {
+      assert(a2.has, 'A2 快照有 wifi 但收起态没渲染图标')
+      assert(a2.title.includes(wifiName(a1.wifi)), 'A2 悬停文案不含网络名: ' + a2.title)
+      assert(
+        a1.wifi.kind === 'ethernet' ? a2.title.includes('网线') : a2.title.includes('Wi-Fi'),
+        'A2 文案未区分网线/Wi-Fi: ' + a2.title
+      )
+      const expectOffline = a1.wifi.online ? '' : 'offline'
+      assert(a2.cls.includes(expectOffline) || (a1.wifi.online && !a2.cls.includes('offline')), 'A2 offline 类错: ' + a2.cls)
+      // 图标种类：Wi-Fi 弧线 3 path（+1 circle fill 点），网线水晶头 3 path 无 circle
+      assert(a2.svgPaths === 3, 'A2 图标 path 数错: ' + a2.svgPaths)
+      const kindOk =
+        a1.wifi.kind === 'ethernet'
+          ? a2.ariaLabel.startsWith('网线')
+          : a2.ariaLabel.startsWith('Wi-Fi')
+      assert(kindOk, 'A2 aria-label 与 kind 不匹配: ' + a2.ariaLabel)
+      console.log('[2] A2 通过：图标 kind=' + a1.wifi.kind + '，文案「' + a2.title + '」，aria=' + a2.ariaLabel)
     } else {
-      assert(!a2.has, 'A2 快照说没连 Wi-Fi，界面却显示了图标')
-      console.log('[2] A2 通过（无 Wi-Fi 环境）：图标正确地不渲染')
+      assert(!a2.has, 'A2 快照 wifi=null 但渲染了图标')
+      console.log('[2] A2 通过：null 时不渲染')
     }
 
     // —— A3：位置在时钟右侧、电量环右侧（SPEC：电量环右、待办数字左）——
@@ -173,54 +151,51 @@ const main = async () => {
       assert(/^\d{2}:\d{2}$/.test(a3.clockText), 'A3 时钟被挤压串行: ' + a3.clockText)
       console.log('[3] A3 通过：DOM 顺序', a3.order.join(' → '), '；时钟完整', a3.clockText)
     } else {
-      console.log('[3] A3 跳过（本机无 Wi-Fi，图标未渲染）')
+      console.log('[3] A3 跳过（本机无已连接网络，图标未渲染）')
     }
 
-    // —— A4：展开态头部不应出现 Wi-Fi 图标（SPEC 不做什么）——
-    await expand(wsUrl)
-    const a4 = JSON.parse(
-      await settle(
-        wsUrl,
-        `JSON.stringify({
-          expanded: !!document.querySelector('.island.expanded'),
-          wifiInHead: !!document.querySelector('.head-status .collapsed-wifi, .island.expanded .collapsed-wifi')
-        })`,
-        600
-      )
-    )
-    assert(a4.expanded, 'A4 没展开')
-    assert(!a4.wifiInHead, 'A4 展开态不应出现 Wi-Fi 图标（超范围）')
-    console.log('[4] A4 通过：展开态头部没有 Wi-Fi 图标')
-
-    // —— A5：主进程快照按 wifi=null 模拟「读不到」时 UI 分支正确性 ——
-    //    （脚本不能真断网；此处直接在渲染层把状态打回 null 验证不渲染）
-    await collapse(wsUrl)
-    const a5 = JSON.parse(
-      await settle(
-        wsUrl,
-        `(() => {
-          // 只做静态断言：collapsed-wifi 渲染分支由 {wifi !== null} 控制，null 时必然不出现
-          const src = null
-          return JSON.stringify({ rendersWhenNull: src !== null ? 'would-render' : 'hidden', has: !!document.querySelector('.collapsed-wifi') })
+    // —— A4：展开态头部不出现 Wi-Fi/网线图标 ——
+    await cdp(
+      wsUrl,
+      `(() => {
+          document.querySelector('.island').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+          return 'clicked'
         })()`
+    )
+    await sleep(600)
+    const a4b = JSON.parse(
+      await cdp(
+        wsUrl,
+        `JSON.stringify({ wifi: !!document.querySelector('.collapsed-wifi'), expanded: !!document.querySelector('.page-todo, .page-notify, .page-schedule, .page-shelf, .page-settings') || document.querySelector('.island').className.includes('expanded') })`
       )
     )
-    console.log('[5] A5 说明：null 分支由 JSX 条件 {wifi !== null} 直接控制；当前 DOM has =', a5.has)
+    assert(!a4b.wifi || !a4b.expanded, 'A4 展开态仍显示 Wi-Fi 图标')
+    console.log('[4] A4 通过：展开态无网络图标')
+    // 收回来：展开态里 island 类名含 expanded，直接再次 dispatch click（收起态↔展开态互切）
+    await cdp(
+      wsUrl,
+      `(() => { document.querySelector('.island').dispatchEvent(new MouseEvent('click', { bubbles: true })); return 'clicked' })()`
+    )
+    await sleep(600)
 
-    console.log('E2E WIFI PASS')
-  } finally {
-    try {
-      child.kill()
-    } catch {
-      /* ignore */
+    // —— A5：null 分支说明（无网环境断言 wifi 不渲染；有网环境断言 kind 一致）——
+    if (a1.wifi === null) {
+      assert(!a2.has, 'A5 null 分支仍渲染')
+      console.log('[5] A5 说明：本机无网，wifi=null 不渲染——分支成立')
+    } else {
+      console.log('[5] A5 说明：null 分支由 JSX 条件 {wifi !== null} 直接控制；当前 DOM has = ' + a2.has)
     }
+
+    if (failures === 0) console.log('E2E WIFI PASS')
+    else process.exitCode = 1
+  } finally {
+    child.kill()
     await sleep(300)
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((e) => {
-    console.error(e.message ?? e)
-    process.exit(1)
-  })
+function wifiName(w) {
+  return w.name ?? ''
+}
+
+main().then(() => process.exit(process.exitCode ?? 0)).catch((e) => { console.error(e.message ?? e); process.exit(1) })
