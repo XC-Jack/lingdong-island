@@ -56,9 +56,33 @@ function cdp(wsUrl, expression, awaitPromise = false) {
   })
 }
 
-// 用 PowerShell 发 Esc 键关掉「另存为」对话框（e2e 环境无键盘，模拟用户取消）
+// 关掉「另存为」对话框：按标题枚举顶层窗口发 WM_CLOSE。
+// 不用 SendKeys ESC：它打进「当前前台窗口」，用户正在用电脑时焦点不在对话框上，
+// 按键会打到用户应用里（实测抖动：同一脚本有时 PASS 有时 cdp timeout）。
 function sendEsc() {
-  const script = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{ESC}')`
+  const script = [
+    'Add-Type -TypeDefinition @\'',
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'using System.Text;',
+    'public class WClose {',
+    '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr l);',
+    '  public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);',
+    '  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);',
+    '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+    '  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);',
+    '}',
+    '\'@',
+    '$cb = [WClose+EnumWindowsProc]{ param($h,$l)',
+    '  if ([WClose]::IsWindowVisible($h)) {',
+    '    $sb = New-Object System.Text.StringBuilder 256',
+    '    [void][WClose]::GetWindowText($h,$sb,256)',
+    '    if ($sb.ToString() -match \'灵动岛数据|另存为\') { [void][WClose]::SendMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }',
+    '  }',
+    '  $true',
+    '}',
+    '[void][WClose]::EnumWindows($cb,[IntPtr]::Zero)'
+  ].join('\n')
   try {
     spawn('powershell', ['-NoProfile', '-Command', script], { stdio: 'ignore' })
   } catch {}

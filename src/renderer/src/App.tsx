@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
-/** 展开面板的页数（分页圆点数） */
-const PAGE_COUNT = 4
 
 /** 通知页数据结构（与 preload/notifyStore 保持一致；独立声明避免跨 tsconfig project 引用） */
 interface NotifyItem {
@@ -56,6 +54,47 @@ type ShelfView = 'lg' | 'md' | 'sm' | 'list'
 
 /** 视图偏好的存储键（存在渲染层 localStorage，落在 userData 下的 Local Storage 里） */
 const SHELF_VIEW_KEY = 'island.shelfView'
+
+/** 收起态可裁剪组件的键（与勾选 UI 一一对应） */
+const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo'] as const
+type CollapsedKey = (typeof COLLAPSED_KEYS)[number]
+
+/** 页面裁剪偏好：pages 是显示的页面索引集合，collapsed 是收起态组件开关 */
+interface PagesCustom {
+  pages: number[]
+  collapsed: Record<CollapsedKey, boolean>
+}
+
+/** 默认全开（4 页 + 5 个收起态组件） */
+function defaultPagesCustom(): PagesCustom {
+  return {
+    pages: [0, 1, 2, 3],
+    collapsed: { pet: true, clock: true, battery: true, net: true, todo: true }
+  }
+}
+
+/**
+ * 校验并规整页面裁剪偏好（US-032）。数据存主进程 userData/prefs.json（经 IPC 读写）。
+ * 为什么不用渲染层 localStorage：本机实测 file:// 来源的 localStorage 跨进程重启会丢失
+ * （写入后优雅退出再启动读回为 null），裁剪偏好必须跨重启保留。
+ * 值不合法（手工改坏/缺字段/全空页面）一律回落默认全开。
+ */
+function normalizePagesCustom(v: unknown): PagesCustom | null {
+  if (!v || typeof v !== 'object') return null
+  const raw = v as Partial<PagesCustom>
+  // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
+  const pages = Array.isArray(raw.pages)
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
+    : []
+  if (pages.length === 0) return null
+  const collapsed = defaultPagesCustom().collapsed
+  if (raw.collapsed && typeof raw.collapsed === 'object') {
+    for (const k of COLLAPSED_KEYS) {
+      if (typeof raw.collapsed[k] === 'boolean') collapsed[k] = raw.collapsed[k]
+    }
+  }
+  return { pages, collapsed }
+}
 
 /**
  * 读上次选的置物架视图（US-034）。
@@ -1477,6 +1516,118 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string 
   { icon: IcoCal, label: '日程', accent: '#64b5f6' },
 ]
 
+/** 收起态组件在页面管理面板里的显示名（US-032） */
+const COLLAPSED_LABELS: Record<CollapsedKey, string> = {
+  pet: '岛仔',
+  clock: '时钟',
+  battery: '电量圈',
+  net: '网络图标',
+  todo: '待办数字'
+}
+
+/**
+ * 页面管理面板（US-032）：勾选显示哪些页面、收起态显示哪些组件、拖拽调整页面顺序。
+ * 不是轮播页（PAGE_COUNT 只有 4），只能从右键/托盘菜单「页面管理…」进入（page 4）。
+ * 改动立即生效并写主进程 prefs.json；至少保留 1 个页面；「完成并收起」收岛退出面板。
+ */
+function PageManagerPanel({
+  pagesCustom,
+  onChange,
+  onClose
+}: {
+  pagesCustom: PagesCustom
+  onChange: (v: PagesCustom) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const togglePage = (i: number): void => {
+    const has = pagesCustom.pages.includes(i)
+    // 最后一个页面不允许取消（至少保留 1 页）
+    if (has && pagesCustom.pages.length <= 1) return
+    // 重新勾上时排到列表末尾（用户当前顺序的自然延伸），不强制按页号排序
+    const pages = has ? pagesCustom.pages.filter((n) => n !== i) : [...pagesCustom.pages, i]
+    onChange({ ...pagesCustom, pages })
+  }
+  const toggleCollapsed = (k: CollapsedKey): void => {
+    onChange({ ...pagesCustom, collapsed: { ...pagesCustom.collapsed, [k]: !pagesCustom.collapsed[k] } })
+  }
+  const reset = (): void => onChange(defaultPagesCustom())
+  // 拖拽排序（US-032 反馈）：只在「显示的页面」列表里拖换位；HTML5 dataTransfer 必须带数据
+  // 才稳定触发 dragover/drop（项目踩坑记录）；语义与置物架一致用「互换」。
+  const dragFrom = useRef<number | null>(null)
+  const reorderTo = (targetPageId: number): void => {
+    const from = dragFrom.current
+    dragFrom.current = null
+    if (from === null || from === targetPageId) return
+    const pages = pagesCustom.pages.includes(from) ? [...pagesCustom.pages] : null
+    if (!pages) return
+    const fi = pages.indexOf(from)
+    const ti = pages.indexOf(targetPageId)
+    if (ti === -1) return // 目标未勾选：不参与排序
+    pages[fi] = targetPageId
+    pages[ti] = from
+    onChange({ ...pagesCustom, pages })
+  }
+  return (
+    <div className="pm-panel">
+      <div className="pm-section">页面（勾选显示，按住拖动换顺序）</div>
+      {(() => {
+        // 按用户自定义顺序渲染：已勾选页按 pages 排在前（可拖），未勾选页按固定号排在后
+        const shown = pagesCustom.pages.map((p) => ({ m: PAGE_META[p], i: p, on: true }))
+        const hidden = PAGE_META.map((m, i) => ({ m, i, on: false })).filter(
+          (h) => !pagesCustom.pages.includes(h.i)
+        )
+        const rows = [...shown, ...hidden]
+        return rows.map(({ m, i, on }) => {
+          const locked = on && pagesCustom.pages.length <= 1
+          return (
+            <div
+              key={i}
+              className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
+              draggable={on}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/plain', String(i))
+                e.dataTransfer.effectAllowed = 'move'
+                dragFrom.current = i
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                reorderTo(i)
+              }}
+              onDragEnd={() => {
+                dragFrom.current = null
+              }}
+            >
+              <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
+              <span className="pm-name">{m.label}</span>
+              {locked ? (
+                <span className="pm-lock-hint">至少保留一个</span>
+              ) : on ? (
+                <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
+              ) : null}
+            </div>
+          )
+        })
+      })()}
+      <div className="pm-section">收起态组件</div>
+      {COLLAPSED_KEYS.map((k) => (
+        <label key={k} className="pm-row">
+          <input type="checkbox" checked={pagesCustom.collapsed[k]} onChange={() => toggleCollapsed(k)} />
+          <span className="pm-name">{COLLAPSED_LABELS[k]}</span>
+        </label>
+      ))}
+      <div className="pm-actions">
+        <button type="button" className="pm-reset" onClick={reset}>
+          重置为默认
+        </button>
+        <button type="button" className="pm-close" onClick={onClose}>
+          完成并收起
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
@@ -1485,6 +1636,29 @@ export default function App(): React.JSX.Element {
   const [wifi, setWifi] = useState<WifiSnapshot | null>(null)
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
   const [page, setPage] = useState(0)
+  // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
+  // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
+  // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
+  const [pagesCustom, setPagesCustom] = useState<PagesCustom>(defaultPagesCustom)
+  const enabledPages = pagesCustom.pages
+  // 用户一旦在面板里改过（dirty）就不再接受启动回填，避免覆盖用户操作
+  const pagesCustomDirty = useRef(false)
+  useEffect(() => {
+    let alive = true
+    window.island
+      .prefsGet()
+      .then((prefs) => {
+        if (!alive || pagesCustomDirty.current) return
+        const v = normalizePagesCustom(prefs.pagesCustom)
+        if (v) setPagesCustom(v)
+      })
+      .catch(() => {
+        /* 读不到就用默认全开 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
   // 开机自启开关状态（null=未取到）
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
@@ -1706,9 +1880,40 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded, scheduleCollapse])
 
-  // 翻页（‹ ›）：循环，不越界
+  // 翻页（‹ ›）：在被启用的页面里循环（US-032 裁剪后跳过被裁页）；
+  // page 4（页面管理面板）不在轮播集合里，从它翻页先回到第一个启用页
   const flipPage = useCallback((dir: 1 | -1) => {
-    setPage((p) => (p + dir + PAGE_COUNT) % PAGE_COUNT)
+    setPage((p) => {
+      const list = enabledPagesRef.current
+      if (list.length === 0) return 0
+      if (p === 4) return list[0]
+      // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
+      let idx = list.indexOf(p)
+      if (idx === -1) idx = 0
+      return list[(idx + dir + list.length) % list.length]
+    })
+  }, [])
+
+  // enabledPages 的 ref：flipPage 不依赖它重建，避免翻页函数频繁换引用
+  const enabledPagesRef = useRef(enabledPages)
+  enabledPagesRef.current = enabledPages
+
+  // 当前页被裁掉时自动跳到第一个保留页（US-032）；页面管理面板(page 4)不受影响
+  useEffect(() => {
+    setPage((p) => {
+      if (p >= 4) return p
+      return enabledPages.includes(p) ? p : (enabledPages[0] ?? 0)
+    })
+  }, [enabledPages])
+
+  // 菜单「页面管理…」→ 展开岛并切到页面管理面板（US-032）
+  useEffect(() => {
+    window.island.onManagePages(() => {
+      if (!expandedRef.current) window.island.setExpanded(true)
+      expandedRef.current = true
+      setExpanded(true)
+      setPage(4)
+    })
   }, [])
 
   // 切页淡入：换页时给面板体一个短动画类
@@ -1772,7 +1977,7 @@ export default function App(): React.JSX.Element {
         }}
         role="button"
         tabIndex={0}
-        aria-label={expanded ? `${PAGE_META[page].label}面板` : '灵动岛，回车展开'}
+        aria-label={expanded ? `${page === 4 ? '页面管理' : PAGE_META[page]?.label ?? '页面'}面板` : '灵动岛，回车展开'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
@@ -1783,10 +1988,10 @@ export default function App(): React.JSX.Element {
         {expanded ? (
           <>
             <div className="panel-head">
-              <span className={`panel-badge ${PAGE_META[page].accent ? 'accent' : ''}`} style={{ ['--accent' as never]: PAGE_META[page].accent }}>
-                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
+              <span className={`panel-badge ${page === 4 ? 'accent' : ''}`} style={{ ['--accent' as never]: '#9aa0a6' }}>
+                <span className="panel-badge-icon">{page === 4 ? <IcoCheck /> : PAGE_META[page].icon()}</span>
               </span>
-              <span className="panel-title">{PAGE_META[page].label}</span>
+              <span className="panel-title">{page === 4 ? '页面管理' : PAGE_META[page].label}</span>
               {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量圈，居中 */}
               <span className="head-status">
                 <Pet mood={mood} />
@@ -1846,7 +2051,7 @@ export default function App(): React.JSX.Element {
               <div
                 key={pageAnim}
                 onClick={(e) => e.stopPropagation()}
-                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''}`}
+                className={`page-fade ${page === 1 || page === 2 || page === 4 ? 'wide' : ''}`}
               >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
@@ -1854,6 +2059,22 @@ export default function App(): React.JSX.Element {
                   <ShelfPanel />
                 ) : page === 2 ? (
                   <NotifyPanel onUnread={onNotifyUnread} />
+                ) : page === 4 ? (
+                  <PageManagerPanel
+                    pagesCustom={pagesCustom}
+                    onClose={() => {
+                      setPage(enabledPagesRef.current[0] ?? 0)
+                      setExpanded(false)
+                      expandedRef.current = false
+                    }}
+                    onChange={(v) => {
+                      pagesCustomDirty.current = true
+                      setPagesCustom(v)
+                      window.island.prefsSet({ pagesCustom: v }).catch(() => {
+                        /* 写失败下次还是全开，不打扰用户 */
+                      })
+                    }}
+                  />
                 ) : (
                   <SchedulePanel />
                 )}
@@ -1873,7 +2094,7 @@ export default function App(): React.JSX.Element {
                 ‹
               </button>
               <div className="dots">
-                {Array.from({ length: PAGE_COUNT }, (_, i) => (
+                {enabledPages.map((i) => (
                   <button
                     key={i}
                     type="button"
@@ -1902,9 +2123,10 @@ export default function App(): React.JSX.Element {
           </>
         ) : (
           <>
-            <Pet mood={mood} />
-            <span className="collapsed-clock">{formatClock(now)}</span>
-            {battery !== null && (
+            {/* 收起态组件按「页面管理」（US-032）的开关显隐；未读红点不参与裁剪 */}
+            {pagesCustom.collapsed.pet && <Pet mood={mood} />}
+            {pagesCustom.collapsed.clock && <span className="collapsed-clock">{formatClock(now)}</span>}
+            {pagesCustom.collapsed.battery && battery !== null && (
               <span
                 className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
                 role="img"
@@ -1927,7 +2149,7 @@ export default function App(): React.JSX.Element {
             )}
             {/* 网络（收起态 US-005）：电量环右侧。Wi-Fi 弧线 / 插网线显示水晶头图标；
                 有网白色，连上但没网橙色警示；读不到（没联网 / 命令失败）不渲染，不打扰 */}
-            {wifi !== null && (
+            {pagesCustom.collapsed.net && wifi !== null && (
               <span
                 className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
                 title={
@@ -1951,7 +2173,7 @@ export default function App(): React.JSX.Element {
             )}
             {/* 待办剩余（收起态）：只在真有未完成的事时出现，全部做完就收起不再催。
                 US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」 */}
-            {todoStats.total - todoStats.done > 0 && (
+            {pagesCustom.collapsed.todo && todoStats.total - todoStats.done > 0 && (
               <span
                 className="collapsed-todo"
                 title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}

@@ -1665,3 +1665,87 @@ button:focus-visible,
     animation: none;
   }
 }
+
+/* ===== 页面管理面板（US-032）===== */
+/* 两组勾选行：复用岛内文字风格；锁定行（最后一个页面）置灰并给提示 */
+.pm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px;
+  /* 行多时岛内自滚，按钮永远留在岛体里（窗口高上限 420，超出会被 overflow:hidden 裁掉，
+     用户就点不到底部按钮——US-032 验收反馈「按钮点不到」的根因） */
+  min-height: 0;
+  overflow-y: auto;
+}
+.pm-section {
+  font-size: 10px;
+  opacity: 0.55;
+  padding: 4px 2px 1px;
+  user-select: none;
+}
+.pm-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 1px 2px;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.pm-row input[type='checkbox'] {
+  accent-color: #7dd87d;
+  cursor: pointer;
+}
+.pm-row.pm-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pm-lock-hint {
+  font-size: 11px;
+  opacity: 0.7;
+}
+/* 拖拽排序（US-032 反馈）：显示中的页面行可拖换位，行尾把手提示 */
+div.pm-row[draggable='true'] {
+  cursor: grab;
+}
+.pm-grip {
+  margin-left: auto;
+  font-size: 10px;
+  letter-spacing: -2px;
+  opacity: 0.45;
+  cursor: grab;
+}
+.pm-row.pm-row-off {
+  opacity: 0.55;
+}
+.pm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-top: 5px;
+}
+.pm-reset {
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--island-text, #f2f3f5);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+.pm-reset:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.pm-close {
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #10240f;
+  background: #7dd87d;
+  cursor: pointer;
+}
+.pm-close:hover {
+  background: #8fe58f;
+}
