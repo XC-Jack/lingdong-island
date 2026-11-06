@@ -55,4 +55,12 @@
 
 ## 7. 自检记录
 
-（开发完成后填写）
+2026-11-06 全部跑完 [实测]：
+
+- `npm run typecheck`：PASS（node + web 两个工程）。
+- `npm run build`：PASS。
+- `node scripts/e2e-notify-icon.mjs`：8/8 PASS——I1 列表带 icon 字段（3 条全有图标）/ I2 ScreenSketch 图标解析成功（notify-ScreenSketch_8wekyb3d8bbwe.png，48px，read_image 目视核对是截图工具图标）/ I2b 所有 icon 文件存在 / I2c 缓存落盘 / I3 渲染 3 图标 0 文字徽标 / I4 首轮拉取不弹横幅 / I5 展开态无横幅 / I6 onNotifyArrived 已注册。
+- 回归：e2e-wifi 5 项 / e2e-collapsed-todo 6 项 / e2e-schedule 5 项 / e2e-todo-today 10 项 / e2e-notify-clear 7 项 / e2e-pages-custom 6 项，全 PASS。（e2e-notify-clear 首跑 N1 失败是跑前没清 hiddenUntil 水位的环境状态问题，非代码回归；清水位复跑 7/7 PASS。）
+- 开发中修复的两个解析 bug：① e2e 脚本 USER_DATA 用了 homedir()（DSH 宿主返回 D:\Users\honor），Electron 实际 userData 在 %APPDATA%＝C 盘，改用 process.env.APPDATA；② AppxManifest 的 Square44x44Logo 带子目录（Assets\xxx.png）时 pickUwpVariant 拼出 Assets\Assets\ 双层路径，改只取文件名段。
+- 打包：`npm run dist` 成功 → 静默安装 `D:\软件\灵动岛\`（app.asar 2026-11-06 20:06）→ 启动 4 进程存活。
+- **未验证**：真实新通知到达时横幅弹出与收回（需等一条真实系统通知，留实机验收）；e2e-export 未跑（本次改动不触及导出链路）。
