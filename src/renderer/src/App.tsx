@@ -1570,38 +1570,45 @@ function PageManagerPanel({
   return (
     <div className="pm-panel">
       <div className="pm-section">页面（勾选显示，按住拖动换顺序）</div>
-      {PAGE_META.map((m, i) => {
-        const on = pagesCustom.pages.includes(i)
-        const locked = on && pagesCustom.pages.length <= 1
-        return (
-          <div
-            key={i}
-            className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
-            draggable={on}
-            onDragStart={(e) => {
-              e.dataTransfer.setData('text/plain', String(i))
-              e.dataTransfer.effectAllowed = 'move'
-              dragFrom.current = i
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault()
-              reorderTo(i)
-            }}
-            onDragEnd={() => {
-              dragFrom.current = null
-            }}
-          >
-            <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
-            <span className="pm-name">{m.label}</span>
-            {locked ? (
-              <span className="pm-lock-hint">至少保留一个</span>
-            ) : on ? (
-              <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
-            ) : null}
-          </div>
+      {(() => {
+        // 按用户自定义顺序渲染：已勾选页按 pages 排在前（可拖），未勾选页按固定号排在后
+        const shown = pagesCustom.pages.map((p) => ({ m: PAGE_META[p], i: p, on: true }))
+        const hidden = PAGE_META.map((m, i) => ({ m, i, on: false })).filter(
+          (h) => !pagesCustom.pages.includes(h.i)
         )
-      })}
+        const rows = [...shown, ...hidden]
+        return rows.map(({ m, i, on }) => {
+          const locked = on && pagesCustom.pages.length <= 1
+          return (
+            <div
+              key={i}
+              className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
+              draggable={on}
+              onDragStart={(e) => {
+                e.dataTransfer.setData('text/plain', String(i))
+                e.dataTransfer.effectAllowed = 'move'
+                dragFrom.current = i
+              }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                reorderTo(i)
+              }}
+              onDragEnd={() => {
+                dragFrom.current = null
+              }}
+            >
+              <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
+              <span className="pm-name">{m.label}</span>
+              {locked ? (
+                <span className="pm-lock-hint">至少保留一个</span>
+              ) : on ? (
+                <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
+              ) : null}
+            </div>
+          )
+        })
+      })()}
       <div className="pm-section">收起态组件</div>
       {COLLAPSED_KEYS.map((k) => (
         <label key={k} className="pm-row">
