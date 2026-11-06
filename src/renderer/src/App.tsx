@@ -31,6 +31,13 @@ interface ScheduleItem {
   createdAt: number
 }
 
+/** Wi-Fi 快照（收起态 US-005，与主进程 statusStore 保持一致；独立声明避免跨 tsconfig project 引用） */
+interface WifiSnapshot {
+  connected: boolean
+  online: boolean
+  name: string | null
+}
+
 function formatClock(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
@@ -110,6 +117,16 @@ const IcoBell = (): React.JSX.Element => (
   <IconSvg>
     <path d="M12 4a5.5 5.5 0 0 0-5.5 5.5v3l-1.4 2.4a.8.8 0 0 0 .7 1.2h12.4a.8.8 0 0 0 .7-1.2l-1.4-2.4v-3A5.5 5.5 0 0 0 12 4z" />
     <path d="M10 19a2 2 0 0 0 4 0" />
+  </IconSvg>
+)
+
+/** Wi-Fi（收起态 US-005）：三段弧线信号图标 */
+const IcoWifi = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M2.5 9.5a14 14 0 0 1 19 0" />
+    <path d="M5.5 13a9.5 9.5 0 0 1 13 0" />
+    <path d="M8.5 16.5a5 5 0 0 1 7 0" />
+    <circle cx="12" cy="19.5" r="1" fill="currentColor" stroke="none" />
   </IconSvg>
 )
 
@@ -1453,6 +1470,8 @@ export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
+  // Wi-Fi 快照（收起态 US-005）；null = 读不到，不显示图标
+  const [wifi, setWifi] = useState<WifiSnapshot | null>(null)
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
   const [page, setPage] = useState(0)
   // 开机自启开关状态（null=未取到）
@@ -1502,12 +1521,15 @@ export default function App(): React.JSX.Element {
     return () => window.clearInterval(id)
   }, [])
 
-  // 电量：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
+  // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
   useEffect(() => {
     let alive = true
     const pull = (): void => {
       void window.island.statusSnapshot().then((s) => {
-        if (alive) setBattery(s.battery)
+        if (alive) {
+          setBattery(s.battery)
+          setWifi(s.wifi)
+        }
       })
     }
     pull()
@@ -1890,6 +1912,18 @@ export default function App(): React.JSX.Element {
                   />
                 </svg>
                 <span className="ring-num">{battery}</span>
+              </span>
+            )}
+            {/* Wi-Fi（收起态 US-005）：电量环右侧。有网白色，连上但没网橙色警示；
+                读不到（未连 Wi-Fi / 命令失败）不渲染，不打扰 */}
+            {wifi !== null && (
+              <span
+                className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
+                title={wifi.online ? `Wi-Fi：${wifi.name ?? ''}（网络正常）` : `Wi-Fi：${wifi.name ?? ''}（连上了但上不了网）`}
+                role="img"
+                aria-label={wifi.online ? 'Wi-Fi 已连接，网络正常' : 'Wi-Fi 已连接但没有网络'}
+              >
+                <IcoWifi />
               </span>
             )}
             {/* 待办剩余（收起态）：只在真有未完成的事时出现，全部做完就收起不再催。

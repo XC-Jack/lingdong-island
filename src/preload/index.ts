@@ -3,10 +3,19 @@ import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult } from '../sha
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult }
 
+/** Wi-Fi 状态（收起态 US-005，与主进程 statusStore 保持一致） */
+export interface WifiSnapshot {
+  connected: boolean
+  online: boolean
+  name: string | null
+}
+
 /** 收起态状态栏的数据快照（与主进程 statusStore 保持一致） */
 export interface StatusSnapshot {
   battery: number | null
   charging: boolean
+  /** Wi-Fi 状态；读不到时为 null（UI 不显示图标） */
+  wifi: WifiSnapshot | null
 }
 
 /** 通知页数据（与主进程 notifyStore 保持一致） */
