@@ -1095,6 +1095,13 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
     void window.island.notifyMarkRead().then((n) => onUnread(n))
   }, [onUnread])
 
+  const clearAll = useCallback(() => {
+    void window.island.notifyClearAll().then((r: NotifyListResult) => {
+      setItems(r.items)
+      onUnread(r.unread)
+    })
+  }, [onUnread])
+
   const openOne = useCallback(
     (it: NotifyItem) => {
       void window.island.notifyOpenSource(it.app)
@@ -1117,6 +1124,16 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
           disabled={items.length === 0}
         >
           已读
+        </button>
+        <button
+          type="button"
+          className="todo-del"
+          title="清空列表（之后旧通知不再显示，新通知照常）"
+          aria-label="清空通知列表"
+          onClick={clearAll}
+          disabled={items.length === 0}
+        >
+          清空
         </button>
       </div>
       {items.length === 0 ? (
