@@ -177,7 +177,11 @@ const api = {
   notifyMarkRead(): Promise<number> {
     return ipcRenderer.invoke('notify:mark-read')
   },
-  /** 尝试打开通知来源应用；映射不到返回 false */
+  /** 清空通知列表（本地隐藏水位，系统库不动），返回清空后的列表与未读数 */
+  notifyClearAll(): Promise<NotifyListResult> {
+    return ipcRenderer.invoke('notify:clear-all')
+  },
+  /** 尝试打开通知来源应用；映射不到兜底打开 Windows 通知设置 */
   notifyOpenSource(appName: string): Promise<boolean> {
     return ipcRenderer.invoke('notify:open-source', appName)
   },

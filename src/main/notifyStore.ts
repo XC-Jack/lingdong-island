@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { existsSync, copyFileSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -115,43 +115,92 @@ async function refresh(): Promise<NotifyItem[]> {
   return cached
 }
 
-/** 未读数：userData/notif-read.json 记录已读最大 Order */
+/** 未读/隐藏水位：userData/notif-read.json 记录 {lastOrder, hiddenUntil}
+ *  lastOrder   —— 已读水位：order>lastOrder 算未读（收起态红点）
+ *  hiddenUntil —— 清空水位：order<=hiddenUntil 的通知不再显示（wpndatabase 只读，清空=本地隐藏）
+ *  旧文件只有 {lastOrder}，无 hiddenUntil 视为 0（向后兼容） */
 function readMarkPath(): string {
   return join(app.getPath('userData'), 'notif-read.json')
 }
 
-function readMark(): number {
+interface MarkFile {
+  lastOrder: number
+  hiddenUntil: number
+}
+
+function readMarkFile(): MarkFile {
   try {
-    const raw = JSON.parse(require('node:fs').readFileSync(readMarkPath(), 'utf8'))
-    return Number(raw.lastOrder) || 0
+    const raw = JSON.parse(require('node:fs').readFileSync(readMarkPath(), 'utf8')) as {
+      lastOrder?: number
+      hiddenUntil?: number
+    }
+    return { lastOrder: Number(raw.lastOrder) || 0, hiddenUntil: Number(raw.hiddenUntil) || 0 }
   } catch {
-    return 0
+    return { lastOrder: 0, hiddenUntil: 0 }
+  }
+}
+
+function readMark(): number {
+  return readMarkFile().lastOrder
+}
+
+function readHidden(): number {
+  return readMarkFile().hiddenUntil
+}
+
+function writeMarkFile(patch: Partial<MarkFile>): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    const next = { ...readMarkFile(), ...patch }
+    require('node:fs').writeFileSync(readMarkPath(), JSON.stringify(next))
+  } catch {
+    /* 写失败只影响红点/隐藏 */
   }
 }
 
 function writeMark(lastOrder: number): void {
-  try {
-    mkdirSync(app.getPath('userData'), { recursive: true })
-    require('node:fs').writeFileSync(readMarkPath(), JSON.stringify({ lastOrder }))
-  } catch {
-    /* 写失败只影响红点 */
-  }
+  writeMarkFile({ lastOrder })
+}
+
+/** 列表可见性：order<=hiddenUntil 的通知被「清空」隐藏 */
+function visibleItems(): NotifyItem[] {
+  const hidden = readHidden()
+  return cached.filter((i) => i.order > hidden)
 }
 
 export function unreadCount(): number {
-  if (cached.length === 0) return 0
+  const items = visibleItems()
+  if (items.length === 0) return 0
   const mark = readMark()
-  return cached.filter((i) => i.order > mark).length
+  return items.filter((i) => i.order > mark).length
 }
 
-/** 标记全部已读（当前列表最大 Order） */
+/** 标记全部已读：写当前可见列表最大 Order；cached 为空时不动水位（防御：避免空列表把红点"标完"后又被旧通知弹回） */
 function markAllRead(): void {
-  const maxOrder = cached.reduce((m, i) => Math.max(m, i.order), 0)
-  if (maxOrder > 0) writeMark(maxOrder)
+  const maxOrder = visibleItems().reduce((m, i) => Math.max(m, i.order), 0)
+  if (maxOrder > readMark()) writeMark(maxOrder)
 }
 
-/** 通知来源打开：常见 AUMID 短名 → exe/URI。映射不到返回 false（UI 只标已读） */
+/** 清空：把隐藏水位提到当前最大 Order。旧通知（order<=水位）此后不再显示；新通知正常出现 */
+function clearAll(): void {
+  const maxOrder = visibleItems().reduce((m, i) => Math.max(m, i.order), 0)
+  if (maxOrder > readHidden()) writeMarkFile({ hiddenUntil: maxOrder, lastOrder: Math.max(maxOrder, readMark()) })
+}
+
+/** 通知来源打开：常见 AUMID 短名 → exe/URI。映射不到兜底打开 Windows 通知设置（点击必有反应） */
 function openSource(app_: string): boolean {
+  // 自家通知：聚焦灵动岛主窗口（没有独立窗口可开）
+  if (app_ === 'lingdong-island') {
+    const { BrowserWindow } = require('electron') as typeof import('electron')
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.show()
+      win.focus()
+      return true
+    }
+    return false
+  }
   const map: Record<string, string> = {
     Explorer: 'explorer.exe',
     Chrome: 'chrome.exe',
@@ -161,23 +210,37 @@ function openSource(app_: string): boolean {
     Weixin: 'weixin.exe',
     DingTalk: 'dingtalk.exe',
     Feishu: 'feishu.exe',
+    ScreenSketch: 'ms-screenclip:', // Windows 屏幕截图（Win+Shift+S）
+    SnippingTool: 'SnippingTool.exe',
   }
   const exe = map[app_]
-  if (!exe) return false
-  const child = spawnSync('cmd.exe', ['/d', '/c', 'start', '', exe], { windowsHide: true, timeout: 5000 })
-  return !child.error
+  if (exe) {
+    if (exe.endsWith(':')) {
+      void shell.openExternal(exe)
+      return true
+    }
+    const child = spawnSync('cmd.exe', ['/d', '/c', 'start', '', exe], { windowsHide: true, timeout: 5000 })
+    return !child.error
+  }
+  // 兜底：映射不到的应用 → 打开 Windows 通知设置（比"点了没反应"好）
+  void shell.openExternal('ms-settings:notifications')
+  return true
 }
 
 export function setupNotifyStore(): void {
   void refresh()
   pollTimer = setInterval(() => void refresh(), POLL_MS)
 
-  ipcMain.handle('notify:list', () => ({ items: cached, unread: unreadCount() }))
+  ipcMain.handle('notify:list', () => ({ items: visibleItems(), unread: unreadCount() }))
   ipcMain.handle('notify:mark-read', () => {
     markAllRead()
     return unreadCount()
   })
-  ipcMain.handle('notify:refresh', () => refresh().then(() => ({ items: cached, unread: unreadCount() })))
+  ipcMain.handle('notify:refresh', () => refresh().then(() => ({ items: visibleItems(), unread: unreadCount() })))
+  ipcMain.handle('notify:clear-all', () => {
+    clearAll()
+    return { items: visibleItems(), unread: unreadCount() }
+  })
   ipcMain.handle('notify:open-source', (_e, appName: string) => openSource(appName))
 }
 
