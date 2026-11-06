@@ -25,6 +25,8 @@ export interface NotifyItem {
   id: number
   order: number
   app: string
+  /** 应用图标 PNG 绝对路径（file:// 显示）；解析失败为 null（UI 退回应用名文字徽标） */
+  icon: string | null
   title: string
   body: string
   arrival: number
@@ -184,6 +186,10 @@ const api = {
   /** 尝试打开通知来源应用；映射不到兜底打开 Windows 通知设置 */
   notifyOpenSource(appName: string): Promise<boolean> {
     return ipcRenderer.invoke('notify:open-source', appName)
+  },
+  /** 新消息到岛横幅（主进程 30s 轮询发现新通知时推送；渲染层收起态显示横幅） */
+  onNotifyArrived(cb: (item: NotifyItem) => void): void {
+    ipcRenderer.on('island:notify-arrived', (_e, item: NotifyItem) => cb(item))
   },
   /** 日程：列 / 增（文本 + 可选 'HH:mm' + 可选 'YYYY-MM-DD'）/ 勾选切换 / 删，全部返回最新全量列表 */
   scheduleList(): Promise<ScheduleItem[]> {

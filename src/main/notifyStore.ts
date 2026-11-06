@@ -1,8 +1,9 @@
-import { app, ipcMain, shell } from 'electron'
+import { app, ipcMain, shell, BrowserWindow } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { existsSync, copyFileSync, rmSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { appIcon, initIconCache } from './notifyIconStore'
 
 /**
  * Windows 通知历史读取（wpndatabase）。
@@ -21,6 +22,8 @@ interface NotifyItem {
   id: number // Notification.Id（稳定标识）
   order: number // 全局递增序号（新通知 = 更大 Order）
   app: string // 应用名（AUMID 短名或原始值）
+  /** 应用图标 PNG 绝对路径（渲染层用 file:// 显示）；解析失败为 null（退回文字徽标） */
+  icon: string | null
   title: string
   body: string
   arrival: number // 到达时间（Unix ms）
@@ -29,6 +32,8 @@ interface NotifyItem {
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let cached: NotifyItem[] = []
 let tmpSeq = 0
+/** 横幅去重：已发过 island:notify-arrived 的通知 id（通知不会重复触发横幅） */
+const bannerSent = new Set<number>()
 
 /** FILETIME (100ns since 1601-01-01) → Unix ms */
 function filetimeToMs(text: string): number {
@@ -84,10 +89,12 @@ function readWpnDatabase(): NotifyItem[] {
       return rows.map((r) => {
         const xml = Buffer.from(r.Payload).toString('utf8')
         const { title, body } = parseToastXml(xml)
+        const app_ = r.appId ? appShortName(r.appId) : '系统通知'
         return {
           id: Number(r.Id),
           order: Number(r.Order),
-          app: r.appId ? appShortName(r.appId) : '系统通知',
+          app: app_,
+          icon: appIcon(app_),
           title: title || '(无标题)',
           body,
           arrival: filetimeToMs(r.arrival),
@@ -111,7 +118,29 @@ function readWpnDatabase(): NotifyItem[] {
 
 async function refresh(): Promise<NotifyItem[]> {
   // node:sqlite 是同步 API；复制+查询都在毫秒级，放同步即可，但保持接口 async 备扩展
+  const prev = cached
   cached = readWpnDatabase()
+
+  // 新消息到岛横幅：找出本轮新增（之前不在 cached 里）且未读未隐藏的通知，
+  // 逐条推给渲染层（收起态才显示横幅，展开态渲染层自己忽略）。
+  // 应用刚启动的首轮 refresh 跳过（prev 为空时把 50 条历史全当新消息弹一遍）。
+  if (prev.length > 0) {
+    const prevIds = new Set(prev.map((i) => i.id))
+    const mark = readMark()
+    const hidden = readHidden()
+    for (const it of [...cached].reverse()) {
+      // 旧→新顺序遍历，最新一条最后发（多条并发到达时渲染层显示最后一条）
+      if (prevIds.has(it.id) || bannerSent.has(it.id)) continue
+      if (it.order <= mark || it.order <= hidden) continue
+      bannerSent.add(it.id)
+      if (bannerSent.size > 500) bannerSent.clear() // 防长期驻留无限增长
+      BrowserWindow.getAllWindows()[0]?.webContents.send('island:notify-arrived', it)
+    }
+  } else {
+    // 首轮：记录水位内已存在的 id，它们不算「新」
+    for (const it of cached) bannerSent.add(it.id)
+  }
+
   return cached
 }
 
@@ -228,6 +257,7 @@ function openSource(app_: string): boolean {
 }
 
 export function setupNotifyStore(): void {
+  initIconCache()
   void refresh()
   pollTimer = setInterval(() => void refresh(), POLL_MS)
 
