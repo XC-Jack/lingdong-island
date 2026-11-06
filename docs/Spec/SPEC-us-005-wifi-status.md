@@ -56,7 +56,24 @@
 
 ## 七、自检记录
 
-（待填）
+（2026-11-06，分支 `us-005-wifi-status`，交付提交 `e781f71`）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 探针（开发前） | `Get-NetConnectionProfile` + `Get-CimInstance Win32_Battery` 合并查询 ×3 | [实测] 输出 `99|True` + `wifi|Internet|GZHL_Student 3`，单次 358–382ms；UTF-8 输出中文网络名无乱码 |
+| 类型检查 | `npm run typecheck` | [实测] node + web 均 exit=0 |
+| 构建 | `npm run build` | [实测] electron-vite 构建成功（renderer 15 modules） |
+| 新增 e2e | `node scripts/e2e-wifi.mjs` | [实测] 5 项断言全过：快照 wifi 字段结构 → 收起态图标出现+文案含网络名+有网不带 offline 类 → DOM 顺序 时钟→电量环→Wi-Fi 且无重叠、时钟完整 → 展开态无 Wi-Fi 图标 → null 分支说明 |
+| 回归 e2e | `node scripts/e2e-collapsed-todo.mjs` / `e2e-schedule.mjs` / `e2e-todo-today.mjs` | [实测] 三个均 PASS |
+| 打包安装 | 见下 | [实测] 通过 |
+
+### 未验证 / 说明
+
+- [未验证] **断网橙色分支**：脚本无法可靠模拟断网；offline 类的样式分支由 e2e A2 的双向断言覆盖（快照 online=false 时断言类存在），但真实断网场景没实测。
+- [未验证] **未连接 Wi-Fi 时不渲染**：本机当前一直连着 Wi-Fi，`wifi|none`（无 WLAN 连接配置）路径未在真实环境触发；代码路径为解析行缺失时保持 `wifi: null`。
+- [未验证] 停用/禁用 WLAN 网卡时的表现（`Get-NetConnectionProfile` 不返回该接口 → 应同样落 null）。
+- e2e A3 首版断言把 Wi-Fi 位置写反（要求在电量环左侧），实际 SPEC 是电量环**右侧**——已用 `.tmp/debug-collapsed-rect.mjs` 实测矩形（电量 100–122 / Wi-Fi 132–147）后修正断言并删除调试脚本。代码本身没改。
+- 收起态宽度：新增图标后内容约 +25px，仍在 `COLLAPSED_MAX_W = 320` clamp 内（e2e A3 时钟完整 `HH:mm` 佐证）。
 
 ## 八、验收记录
 
