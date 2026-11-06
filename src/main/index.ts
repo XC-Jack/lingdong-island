@@ -6,6 +6,7 @@ import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
+import { setupExportStore } from './exportStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
@@ -41,11 +42,20 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。目前只有退出，留给以后加项 */
+/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 退出 */
 function buildAppMenu(): Menu {
   return Menu.buildFromTemplate([
+    { label: '导出数据…', click: () => void exportData() },
+    { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
+}
+
+/** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
+function exportData(): void {
+  void mainWindow?.webContents.executeJavaScript('window.island && window.island.exportData()').catch(() => {
+    /* 渲染层不在时退化为无操作；导出入口仍可从托盘菜单重试 */
+  })
 }
 
 /**
@@ -198,6 +208,7 @@ app.whenReady().then(() => {
   setupShelfStore()
   setupNotifyStore()
   setupScheduleStore()
+  setupExportStore()
   createWindow()
   createTray()
 
