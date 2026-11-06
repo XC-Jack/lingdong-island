@@ -1543,9 +1543,8 @@ function PageManagerPanel({
     const has = pagesCustom.pages.includes(i)
     // 最后一个页面不允许取消（至少保留 1 页）
     if (has && pagesCustom.pages.length <= 1) return
-    const pages = has
-      ? pagesCustom.pages.filter((n) => n !== i)
-      : [...pagesCustom.pages, i].sort((a, b) => a - b)
+    // 重新勾上时排到列表末尾（用户当前顺序的自然延伸），不强制按页号排序
+    const pages = has ? pagesCustom.pages.filter((n) => n !== i) : [...pagesCustom.pages, i]
     onChange({ ...pagesCustom, pages })
   }
   const toggleCollapsed = (k: CollapsedKey): void => {
@@ -1559,58 +1558,50 @@ function PageManagerPanel({
     const from = dragFrom.current
     dragFrom.current = null
     if (from === null || from === targetPageId) return
-    if (!pagesCustom.pages.includes(from) || !pagesCustom.pages.includes(targetPageId)) return
-    const pages = [...pagesCustom.pages]
+    const pages = pagesCustom.pages.includes(from) ? [...pagesCustom.pages] : null
+    if (!pages) return
     const fi = pages.indexOf(from)
     const ti = pages.indexOf(targetPageId)
+    if (ti === -1) return // 目标未勾选：不参与排序
     pages[fi] = targetPageId
     pages[ti] = from
     onChange({ ...pagesCustom, pages })
   }
   return (
     <div className="pm-panel">
-      <div className="pm-section">显示的页面</div>
-      {pagesCustom.pages.map((pageId) => {
-        const m = PAGE_META[pageId]
-        const locked = pagesCustom.pages.length <= 1
+      <div className="pm-section">页面（勾选显示，按住拖动换顺序）</div>
+      {PAGE_META.map((m, i) => {
+        const on = pagesCustom.pages.includes(i)
+        const locked = on && pagesCustom.pages.length <= 1
         return (
           <div
-            key={pageId}
-            className="pm-row"
-            draggable
+            key={i}
+            className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
+            draggable={on}
             onDragStart={(e) => {
-              e.dataTransfer.setData('text/plain', String(pageId))
+              e.dataTransfer.setData('text/plain', String(i))
               e.dataTransfer.effectAllowed = 'move'
-              dragFrom.current = pageId
+              dragFrom.current = i
             }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault()
-              reorderTo(pageId)
+              reorderTo(i)
             }}
             onDragEnd={() => {
               dragFrom.current = null
             }}
           >
-            <input type="checkbox" checked onChange={() => togglePage(pageId)} />
+            <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
             <span className="pm-name">{m.label}</span>
             {locked ? (
               <span className="pm-lock-hint">至少保留一个</span>
-            ) : (
+            ) : on ? (
               <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
-            )}
+            ) : null}
           </div>
         )
       })}
-      <div className="pm-section">不显示的页面</div>
-      {PAGE_META.map((m, i) =>
-        pagesCustom.pages.includes(i) ? null : (
-          <label key={i} className="pm-row pm-row-off">
-            <input type="checkbox" checked={false} onChange={() => togglePage(i)} />
-            <span className="pm-name">{m.label}</span>
-          </label>
-        )
-      )}
       <div className="pm-section">收起态组件</div>
       {COLLAPSED_KEYS.map((k) => (
         <label key={k} className="pm-row">

@@ -1673,19 +1673,23 @@ button:focus-visible,
   flex-direction: column;
   gap: 2px;
   padding: 2px 4px;
+  /* 行多时岛内自滚，按钮永远留在岛体里（窗口高上限 420，超出会被 overflow:hidden 裁掉，
+     用户就点不到底部按钮——US-032 验收反馈「按钮点不到」的根因） */
+  min-height: 0;
+  overflow-y: auto;
 }
 .pm-section {
-  font-size: 11px;
+  font-size: 10px;
   opacity: 0.55;
-  padding: 6px 2px 2px;
+  padding: 4px 2px 1px;
   user-select: none;
 }
 .pm-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 2px;
-  font-size: 13px;
+  gap: 7px;
+  padding: 1px 2px;
+  font-size: 12px;
   cursor: pointer;
   user-select: none;
 }
@@ -1707,7 +1711,7 @@ div.pm-row[draggable='true'] {
 }
 .pm-grip {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 10px;
   letter-spacing: -2px;
   opacity: 0.45;
   cursor: grab;
@@ -1718,14 +1722,14 @@ div.pm-row[draggable='true'] {
 .pm-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding-top: 8px;
+  gap: 6px;
+  padding-top: 5px;
 }
 .pm-reset {
   border: none;
   border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   color: var(--island-text, #f2f3f5);
   background: rgba(255, 255, 255, 0.1);
   cursor: pointer;
@@ -1736,8 +1740,8 @@ div.pm-row[draggable='true'] {
 .pm-close {
   border: none;
   border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
   color: #10240f;
   background: #7dd87d;
   cursor: pointer;
