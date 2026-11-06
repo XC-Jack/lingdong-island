@@ -203,6 +203,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 通知归属（US-029 反馈修复）：Windows 上不设 AppUserModelId，系统通知可能
+  // 归不到本应用而不弹出。id 必须与打包配置的 appId 一致才能对上快捷方式。
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.xcjack.lingdong-island')
+  }
   setupTodoStore()
   setupStatus()
   setupShelfStore()
