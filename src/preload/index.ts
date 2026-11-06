@@ -74,6 +74,14 @@ const api = {
   quitApp(): void {
     ipcRenderer.send('app:quit')
   },
+  /**
+   * 数据导出（US-029）：弹主进程原生「另存为」，把待办+日程写成 JSON。
+   * 右键/托盘菜单点「导出数据…」时由主进程经 executeJavaScript 触发这里；
+   * 渲染层自身不提供按钮。返回结果供 e2e 断言与将来扩展用。
+   */
+  exportData(): Promise<ExportResult> {
+    return ipcRenderer.invoke('app:export-data')
+  },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
     return ipcRenderer.invoke('todos:list')
@@ -190,6 +198,15 @@ export interface ScheduleItem {
   done: boolean
   reminded: boolean
   createdAt: number
+}
+
+/** 导出结果（与主进程 exportStore.ExportResult 保持一致） */
+export interface ExportResult {
+  ok: boolean
+  canceled?: boolean
+  path?: string
+  reason?: 'canceled' | 'empty' | 'failed'
+  detail?: string
 }
 
 contextBridge.exposeInMainWorld('island', api)

@@ -6,6 +6,7 @@ import { setupStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
+import { setupExportStore } from './exportStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
@@ -41,11 +42,20 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。目前只有退出，留给以后加项 */
+/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 退出 */
 function buildAppMenu(): Menu {
   return Menu.buildFromTemplate([
+    { label: '导出数据…', click: () => void exportData() },
+    { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
+}
+
+/** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
+function exportData(): void {
+  void mainWindow?.webContents.executeJavaScript('window.island && window.island.exportData()').catch(() => {
+    /* 渲染层不在时退化为无操作；导出入口仍可从托盘菜单重试 */
+  })
 }
 
 /**
@@ -193,11 +203,17 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 通知归属（US-029 反馈修复）：Windows 上不设 AppUserModelId，系统通知可能
+  // 归不到本应用而不弹出。id 必须与打包配置的 appId 一致才能对上快捷方式。
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.xcjack.lingdong-island')
+  }
   setupTodoStore()
   setupStatus()
   setupShelfStore()
   setupNotifyStore()
   setupScheduleStore()
+  setupExportStore()
   createWindow()
   createTray()
 
