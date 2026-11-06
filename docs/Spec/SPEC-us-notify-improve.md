@@ -55,4 +55,11 @@
 
 ## 7. 自检记录（2026-11-06）
 
-（开发完成后填写）
+- [实测] `npm run typecheck`（node + web）通过。
+- [实测] `npm run build` 通过。
+- [实测] `node scripts/e2e-notify-clear.mjs` 7 项全 PASS：N1 初始列表非空 / N2 清空后列表空+未读0 / N2b 收起态红点消失 / N3 刷新后旧通知不回来 / N4 重启后列表仍空 / N4b hiddenUntil 已写入 / N5 映射不到的 app 兜底返回 true。e2e 修过两处脚本问题（`node:ws` 不存在改用 Node 自带全局 WebSocket；evaluate 无超时会卡死，加 15s 超时）；spawn 时剥掉宿主注入的 ELECTRON_RUN_AS_NODE。
+- [实测] 回归：e2e-wifi / e2e-collapsed-todo / e2e-export / e2e-pages-custom 直接过；e2e-schedule / e2e-todo-today 六套连跑时各出一次失败（窗口标题断言，环境抖动），单独复跑全 PASS（各复跑两次）。
+- [实测] 打包安装 `D:\软件\灵动岛\`（19:13）+ 4 进程存活。
+- [未验证 → 留给实机验收] 兜底跳转的真实体验（点一条映射不到的通知 → 实际打开 Windows 通知设置页）；「已读」红点在真实新通知到达时的表现。
+- [未验证] ScreenSketch → `ms-screenclip:` 协议的实际效果（Win+Shift+S 截图界面是否被唤起——无头环境无法确认）。
+- 说明：用户反馈「点已读红点没消」未复现出稳定 bug（原链路 markRead→onUnread 是通的）；本次按防御性修复处理（空列表不动水位 + unread 由 visibleItems 重算），若实机仍复现需另行排查。
