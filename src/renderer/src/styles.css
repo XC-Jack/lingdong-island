@@ -130,6 +130,20 @@ body {
   box-shadow: 0 0 6px rgba(255, 95, 87, 0.8);
 }
 
+/* Wi-Fi 图标（收起态，电量环右侧；US-005）：已连有网白色，连上没网橙色警示 */
+.collapsed-wifi {
+  display: flex;
+  align-items: center;
+  color: rgba(242, 243, 245, 0.82);
+}
+.collapsed-wifi svg {
+  width: 15px;
+  height: 15px;
+}
+.collapsed-wifi.offline {
+  color: #ffb74d;
+}
+
 .collapsed-label {
   font-size: 12px;
   color: rgba(242, 243, 245, 0.62);
