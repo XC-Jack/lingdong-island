@@ -1701,9 +1701,24 @@ button:focus-visible,
   font-size: 11px;
   opacity: 0.7;
 }
+/* 拖拽排序（US-032 反馈）：显示中的页面行可拖换位，行尾把手提示 */
+div.pm-row[draggable='true'] {
+  cursor: grab;
+}
+.pm-grip {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: -2px;
+  opacity: 0.45;
+  cursor: grab;
+}
+.pm-row.pm-row-off {
+  opacity: 0.55;
+}
 .pm-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   padding-top: 8px;
 }
 .pm-reset {
@@ -1717,4 +1732,16 @@ button:focus-visible,
 }
 .pm-reset:hover {
   background: rgba(255, 255, 255, 0.18);
+}
+.pm-close {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #10240f;
+  background: #7dd87d;
+  cursor: pointer;
+}
+.pm-close:hover {
+  background: #8fe58f;
 }

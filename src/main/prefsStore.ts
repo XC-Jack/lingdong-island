@@ -23,8 +23,9 @@ let file: string
 function normalizePagesCustom(v: unknown): PagesCustom | undefined {
   if (!v || typeof v !== 'object') return undefined
   const raw = v as Partial<PagesCustom>
+  // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
   const pages = Array.isArray(raw.pages)
-    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))].sort((a, b) => a - b)
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
     : []
   if (pages.length === 0) return undefined
   const collapsed: Record<CollapsedKey, boolean> = { pet: true, clock: true, battery: true, net: true, todo: true }

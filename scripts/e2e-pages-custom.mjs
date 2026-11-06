@@ -1,5 +1,7 @@
 // e2e-pages-custom.mjs：US-032 页面自定义 e2e
 // P1 默认基线 / P2 收起态组件显隐+页面裁剪 / P3 圆点数 / P4 轮播循环 / P5 恢复默认
+// P6 页面顺序持久化：prefs.json 里 pages: [3,0,1,2]（日程排第一）→ 重启后
+//    第一个 dot 应是日程页（dots 渲染顺序跟 enabledPages 走）。
 // 偏好写入方式：杀应用后直接写 userData/prefs.json 再启动（离线写）。
 // 为什么不用运行中 CDP 调 prefsSet 再 reload：实测 CDP resolve 与主进程 save 和
 // mount 回填存在竞态（save 时间戳晚于 reload 后的 load），离线写零竞态。
@@ -17,6 +19,8 @@ const ok = (msg) => { console.log(`[PASS] ${msg}`); passed++ }
 const PREF_PATH = join(process.env.APPDATA, 'lingdong-island', 'prefs.json')
 const PREF_CLOCK_OFF = JSON.stringify({ pagesCustom: { pages: [0, 1, 2], collapsed: { pet: true, clock: false, battery: true, net: true, todo: true } } }, null, 2)
 const PREF_DEFAULT = JSON.stringify({ pagesCustom: { pages: [0, 1, 2, 3], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
+// 页面顺序调整（日程提到最前）+ 其余默认
+const PREF_REORDER = JSON.stringify({ pagesCustom: { pages: [3, 0, 1, 2], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
 
 async function connect() {
   for (let i = 0; i < 40; i++) {
@@ -106,6 +110,23 @@ try {
   fail(e.message)
 } finally {
   await stopApp(child3)
+}
+
+// P6：页面顺序持久化 —— pages: [3,0,1,2]（日程第一），重启后第一个 dot 的
+// title/aria 应指向日程。dots 渲染 enabledPages.map，dot 的 title 取 PAGE_META[i].label。
+const { child: child4, wsUrl: ws4 } = await startWithPref(PREF_REORDER)
+try {
+  await cdp(ws4, "document.querySelector('.island')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  await sleep(400)
+  const firstDot = await cdp(
+    ws4,
+    "document.querySelectorAll('.dots .dot')[0]?.getAttribute('title') || document.querySelectorAll('.dots .dot')[0]?.getAttribute('aria-label') || ''"
+  )
+  if (firstDot.includes('日程')) ok('P6a 页面顺序持久化：第一个圆点是日程（pages:[3,0,1,2] 跨重启生效）') ; else fail(`P6a 第一个圆点应是日程，got "${firstDot}"`)
+} catch (e) {
+  fail(e.message)
+} finally {
+  await stopApp(child4)
   writeFileSync(PREF_PATH, '{}', 'utf8') // 清理偏好
 }
 

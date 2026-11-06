@@ -82,8 +82,9 @@ function defaultPagesCustom(): PagesCustom {
 function normalizePagesCustom(v: unknown): PagesCustom | null {
   if (!v || typeof v !== 'object') return null
   const raw = v as Partial<PagesCustom>
+  // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
   const pages = Array.isArray(raw.pages)
-    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))].sort((a, b) => a - b)
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
     : []
   if (pages.length === 0) return null
   const collapsed = defaultPagesCustom().collapsed
@@ -1525,16 +1526,18 @@ const COLLAPSED_LABELS: Record<CollapsedKey, string> = {
 }
 
 /**
- * 页面管理面板（US-032）：勾选显示哪些页面、收起态显示哪些组件。
+ * 页面管理面板（US-032）：勾选显示哪些页面、收起态显示哪些组件、拖拽调整页面顺序。
  * 不是轮播页（PAGE_COUNT 只有 4），只能从右键/托盘菜单「页面管理…」进入（page 4）。
- * 改动立即生效并写 localStorage；至少保留 1 个页面。
+ * 改动立即生效并写主进程 prefs.json；至少保留 1 个页面；「完成并收起」收岛退出面板。
  */
 function PageManagerPanel({
   pagesCustom,
-  onChange
+  onChange,
+  onClose
 }: {
   pagesCustom: PagesCustom
   onChange: (v: PagesCustom) => void
+  onClose: () => void
 }): React.JSX.Element {
   const togglePage = (i: number): void => {
     const has = pagesCustom.pages.includes(i)
@@ -1549,20 +1552,65 @@ function PageManagerPanel({
     onChange({ ...pagesCustom, collapsed: { ...pagesCustom.collapsed, [k]: !pagesCustom.collapsed[k] } })
   }
   const reset = (): void => onChange(defaultPagesCustom())
+  // 拖拽排序（US-032 反馈）：只在「显示的页面」列表里拖换位；HTML5 dataTransfer 必须带数据
+  // 才稳定触发 dragover/drop（项目踩坑记录）；语义与置物架一致用「互换」。
+  const dragFrom = useRef<number | null>(null)
+  const reorderTo = (targetPageId: number): void => {
+    const from = dragFrom.current
+    dragFrom.current = null
+    if (from === null || from === targetPageId) return
+    if (!pagesCustom.pages.includes(from) || !pagesCustom.pages.includes(targetPageId)) return
+    const pages = [...pagesCustom.pages]
+    const fi = pages.indexOf(from)
+    const ti = pages.indexOf(targetPageId)
+    pages[fi] = targetPageId
+    pages[ti] = from
+    onChange({ ...pagesCustom, pages })
+  }
   return (
     <div className="pm-panel">
       <div className="pm-section">显示的页面</div>
-      {PAGE_META.map((m, i) => {
-        const on = pagesCustom.pages.includes(i)
-        const locked = on && pagesCustom.pages.length <= 1
+      {pagesCustom.pages.map((pageId) => {
+        const m = PAGE_META[pageId]
+        const locked = pagesCustom.pages.length <= 1
         return (
-          <label key={i} className={`pm-row ${locked ? 'pm-locked' : ''}`} title={locked ? '至少保留一个页面' : undefined}>
-            <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
+          <div
+            key={pageId}
+            className="pm-row"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/plain', String(pageId))
+              e.dataTransfer.effectAllowed = 'move'
+              dragFrom.current = pageId
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              reorderTo(pageId)
+            }}
+            onDragEnd={() => {
+              dragFrom.current = null
+            }}
+          >
+            <input type="checkbox" checked onChange={() => togglePage(pageId)} />
             <span className="pm-name">{m.label}</span>
-            {locked && <span className="pm-lock-hint">至少保留一个</span>}
-          </label>
+            {locked ? (
+              <span className="pm-lock-hint">至少保留一个</span>
+            ) : (
+              <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
+            )}
+          </div>
         )
       })}
+      <div className="pm-section">不显示的页面</div>
+      {PAGE_META.map((m, i) =>
+        pagesCustom.pages.includes(i) ? null : (
+          <label key={i} className="pm-row pm-row-off">
+            <input type="checkbox" checked={false} onChange={() => togglePage(i)} />
+            <span className="pm-name">{m.label}</span>
+          </label>
+        )
+      )}
       <div className="pm-section">收起态组件</div>
       {COLLAPSED_KEYS.map((k) => (
         <label key={k} className="pm-row">
@@ -1573,6 +1621,9 @@ function PageManagerPanel({
       <div className="pm-actions">
         <button type="button" className="pm-reset" onClick={reset}>
           重置为默认
+        </button>
+        <button type="button" className="pm-close" onClick={onClose}>
+          完成并收起
         </button>
       </div>
     </div>
@@ -1837,7 +1888,7 @@ export default function App(): React.JSX.Element {
     setPage((p) => {
       const list = enabledPagesRef.current
       if (list.length === 0) return 0
-      if (p >= 4) return list[0]
+      if (p === 4) return list[0]
       // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
       let idx = list.indexOf(p)
       if (idx === -1) idx = 0
@@ -2013,6 +2064,11 @@ export default function App(): React.JSX.Element {
                 ) : page === 4 ? (
                   <PageManagerPanel
                     pagesCustom={pagesCustom}
+                    onClose={() => {
+                      setPage(enabledPagesRef.current[0] ?? 0)
+                      setExpanded(false)
+                      expandedRef.current = false
+                    }}
                     onChange={(v) => {
                       pagesCustomDirty.current = true
                       setPagesCustom(v)
