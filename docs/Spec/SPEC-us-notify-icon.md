@@ -64,3 +64,14 @@
 - 开发中修复的两个解析 bug：① e2e 脚本 USER_DATA 用了 homedir()（DSH 宿主返回 D:\Users\honor），Electron 实际 userData 在 %APPDATA%＝C 盘，改用 process.env.APPDATA；② AppxManifest 的 Square44x44Logo 带子目录（Assets\xxx.png）时 pickUwpVariant 拼出 Assets\Assets\ 双层路径，改只取文件名段。
 - 打包：`npm run dist` 成功 → 静默安装 `D:\软件\灵动岛\`（app.asar 2026-11-06 20:06）→ 启动 4 进程存活。
 - **未验证**：真实新通知到达时横幅弹出与收回（需等一条真实系统通知，留实机验收）；e2e-export 未跑（本次改动不触及导出链路）。
+
+### 用户实机验收反馈与二轮修复（2026-11-06 20:48–21:00，提交 644de18）
+
+用户反馈两条：①标题乱码「新邮件来自 LottieFiles &lt;!hello@lottiefiles.com&gt;」②「没有弹出收回的效果」。
+
+- 修复1 `parseToastXml` 加 `decodeEntities`：toast XML 的 text 内容是 XML 转义过的，不解码就原样显示。修后真实库验证：`新邮件来自 LottieFiles <hello@lottiefiles.com>` [实测]（.tmp/probe-decode.cjs 读 wpndatabase 逐条解码核对）。
+- 修复2 展开期错过的横幅补弹：原实现渲染层展开态直接忽略横幅事件，而主进程此时已把该通知记入 bannerSent——用户在通知页看到「刚刚」的消息，收起后横幅永远不弹，正是用户遇到的。改为展开态把最新一条暂存 `pendingBanner`，收起瞬间补弹 [实测]（dev 版 CDP：展开态发真实 toast → 35s 横幅未弹 → Esc 收起 → 0ms 补弹成功）。
+- 顺带验证：收起态发 toast → 19.3s 后横幅弹出（30s 轮询窗口内）→ 4.1s 后收回（5s 定时减采样误差），动画正常。
+- 回归：e2e-notify-icon 8 项 / e2e-notify-clear 7 项 / e2e-wifi 5 项 / e2e-collapsed-todo 6 项全 PASS [实测]。
+- 重新打包安装（app.asar 2026-11-06 20:58）→ 4 进程存活。
+- **仍未验证**：安装版收起态等一条真实第三方通知看横幅（复现验证都在 dev 版做的，安装版链路相同但留用户日常观察）。
