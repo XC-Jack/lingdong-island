@@ -7,6 +7,7 @@ import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
+import { setupPrefsStore } from './prefsStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
@@ -42,13 +43,19 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 退出 */
+/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 页面管理（US-032）+ 退出 */
 function buildAppMenu(): Menu {
   return Menu.buildFromTemplate([
+    { label: '页面管理…', click: () => openPageManager() },
     { label: '导出数据…', click: () => void exportData() },
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
+}
+
+/** 右键/托盘菜单的页面管理入口（US-032）：让渲染层展开岛并切到页面管理面板 */
+function openPageManager(): void {
+  mainWindow?.webContents.send('island:manage-pages')
 }
 
 /** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
@@ -214,6 +221,7 @@ app.whenReady().then(() => {
   setupNotifyStore()
   setupScheduleStore()
   setupExportStore()
+  setupPrefsStore()
   createWindow()
   createTray()
 

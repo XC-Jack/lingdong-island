@@ -1665,3 +1665,56 @@ button:focus-visible,
     animation: none;
   }
 }
+
+/* ===== 页面管理面板（US-032）===== */
+/* 两组勾选行：复用岛内文字风格；锁定行（最后一个页面）置灰并给提示 */
+.pm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 4px;
+}
+.pm-section {
+  font-size: 11px;
+  opacity: 0.55;
+  padding: 6px 2px 2px;
+  user-select: none;
+}
+.pm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 2px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.pm-row input[type='checkbox'] {
+  accent-color: #7dd87d;
+  cursor: pointer;
+}
+.pm-row.pm-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pm-lock-hint {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.pm-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+}
+.pm-reset {
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--island-text, #f2f3f5);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+.pm-reset:hover {
+  background: rgba(255, 255, 255, 0.18);
+}

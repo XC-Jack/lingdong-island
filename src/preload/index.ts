@@ -59,6 +59,10 @@ const api = {
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)
   },
+  /** 菜单点了「页面管理…」（US-032）——渲染层展开岛并切到页面管理面板 */
+  onManagePages(cb: () => void): void {
+    ipcRenderer.on('island:manage-pages', cb)
+  },
   /** 诊断日志（US-036 探针）：渲染层把收起判定写进 userData/collapse-log.txt */
   logDiag(line: string): void {
     ipcRenderer.send('island:log-diag', line)
@@ -81,6 +85,13 @@ const api = {
    */
   exportData(): Promise<ExportResult> {
     return ipcRenderer.invoke('app:export-data')
+  },
+  /** 界面偏好（US-032）：读 / 写。存 userData/prefs.json（localStorage 跨重启会丢，不用它） */
+  prefsGet(): Promise<PrefsShape> {
+    return ipcRenderer.invoke('prefs:get')
+  },
+  prefsSet(payload: PrefsShape): Promise<PrefsShape> {
+    return ipcRenderer.invoke('prefs:set', payload)
   },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
@@ -207,6 +218,16 @@ export interface ExportResult {
   path?: string
   reason?: 'canceled' | 'empty' | 'failed'
   detail?: string
+}
+
+/** 界面偏好（US-032，与主进程 prefsStore 保持一致） */
+export interface PagesCustom {
+  pages: number[]
+  collapsed: Record<'pet' | 'clock' | 'battery' | 'net' | 'todo', boolean>
+}
+
+export interface PrefsShape {
+  pagesCustom?: PagesCustom
 }
 
 contextBridge.exposeInMainWorld('island', api)
