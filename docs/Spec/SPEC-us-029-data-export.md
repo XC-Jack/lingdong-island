@@ -65,4 +65,21 @@
 
 ## 自检记录
 
-（开发完成后填）
+2026-11-06，全部 [实测]：
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck`（node + web） | ✅ 通过 |
+| `npm run build` | ✅ 通过 |
+| `scripts/e2e-export.mjs`（E1 真实 IPC 弹对话框→ESC 取消分支；E2 渲染层 todos/schedule 通道） | ✅ PASS |
+| `scripts/verify-export-payload.mjs`（离线 payload 组装：五键、字段一致、本地时区 ISO、缺文件/坏 JSON 防御） | ✅ PASS |
+| `scripts/probe-export-write.mjs`（真实 userData 种子 2 条 → 组装 → 写盘 → 读回比对 → 清理） | ✅ PASS，清理后 todos/schedule 均空 |
+| 回归：e2e-wifi 5 项 / e2e-collapsed-todo 6 项 / e2e-schedule 5 项 / e2e-todo-today 10 项 | ✅ 全 PASS |
+| 重新打包 `npm run dist` + 静默安装 `/S /D=D:\软件\灵动岛\` + 启动 | ✅ 4 进程存活（13:14） |
+
+**未验证**：
+- 真实点「另存为」选目录保存成功的完整人工路径（自动化只验证了取消分支 + 探针直接落盘；对话框里的真实点击只有用户能做）。
+- 系统通知的实际弹出（notifyResult 走 Electron Notification，自动化环境未观测）。
+- 无待办无日程时点导出（reason='empty' 分支代码路径未实跑）。
+
+**踩坑**：contextBridge 的 promise 链里嵌套第二个 `window.island.*` 调用，CDP evaluate(awaitPromise) 返回 {}（跨世界对象序列化失败）——e2e/探针里每个 IPC 单独一次 CDP 往返。
