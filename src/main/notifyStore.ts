@@ -44,10 +44,30 @@ function filetimeToMs(text: string): number {
 
 /** 从 toast XML 抽标题/正文：text id=1 是标题，id=2 是正文（不同模板可能只有一条） */
 function parseToastXml(xml: string): { title: string; body: string } {
-  const texts = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1].trim()).filter(Boolean)
+  const texts = [...xml.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => decodeEntities(m[1].trim())).filter(Boolean)
   if (texts.length === 0) return { title: '', body: '' }
   if (texts.length === 1) return { title: texts[0], body: '' }
   return { title: texts[0], body: texts.slice(1).join(' ') }
+}
+
+/** 解码 toast XML 里的 HTML 实体（&lt;h&gt; → <h>）；toast 正文是 XML 转义过的，不解码会显示成乱码 */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => safeFromCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => safeFromCode(parseInt(dec, 10)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+function safeFromCode(code: number): string {
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return ''
+  }
 }
 
 /** AUMID（如 Microsoft.Windows.Explorer!App 或 com.tencent.qq）→ 可读短名 */

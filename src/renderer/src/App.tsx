@@ -1746,18 +1746,37 @@ export default function App(): React.JSX.Element {
     return () => window.clearInterval(id)
   }, [])
 
-  // 新消息横幅：主进程轮询发现新通知时推送；展开态忽略，收起态显示 5 秒后收回
+  // 新消息横幅：主进程轮询发现新通知时推送。
+  // 展开态不立即弹（用户正看着通知页），暂存 pendingBanner，收起瞬间补弹——
+  // 否则展开期间错过的消息会被主进程记入 bannerSent，收起后永远看不到横幅。
+  const pendingBanner = useRef<NotifyItem | null>(null)
   useEffect(() => {
     window.island.onNotifyArrived((item: NotifyItem) => {
-      if (expandedRef.current) return
-      if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
-      setBanner(item)
-      bannerTimer.current = window.setTimeout(() => {
-        setBanner(null)
-        bannerTimer.current = null
-      }, 5000)
+      if (expandedRef.current) {
+        pendingBanner.current = item // 最新一条覆盖旧的
+        return
+      }
+      showBanner(item)
     })
   }, [])
+
+  const showBanner = (item: NotifyItem): void => {
+    if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
+    setBanner(item)
+    bannerTimer.current = window.setTimeout(() => {
+      setBanner(null)
+      bannerTimer.current = null
+    }, 5000)
+  }
+
+  // 展开态切回收起态：若有展开期间错过的消息，补弹横幅
+  useEffect(() => {
+    if (!expanded && pendingBanner.current !== null) {
+      const item = pendingBanner.current
+      pendingBanner.current = null
+      showBanner(item)
+    }
+  }, [expanded])
 
   // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
   useEffect(() => {
