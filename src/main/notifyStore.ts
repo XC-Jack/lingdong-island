@@ -16,7 +16,7 @@ import { appIcon, initIconCache } from './notifyIconStore'
 const WPN_DIR = join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'Windows', 'Notifications')
 const WPN_DB = join(WPN_DIR, 'wpndatabase.db')
 const POLL_MS = 30_000 // 兜底轮询（防 watcher 漏事件）；实时性由 wpndatabase 文件监听保证
-const DEBOUNCE_MS = 400 // 文件监听触发后的去抖：等系统写完 db/wal 再读（读失败已无害：保留旧列表等下轮）
+const FOLLOWUP_MS = 120 // 文件监听触发：立即读之后的补读间隔（读失败无害，压小让横幅更快）
 const MAX_ITEMS = 50
 
 interface NotifyItem {
@@ -340,8 +340,12 @@ function watchDatabase(): void {
       }
     }
     const scheduleRefresh = (): void => {
+      // 双段读：立即读一次（若系统已写完 wal，横幅最快 ~300ms 弹出），
+      // 再 120ms 后补读一次（兜住「立即读时 wal 还没写完」的情况）。
+      // 读失败/读不全都无害：失败保留旧列表，补读再抓；30s 轮询最终兜底。
+      void refresh()
       if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => void refresh(), DEBOUNCE_MS)
+      debounceTimer = setTimeout(() => void refresh(), FOLLOWUP_MS)
     }
     start()
   } catch {
