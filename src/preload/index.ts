@@ -30,6 +30,8 @@ export interface NotifyItem {
   title: string
   body: string
   arrival: number
+  /** toast 的 launch 深链（点击直达来源界面）；无属性为 null */
+  launch: string | null
 }
 
 export interface NotifyListResult {
@@ -183,9 +185,9 @@ const api = {
   notifyClearAll(): Promise<NotifyListResult> {
     return ipcRenderer.invoke('notify:clear-all')
   },
-  /** 尝试打开通知来源应用；映射不到兜底打开 Windows 通知设置 */
-  notifyOpenSource(appName: string): Promise<boolean> {
-    return ipcRenderer.invoke('notify:open-source', appName)
+  /** 尝试打开通知来源：优先 launch 深链直达界面，映射不到兜底打开 Windows 通知设置 */
+  notifyOpenSource(appName: string, launch: string | null): Promise<boolean> {
+    return ipcRenderer.invoke('notify:open-source', appName, launch)
   },
   /** 新消息到岛横幅（主进程 30s 轮询发现新通知时推送；渲染层收起态显示横幅） */
   onNotifyArrived(cb: (item: NotifyItem) => void): void {

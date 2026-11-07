@@ -13,6 +13,8 @@ interface NotifyItem {
   title: string
   body: string
   arrival: number
+  /** toast 的 launch 深链（点击直达来源界面）；无属性为 null */
+  launch: string | null
 }
 
 interface NotifyListResult {
@@ -1113,7 +1115,7 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
 
   const openOne = useCallback(
     (it: NotifyItem) => {
-      void window.island.notifyOpenSource(it.app)
+      void window.island.notifyOpenSource(it.app, it.launch)
       markRead()
     },
     [markRead]
@@ -1781,6 +1783,17 @@ export default function App(): React.JSX.Element {
     }, 5000)
   }
 
+  /** 点击横幅：打开来源应用并立即收回横幅（不收起/展开岛，不动已读水位） */
+  const openFromBanner = (): void => {
+    if (banner === null) return
+    void window.island.notifyOpenSource(banner.item.app, banner.item.launch)
+    if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
+    setBanner(null)
+    bannerCountRef.current = 0
+    bannerTimer.current = null
+    window.island.setBannerVisible(false)
+  }
+
   // 展开态切回收起态：若有展开期间错过的消息，补弹横幅（带累计条数）
   useEffect(() => {
     if (!expanded && pendingBanner.current !== null) {
@@ -2280,8 +2293,14 @@ export default function App(): React.JSX.Element {
         <div
           className={`collapsed-banner${banner.count > 1 ? ' banner-shake' : ''}`}
           key={banner.count} // 条数变化时重挂节点：重播入场动画+抖动
-          role="status"
-          aria-label={`新消息：${banner.item.app} ${banner.item.title}，共 ${banner.count} 条`}
+          role="button"
+          tabIndex={0}
+          title="点击打开来源应用"
+          aria-label={`新消息：${banner.item.app} ${banner.item.title}，共 ${banner.count} 条，点击打开`}
+          onClick={openFromBanner}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') openFromBanner()
+          }}
         >
           <span className="banner-count" aria-hidden="true">
             {banner.count > 99 ? '99+' : banner.count}

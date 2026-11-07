@@ -119,6 +119,8 @@ body {
   background: rgba(9, 9, 11, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.08);
   white-space: nowrap;
+  cursor: pointer; /* 点击横幅 = 打开来源应用（SPEC-us-notify-open） */
+  user-select: none;
   animation: banner-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
