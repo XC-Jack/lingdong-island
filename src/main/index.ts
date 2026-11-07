@@ -276,8 +276,10 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
 })
 
 // 收起态窗口高 42px 只装得下胶囊；横幅 absolute 在胶囊上方 6px 处——窗口外渲染了也看不见
-// （用户实机反馈「横幅不弹」的根因）。横幅显示期间窗口向上加高 BANNER_EXTRA，消失时还原；
-// y 同步上移让胶囊位置不变。展开态由 computeBounds(true) 主导，无需处理。
+// （用户实机反馈「横幅不弹」的根因）。横幅显示期间窗口**向上**加高 BANNER_EXTRA（y 上移），
+// 消失时还原。胶囊位置不变靠渲染层配合：.app 改 align-items:flex-end，胶囊贴窗口底——
+// 加高后窗口底=原窗口底（y-46, h+46），胶囊纹丝不动；窗口顶部多出的 46px 就是横幅预留区。
+// 注意不能向下加高：胶囊贴窗口顶，向下加高胶囊虽不动，但横幅（在胶囊上方）仍在窗口外。
 const BANNER_EXTRA = 46
 let bannerVisible = false
 
@@ -287,7 +289,7 @@ ipcMain.on('island:set-banner-visible', (_event, value: unknown) => {
   bannerVisible = next
   if (expanded || !mainWindow || mainWindow.isDestroyed()) return
   const b = mainWindow.getBounds()
-  // 显示：向上加高（y 上移、高增加）；隐藏：反向还原（此时 bounds 是加高后的）
+  // 显示：向上加高（y 上移、高增加）；隐藏：反向还原（此时 bounds 是加高后的，方向相反）
   const dy = next ? -BANNER_EXTRA : BANNER_EXTRA
   const dh = next ? BANNER_EXTRA : -BANNER_EXTRA
   mainWindow.setBounds({ x: b.x, y: b.y + dy, width: b.width, height: b.height + dh })

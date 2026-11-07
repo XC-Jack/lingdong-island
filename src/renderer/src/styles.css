@@ -23,12 +23,16 @@ body {
   color: #f2f3f5;
 }
 
-/* 窗口是矩形，但视觉上只画中间那一块 */
+/* 窗口是矩形，但视觉上只画中间那一块。
+   align-items:flex-end：横幅期主进程把窗口向上加高 46px（y 上移），收起胶囊贴窗口底
+   才不跟着窗口顶上移（此前 flex-start + 向上加高，用户实测「岛消失又出现」）。
+   加高后窗口底=原窗口底，胶囊位置完全不变；窗口顶部 46px 成为横幅预留区。
+   展开态窗口高=渲染层上报的内容高，island 本身≈窗口高，flex-end 无副作用 */
 .app {
   width: 100%;
   height: 100%;
   display: flex;
-  align-items: flex-start;
+  align-items: flex-end;
   justify-content: center;
 }
 
@@ -95,14 +99,15 @@ body {
 
 /* ---------- 收起态 ---------- */
 
-/* 新消息到岛横幅（US 通知图标故事）：覆盖在胶囊正上方，弹出/收回动画。
+/* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正上方预留区，弹出/收回动画。
    参考苹果灵动岛：胶囊向上「鼓出」一小条再收回。
-   位置换算：主进程横幅期把窗口向上加高 BANNER_EXTRA=46（y 上移，胶囊位置不变），
-   窗口顶=原窗口顶上方 46px；横幅贴窗口顶（top:6px）即胶囊上沿上方 6px */
+   位置换算：横幅相对 .island.collapsed（position:relative）定位，
+   bottom:calc(100%+6px)=胶囊上沿上方 6px；主进程横幅期把窗口向上加高 46px
+   且 .app flex-end 让胶囊沉底，窗口顶正好是横幅预留区，横幅（高约40）完整落在窗口内 */
 .collapsed-banner {
   position: absolute;
   left: 50%;
-  top: 6px;
+  bottom: calc(100% + 6px);
   transform: translateX(-50%);
   display: flex;
   align-items: center;
