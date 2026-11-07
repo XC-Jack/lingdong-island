@@ -2258,27 +2258,28 @@ export default function App(): React.JSX.Element {
               </span>
             )}
             {notifyUnread > 0 && <span className="collapsed-dot" title={`${notifyUnread} 条未读通知`} />}
-
-            {/* 新消息到岛横幅（US 通知图标故事）：覆盖在胶囊上方弹出，5 秒后收回。
-                放在收起态分支末尾，绝对定位不占布局；展开态分支根本不渲染它 */}
-            {banner !== null && (
-              <div className="collapsed-banner" role="status" aria-label={`新消息：${banner.app} ${banner.title}`}>
-                {banner.icon ? (
-                  <img className="banner-icon" src={iconUrl(banner.icon)} alt="" aria-hidden="true" />
-                ) : (
-                  <span className="banner-icon banner-icon-fallback" aria-hidden="true">
-                    {banner.app.slice(0, 1)}
-                  </span>
-                )}
-                <span className="banner-text">
-                  <span className="banner-app">{banner.app}</span>
-                  <span className="banner-title">{banner.title}</span>
-                </span>
-              </div>
-            )}
           </>
         )}
       </div>
+      {/* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正下方，5 秒后收回。
+          必须挂在 .app 层（island 的兄弟节点）而不是 island 内——island 有 overflow:hidden
+          （圆角裁内容），横幅 top 超出胶囊下边界会被整个裁掉，屏幕上一个像素都不画
+          （六轮排障最终根因：CDP 查得到 DOM 和 rect，但渲染被裁）。 */}
+      {banner !== null && !expanded && (
+        <div className="collapsed-banner" role="status" aria-label={`新消息：${banner.app} ${banner.title}`}>
+          {banner.icon ? (
+            <img className="banner-icon" src={iconUrl(banner.icon)} alt="" aria-hidden="true" />
+          ) : (
+            <span className="banner-icon banner-icon-fallback" aria-hidden="true">
+              {banner.app.slice(0, 1)}
+            </span>
+          )}
+          <span className="banner-text">
+            <span className="banner-app">{banner.app}</span>
+            <span className="banner-title">{banner.title}</span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

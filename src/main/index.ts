@@ -10,8 +10,14 @@ import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
-/** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
-const COLLAPSED_HEIGHT = 42
+/**
+ * 收起态窗口总高：胶囊 42（渲染层 .island.collapsed 的固定高）+ 下方横幅预留区 46。
+ * 横幅（新消息到岛提示）显示在胶囊正下方的预留区，平时空置为透明。
+ * 为什么常驻而不是横幅期临时加高：动态 setBounds 加高后，透明窗口新区域在 Windows 上
+ * 可能不被合成器画出（实机截屏五轮验证：横幅 DOM/窗口尺寸全对但屏幕无像素）。
+ * 常驻透明区靠 Windows 透明窗口 per-pixel 命中测试：透明像素点击自动穿透到下层窗口。
+ */
+const COLLAPSED_WIN_HEIGHT = 88
 /** 收起态宽度上下限（防过窄/过宽） */
 const COLLAPSED_MIN_W = 150
 const COLLAPSED_MAX_W = 320
@@ -99,7 +105,7 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
   const { workArea } = screen.getPrimaryDisplay()
   const size = isExpanded
     ? expandedSize
-    : { width: collapsedWidth, height: COLLAPSED_HEIGHT }
+    : { width: collapsedWidth, height: COLLAPSED_WIN_HEIGHT }
   return {
     x: Math.round(workArea.x + (workArea.width - size.width) / 2),
     y: workArea.y + TOP_GAP,
@@ -275,25 +281,13 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   }
 })
 
-// 收起态窗口高 42px 只装得下胶囊；横幅 absolute 在胶囊上方 6px 处——窗口外渲染了也看不见
-// （用户实机反馈「横幅不弹」的根因）。横幅显示期间窗口**向上**加高 BANNER_EXTRA（y 上移），
-// 消失时还原。胶囊位置不变靠渲染层配合：.app 改 align-items:flex-end，胶囊贴窗口底——
-// 加高后窗口底=原窗口底（y-46, h+46），胶囊纹丝不动；窗口顶部多出的 46px 就是横幅预留区。
-// 注意不能向下加高：胶囊贴窗口顶，向下加高胶囊虽不动，但横幅（在胶囊上方）仍在窗口外。
-const BANNER_EXTRA = 46
-let bannerVisible = false
-
-ipcMain.on('island:set-banner-visible', (_event, value: unknown) => {
-  const next = value === true
-  if (next === bannerVisible) return
-  bannerVisible = next
-  if (expanded || !mainWindow || mainWindow.isDestroyed()) return
-  const b = mainWindow.getBounds()
-  // 显示：向上加高（y 上移、高增加）；隐藏：反向还原（此时 bounds 是加高后的，方向相反）
-  const dy = next ? -BANNER_EXTRA : BANNER_EXTRA
-  const dh = next ? BANNER_EXTRA : -BANNER_EXTRA
-  mainWindow.setBounds({ x: b.x, y: b.y + dy, width: b.width, height: b.height + dh })
-})
+// 收起态窗口高 42px 只装得下胶囊；横幅需要 46px 额外空间。
+// **关键约束（第五轮截图实锤）**：岛贴屏幕顶（TOP_GAP=6），胶囊上方屏幕只剩 ~12px——
+// （历史）横幅期动态加高方案已废弃：实机截屏五轮验证，动态 setBounds 后透明窗口新增区域
+// 在 Windows 上不被合成器画出——横幅 DOM/尺寸/可见性全对但屏幕无像素。
+// 现方案：收起窗口常驻 COLLAPSED_WIN_HEIGHT（胶囊+横幅预留区），横幅显示不需要主进程配合，
+// set-banner-visible IPC 保留为空操作（渲染层调用点不删，避免改三处）。
+ipcMain.on('island:set-banner-visible', () => {})
 
 // 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）
 ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
