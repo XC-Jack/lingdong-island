@@ -1,4 +1,6 @@
-# SPEC：通知点击直达来源应用（列表条目 + 到岛横幅）
+# SPEC：通知点击直达来源应用（列表条目 + 到岛横幅）——已实现，待用户验收
+
+> 状态（2026-11-07）：代码完成、自检全过、已打包装机（14:15:38）。分支 us-notify-open（基于 us-notify-compact，两者都待用户验收后一并合并 main）。
 
 ## 一、目标
 
@@ -61,8 +63,15 @@
 
 ## 七、自检记录
 
-（开发完成后回填）
+- [实测] typecheck / build 通过（npm run typecheck、npm run build）。
+- [实测] e2e-notify-open.mjs 8/8 PASS：O1 列表带 launch（11/32 条有深链）、O1b QQ 深链 ntqq-notification://、O2 IPC 两参签名、O3~O3d 危险协议过滤四断言、O4 HKCR 协议注册。
+- [实测] 回归：e2e-notify（PASS）、e2e-notify-compact 2/2、e2e-notify-icon 8/8、e2e-notify-clear 7/7、e2e-collapsed-todo（PASS）。
+- [实测] npm run dist 打包 + /S 静默安装 D:\软件\灵动岛\（app.asar 2026-11-07 14:15:38），启动 4 进程存活。
+- [实测] HKCR\ntqq-notification\shell\open\command 指向 QQ timwp.exe（协议分发有接收方）。
+- 提交：分支 us-notify-open —— 575261f（SPEC）→ f3cff8e（代码+e2e）。
 
 ## 八、未验证清单
 
-（开发完成后回填；已知风险：`shell.openExternal` 对自定义协议的处理与 PowerShell `Start-Process` 等效性为 [推断]——Electron 走 ShellExecute，e2e 只验证到 IPC/协议注册层，真实拉起留用户实机验收。）
+- [未验证] 真实点击横幅/条目后 QQ 聊天窗被拉起（e2e 不真开 shell，避免弹窗打扰；shell.openExternal 对自定义协议走系统 ShellExecute，与 PowerShell Start-Process 等效为 [推断]）→ 留用户实机验收。
+- [未验证] 无深链应用（Chrome 等）点击后静态映射分支的实际拉起——逻辑未改动，沿用已验收行为。
+- [未验证] launch 解码失败分支（个别应用不做 URL 编码）——已按原始值兜底，未见真实样本。
