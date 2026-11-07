@@ -118,3 +118,14 @@
 - **实测 [实测]**：dev（electron.exe out/main/index.js）appeared_ms=1516、2066（含 0.8s 去抖），5s 收回；安装版（app.asar 12:17:46）发真实 toast 3s 后全屏截屏实锤横幅显示。typecheck/build PASS；回归 8 套 e2e 全 PASS（notify-icon 8/8、notify、notify-clear 7、wifi、collapsed-todo、schedule、todo-today、pages-custom 6）。
 - 踩坑补充：⑦安装版启动 0 进程先查 ELECTRON_RUN_AS_NODE（DSH 宿主注入 1 时 electron 被跑成纯 Node 秒退），Remove-Item 再启动；⑧npm run dist 报证书错误须同时设 ELECTRON_MIRROR 与 ELECTRON_BUILDER_BINARIES_MIRROR（缺后者只修前者无效）；⑨npm start 不透传 --remote-debugging-port，dev 调试直接跑 node_modules\electron\dist\electron.exe out\main\index.js。
 - **未验证**：用户实机 QQ 真实消息的体验（应 2 秒内弹）；透明区点击穿透的日常手感。
+
+### 实时化优化：去抖 400ms + 读失败防吞横幅（2026-11-07 12:24–12:39，提交 59e8379）
+
+用户问「延迟还可以提高吗」。
+
+- **先把去抖 800→300ms 并改成「立即读+300ms 补读」——实测失败**：第一个 toast 能弹、同实例后续全不弹（连 30s 轮询兜底也没补上）。
+- **根因定位**：立即读时系统正写 wal，复制出不一致快照 → DatabaseSync 打开报错 → readWpnDatabase 的 catch 返回 `[]` → **cached 被覆盖成空数组** → 下一轮 refresh 的 prev.length===0 被误判为「应用启动首轮」，把历史通知全记 bannerSent——之后的新消息虽然会触发，但若又碰上读失败同样清空，横幅判定链被破坏。
+- **修复（59e8379）**：①readWpnDatabase 失败返回 `null`，refresh 保留旧 cached 跳过本轮（绝不清空，附注释说明为什么）；②去抖定 400ms（三连发实测 appeared_ms=1554/1548/1563，稳定 1.55s，比 800ms 版快 0.2~0.5s）。
+- **实测 [实测]**：dev 三连发全弹且延迟稳定 1.55s；typecheck/build PASS；回归 8 套 e2e 全 PASS；安装版（app.asar 12:37:50）发 toast 3s 后截屏实锤横幅显示（12:38 shot.png）。
+- **延迟下限判断**：~1.5s 的构成是 toast 发出→系统写库（约 1s，不可控）+ 400ms 去抖 + 读库渲染，去抖已不是大头，再压收益有限。1.5s 即当前架构的合理下限。
+- 教训：读失败返回空数组会破坏「首轮判定」逻辑——**失败分支必须保持状态不变**，而不是返回一个看似合法的空值。
