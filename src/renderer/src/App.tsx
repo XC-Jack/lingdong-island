@@ -1814,6 +1814,45 @@ export default function App(): React.JSX.Element {
     }
   }, [expanded])
 
+  // US-039 验证码横幅：主进程剪贴板轮询识别到验证码时推送。
+  // 与通知横幅共用横幅位（后到覆盖先到）；8s 自动消失（验证码时效短）；
+  // 展开态忽略、不补弹（SPEC 明确：展开时用户正在操作，补弹无意义）。
+  const [codeBanner, setCodeBanner] = useState<string | null>(null)
+  const [codeCopied, setCodeCopied] = useState(false)
+  const codeBannerTimer = useRef<number | null>(null)
+  useEffect(() => {
+    window.island.onCodeArrived((code: string) => {
+      if (expandedRef.current) return // 展开态不弹不补弹
+      showCode(code)
+    })
+  }, [])
+  const showCode = (code: string): void => {
+    if (codeBannerTimer.current !== null) window.clearTimeout(codeBannerTimer.current)
+    setCodeBanner(code)
+    setCodeCopied(false)
+    window.island.setBannerVisible(true)
+    codeBannerTimer.current = window.setTimeout(() => {
+      setCodeBanner(null)
+      setCodeCopied(false)
+      codeBannerTimer.current = null
+      window.island.setBannerVisible(false)
+    }, 8000)
+  }
+  /** 点击验证码横幅 → 复制验证码到剪贴板，横幅提示「已复制」并照常 8s 计时收回 */
+  const copyCodeBanner = (): void => {
+    if (codeBanner === null) return
+    void window.island.clipboardWriteText(codeBanner).then((okFlag) => {
+      if (okFlag) setCodeCopied(true)
+    })
+  }
+  const closeCodeBanner = (): void => {
+    if (codeBannerTimer.current !== null) window.clearTimeout(codeBannerTimer.current)
+    setCodeBanner(null)
+    setCodeCopied(false)
+    codeBannerTimer.current = null
+    window.island.setBannerVisible(false)
+  }
+
   // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
   useEffect(() => {
     let alive = true
@@ -2326,6 +2365,26 @@ export default function App(): React.JSX.Element {
             <span className="banner-app">{banner.item.app}</span>
             <span className="banner-title">{banner.item.title}</span>
           </span>
+        </div>
+      )}
+      {/* US-039 验证码横幅：与通知横幅共用横幅位（互斥渲染，通知优先级高——通知横幅在显示时本组件不渲染）。点击 = 复制验证码；Esc = 关闭 */}
+      {codeBanner !== null && !expanded && banner === null && (
+        <div
+          className="collapsed-banner code-banner"
+          key={codeBanner} // 码变化时重挂重播动画
+          role="button"
+          tabIndex={0}
+          title={codeCopied ? '已复制到剪贴板' : '点击复制验证码'}
+          aria-label={`验证码 ${codeBanner}，点击复制`}
+          onClick={copyCodeBanner}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') copyCodeBanner()
+            if (e.key === 'Escape') closeCodeBanner()
+          }}
+        >
+          <span className="banner-code-badge" aria-hidden="true">验证码</span>
+          <span className="banner-code-text">{codeBanner}</span>
+          {codeCopied && <span className="banner-code-copied" aria-hidden="true">已复制</span>}
         </div>
       )}
     </div>

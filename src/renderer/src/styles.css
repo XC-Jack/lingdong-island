@@ -159,6 +159,36 @@ body {
   }
 }
 
+/* US-039 验证码横幅：紫色徽章区分通知横幅 */
+.code-banner {
+  border-color: rgba(139, 92, 246, 0.45);
+  gap: 10px;
+}
+
+.banner-code-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.28);
+  color: #c4b5fd;
+}
+
+.banner-code-text {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #fafafa;
+}
+
+.banner-code-copied {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: #86efac;
+}
+
 /* 右上角未读计数徽标 */
 .banner-count {
   position: absolute;

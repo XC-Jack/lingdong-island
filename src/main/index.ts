@@ -8,6 +8,7 @@ import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
+import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
@@ -228,6 +229,7 @@ app.whenReady().then(() => {
   setupScheduleStore()
   setupExportStore()
   setupPrefsStore()
+  initClipboardWatch()
   createWindow()
   createTray()
 

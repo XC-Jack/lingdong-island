@@ -197,6 +197,14 @@ const api = {
   setBannerVisible(visible: boolean): void {
     ipcRenderer.send('island:set-banner-visible', visible)
   },
+  /** US-039 验证码横幅：主进程剪贴板轮询识别到验证码时推送码字符串 */
+  onCodeArrived(cb: (code: string) => void): void {
+    ipcRenderer.on('island:code-arrived', (_e, code: string) => cb(code))
+  },
+  /** US-039 点击验证码横幅 → 复制验证码到剪贴板（渲染层 clipboard 已弃用，走主进程） */
+  clipboardWriteText(text: string): Promise<boolean> {
+    return ipcRenderer.invoke('clipboard:write-text', text)
+  },
   /** 日程：列 / 增（文本 + 可选 'HH:mm' + 可选 'YYYY-MM-DD'）/ 勾选切换 / 删，全部返回最新全量列表 */
   scheduleList(): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:list')
