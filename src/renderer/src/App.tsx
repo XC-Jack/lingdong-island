@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -1842,6 +1842,8 @@ export default function App(): React.JSX.Element {
   const expandedRef = useRef(false)
   expandedRef.current = expanded
   const collapseTimer = useRef<number | null>(null)
+  /** US-041：避让回调要调 clearCollapseTimer，但那函数声明在后——用 ref 桥接 */
+  const clearCollapseTimerRef = useRef<(() => void) | null>(null)
   const islandRef = useRef<HTMLDivElement | null>(null)
   // 一次拖动只处理一次 dragEnter 的去重标记（dragleave/drop 时复位）
   const dragActive = useRef(false)
@@ -1905,11 +1907,13 @@ export default function App(): React.JSX.Element {
     bannerCountRef.current += 1 // 横幅期内每条 +1；收回时清零
     setBanner({ item, count: bannerCountRef.current })
     window.island.setBannerVisible(true) // 收起窗口只有胶囊高，横幅期主进程加高窗口（否则渲染在窗口外看不见）
+    announceBannerHold(true) // US-041 横幅优先：正在全屏避让时临时现身
     bannerTimer.current = window.setTimeout(() => {
       setBanner(null)
       bannerCountRef.current = 0
       bannerTimer.current = null
       window.island.setBannerVisible(false)
+      announceBannerHold(false)
     }, 5000)
   }
 
@@ -1922,6 +1926,7 @@ export default function App(): React.JSX.Element {
     bannerCountRef.current = 0
     bannerTimer.current = null
     window.island.setBannerVisible(false)
+    announceBannerHold(false)
   }
 
   // 展开态切回收起态：若有展开期间错过的消息，补弹横幅（带累计条数）
@@ -1951,11 +1956,13 @@ export default function App(): React.JSX.Element {
     setCodeBanner(code)
     setCodeCopied(false)
     window.island.setBannerVisible(true)
+    announceBannerHold(true) // US-041 横幅优先
     codeBannerTimer.current = window.setTimeout(() => {
       setCodeBanner(null)
       setCodeCopied(false)
       codeBannerTimer.current = null
       window.island.setBannerVisible(false)
+      announceBannerHold(false)
     }, 8000)
   }
   /** 点击验证码横幅 → 复制验证码到剪贴板，横幅提示「已复制」并照常 8s 计时收回 */
@@ -1971,6 +1978,7 @@ export default function App(): React.JSX.Element {
     setCodeCopied(false)
     codeBannerTimer.current = null
     window.island.setBannerVisible(false)
+    announceBannerHold(false)
   }
 
   // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
@@ -2014,6 +2022,29 @@ export default function App(): React.JSX.Element {
     window.island?.setExpanded(expanded)
   }, [expanded])
 
+  // US-041 全屏避让：主进程隐藏/恢复岛时，渲染层同步收起面板（恢复后回收起态，
+  // 不做展开记忆——SPEC 明确）并保证横幅计时器不悬挂（隐藏中横幅 DOM 不可见但 timer 还在跑）。
+  const [avoidHidden, setAvoidHidden] = useState(false)
+  useEffect(() => {
+    window.island.onAvoidChanged((hidden: boolean) => {
+      setAvoidHidden(hidden)
+      if (hidden) {
+        if (expandedRef.current) {
+          setExpanded(false)
+          expandedRef.current = false
+        }
+        // 清掉展开态自动收起计时器（隐藏期间没有意义）
+        clearCollapseTimerRef.current?.()
+      }
+    })
+  }, [])
+
+  // US-041 横幅优先：通知/验证码横幅弹出时让主进程临时现身（即使正在避让）；
+  // 横幅结束后回传 false，主进程按当前全屏状态决定回隐或常驻。
+  const announceBannerHold = (on: boolean): void => {
+    window.island.requestTempShow(on)
+  }
+
   // 点了桌面/其他程序（窗口失焦）→ 立即收回。
   // 坑（历史）：中文输入法的候选窗不会夺走主窗口焦点（微软拼音等 TSF 输入法不触发 window blur，
   // US-036 诊断日志实锤：打字收岛发生时窗口 hasFocus=true、无 blur），所以 blur 路径
@@ -2033,6 +2064,7 @@ export default function App(): React.JSX.Element {
       collapseTimer.current = null
     }
   }, [])
+  clearCollapseTimerRef.current = clearCollapseTimer
 
   const scheduleCollapse = useCallback(() => {
     clearCollapseTimer()
@@ -2220,7 +2252,15 @@ export default function App(): React.JSX.Element {
         className={`island ${expanded ? 'expanded' : 'collapsed'}`}
         ref={islandRef}
         onMouseEnter={onEnter}
-        onMouseLeave={onLeave}
+        // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
+        // React DOM 事件没有原生 mouseleave 的 relatedTarget 语义（crossing 出窗口时
+        // relatedTarget=null），这里合并原 onLeave 与 edgeLeave 上报。
+        onMouseLeave={(e) => {
+          onLeave()
+          if (e.nativeEvent.relatedTarget === null && !expandedRef.current) {
+            window.island.edgeLeave()
+          }
+        }}
         onDragEnter={onDragEnter}
         onDragLeave={onDragLeaveRoot}
         onDragOver={onDragOverRoot}
@@ -2252,7 +2292,10 @@ export default function App(): React.JSX.Element {
           }
         }}
       >
-        {expanded ? (
+        {avoidHidden && !expanded && (
+          /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
+          <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
+        )}        {expanded ? (
           <>
             <div className="panel-head">
               <span className={`panel-badge ${page === 4 ? 'accent' : ''}`} style={{ ['--accent' as never]: '#9aa0a6' }}>
@@ -2510,3 +2553,5 @@ export default function App(): React.JSX.Element {
     </div>
   )
 }
+
+

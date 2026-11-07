@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
@@ -38,6 +39,8 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let expanded = false
 let tweenTimer: NodeJS.Timeout | null = null
+/** US-041 手动隐藏标志（菜单文案切换用；真实状态机在 fullscreenWatch.ts） */
+let manualHide = false
 
 /**
  * 真正退出应用（US-034）。
@@ -47,14 +50,21 @@ let tweenTimer: NodeJS.Timeout | null = null
 function quitApp(): void {
   stopNotifyStore()
   stopScheduleStore()
+  stopFullscreenWatch()
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 页面管理（US-032）+ 退出 */
+/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 页面管理（US-032）+ 手动隐藏（US-041）+ 退出 */
 function buildAppMenu(): Menu {
+  // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
+  const hiddenByUser = manualHide
   return Menu.buildFromTemplate([
     { label: '页面管理…', click: () => openPageManager() },
     { label: '导出数据…', click: () => void exportData() },
+    { type: 'separator' },
+    hiddenByUser
+      ? { label: '显示灵动岛', click: () => mainWindow?.webContents.send('noop') /* 占位 */ }
+      : { label: '暂时隐藏灵动岛', click: () => mainWindow?.webContents.send('island:avoid-do-hide') },
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
@@ -91,8 +101,13 @@ function createTray(): void {
   tray = new Tray(image)
   tray.setToolTip('灵动岛')
   tray.setContextMenu(buildAppMenu())
-  // 左键单击：把岛显示出来（切屏/被别的窗口挡住时的找回路径）
+  // 左键单击：把岛显示出来（切屏/被别的窗口挡住时的找回路径；
+  // US-041 手动隐藏时也是找回入口，清手动标志）
   tray.on('click', () => {
+    if (manualHide) {
+      manualHide = false
+      mainWindow?.webContents.send('island:manual-restore')
+    }
     if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow()
       return
@@ -232,6 +247,19 @@ app.whenReady().then(() => {
   initClipboardWatch()
   createWindow()
   createTray()
+  // US-041 全屏自动避让：检测子进程 + 状态机 + 感应窗
+  initFullscreenWatch(
+    () => mainWindow,
+    (hidden) => {
+      // 状态落地时同步菜单用的标志（自动避让不改 manualHide；仅渲染层菜单发起的手动隐藏改）
+      if (!hidden) manualHide = false
+      mainWindow?.webContents.send('island:avoid-changed', hidden)
+    }
+  )
+  // 渲染层菜单发起的手动隐藏：置标志再走状态机（真正 hide 在 fullscreenWatch）
+  ipcMain.on('island:manual-hide', () => {
+    manualHide = true
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -342,6 +370,13 @@ ipcMain.on('app:show-menu', () => {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
   buildAppMenu().popup({ window: win })
+})
+
+// US-041 手动隐藏的第二段：菜单点击 → 渲染层转发 → 主进程状态机真正 hide。
+// 拆两段是因为 buildAppMenu 在渲染层右键时也要弹（岛可见，走 island:manual-hide→fullscreenWatch），
+// 托盘右键时岛可能已隐藏（走 island:avoid-do-hide → 同一状态机）。
+ipcMain.on('island:avoid-do-hide', () => {
+  manualHide = true
 })
 
 // 渲染层直接请求退出（目前菜单点击走主进程自己的 quitApp，这里留给以后做「确认后退出」）

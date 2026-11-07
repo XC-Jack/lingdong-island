@@ -1,4 +1,4 @@
-/**
+﻿/**
  * e2e：通知应用图标 + 新消息到岛横幅。
  *
  * 场景：
@@ -103,7 +103,7 @@ async function startApp() {
 
 async function stopApp(child) {
   if (!child || child.exitCode !== null) return
-  execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' })
+  try { execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' }) } catch { /* 进程树可能已退出 */ }
   await sleep(800)
 }
 
@@ -219,3 +219,4 @@ main().catch((e) => {
   console.error('E2E ERROR', e)
   process.exit(1)
 })
+
