@@ -75,3 +75,13 @@
 - 回归：e2e-notify-icon 8 项 / e2e-notify-clear 7 项 / e2e-wifi 5 项 / e2e-collapsed-todo 6 项全 PASS [实测]。
 - 重新打包安装（app.asar 2026-11-06 20:58）→ 4 进程存活。
 - **仍未验证**：安装版收起态等一条真实第三方通知看横幅（复现验证都在 dev 版做的，安装版链路相同但留用户日常观察）。
+
+### 三轮修复：横幅渲染在窗口外不可见（2026-11-07，提交 faaa065）
+
+用户安装版实测（QQ 真实消息 order 1641 已入库且应触发）两次反馈「还是没有弹出」。
+
+- **根因（实锤）**：收起态窗口高仅 42px（`src/main/index.ts` COLLAPSED_HEIGHT），横幅 CSS `bottom:calc(100%+6px)` 渲染在窗口上沿之外 6px——窗口外内容屏幕上不可见。此前所有「复现成功」是假阳性：CDP 只验证了 .collapsed-banner 的 DOM 存在与出现/消失时间，没验证屏幕可见性（窗口 bounds）。教训：**窗口外定位元素必须验证窗口 bounds，DOM 存在≠可见**。
+- **修复**：横幅显示期间主进程把窗口向上加高 BANNER_EXTRA=46（y 上移、胶囊位置不变），隐藏时反向还原；渲染层 showBanner/5s 收回时经新 IPC `island:set-banner-visible` 通知主进程；横幅 CSS 改 `top:6px` 贴加高后窗口顶。踩坑：还原方向第一版写反（dy/dh 用 next 条件取 0），窗口停在 91 高，已修——还原时 getBounds 已是加高后的，必须 +46/-46。
+- 安装版 CDP 验证 [实测]（app.asar 10:33，端口 9322）：收起态发真实 toast → 3.3s 横幅出现，innerHeight 43→90，横幅 rect top=12 在窗口内（真实可见）→ 5.0s 收回 → 还原 44（42+2 边框误差）。补弹路径（展开→toast→35s 不弹→Esc 收起→补弹 34ms，补弹期 196→5s 后还原 38）✅。
+- e2e-notify-icon 首跑 I2b 失败原因：lingdong-island 图标路径在 app.asar 内，普通 node 的 fs 读不了 asar（Electron 扩展只在 Electron 进程内生效）——e2e 改为跳过 asar 内路径检查，复跑 8/8 PASS；回归 wifi/collapsed-todo/schedule/todo-today 全 PASS [实测]。
+- **未验证**：用户日常真实第三方通知的肉眼体验（本机验证用的也是真实 WinRT toast，但留用户实机确认）。
