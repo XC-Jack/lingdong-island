@@ -16,7 +16,7 @@ import { appIcon, initIconCache } from './notifyIconStore'
 const WPN_DIR = join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'Windows', 'Notifications')
 const WPN_DB = join(WPN_DIR, 'wpndatabase.db')
 const POLL_MS = 30_000 // 兜底轮询（防 watcher 漏事件）；实时性由 wpndatabase 文件监听保证
-const DEBOUNCE_MS = 800 // 文件监听触发后的去抖：等系统写完 db/wal 再读
+const DEBOUNCE_MS = 400 // 文件监听触发后的去抖：等系统写完 db/wal 再读（读失败已无害：保留旧列表等下轮）
 const MAX_ITEMS = 50
 
 interface NotifyItem {
@@ -81,7 +81,7 @@ function appShortName(aumid: string): string {
   return last || aumid
 }
 
-function readWpnDatabase(): NotifyItem[] {
+function readWpnDatabase(): NotifyItem[] | null {
   if (!existsSync(WPN_DB)) return []
   const stamp = `${process.pid}-${Date.now()}-${tmpSeq++}`
   const tmpDb = join(app.getPath('temp'), `wpn-copy-${stamp}.db`)
@@ -127,7 +127,7 @@ function readWpnDatabase(): NotifyItem[] {
       db.close()
     }
   } catch {
-    return [] // 任何读失败都当"暂无通知"，绝不冒数据
+    return null // 读失败（系统正写/快照不一致）返回 null，refresh 保留旧列表
   } finally {
     for (const p of [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`]) {
       try {
@@ -142,7 +142,13 @@ function readWpnDatabase(): NotifyItem[] {
 async function refresh(): Promise<NotifyItem[]> {
   // node:sqlite 是同步 API；复制+查询都在毫秒级，放同步即可，但保持接口 async 备扩展
   const prev = cached
-  cached = readWpnDatabase()
+  const fresh = readWpnDatabase()
+  if (fresh === null) {
+    // 读库失败（多为系统正写、快照不一致）：保留旧列表，跳过本轮，绝不清空——
+    // 否则下一轮会把历史全当「启动首轮」记 bannerSent，新消息的横幅就永远丢了
+    return cached
+  }
+  cached = fresh
 
   // 新消息到岛横幅：找出本轮新增（之前不在 cached 里）且未读未隐藏的通知，
   // 逐条推给渲染层（收起态才显示横幅，展开态渲染层自己忽略）。
