@@ -8,6 +8,8 @@ interface NotifyItem {
   id: number
   order: number
   app: string
+  /** 应用图标 PNG 绝对路径（file:// 显示）；解析失败为 null（退回应用名文字徽标） */
+  icon: string | null
   title: string
   body: string
   arrival: number
@@ -1058,6 +1060,11 @@ function ShelfPanel(): React.JSX.Element {
   )
 }
 
+/** Windows 绝对路径 → file:// URL（与置物架图标同款转换） */
+function iconUrl(p: string): string {
+  return `file:///${p.replace(/\\/g, '/')}`
+}
+
 /** 相对时间：刚刚 / n 分钟前 / n 小时前 / 昨天 / 具体日期 */
 function fmtRel(ms: number): string {
   if (!ms) return ''
@@ -1168,10 +1175,22 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
         <ul className="notify-list">
           {items.map((it) => (
             <li key={it.id} className="notify-item">
-              <button type="button" className="notify-body" title="点击打开来源应用" onClick={() => openOne(it)}>
-                <span className="notify-app">{it.app}</span>
-                <span className="notify-title">{it.title}</span>
-                {it.body && <span className="notify-text">{it.body}</span>}
+              <button
+                type="button"
+                className={`notify-body ${it.icon ? 'has-icon' : ''}`}
+                title="点击打开来源应用"
+                onClick={() => openOne(it)}
+              >
+                {/* 应用图标（US 通知图标）：解析成功显示小方块，失败退回应用名文字徽标 */}
+                {it.icon ? (
+                  <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
+                ) : (
+                  <span className="notify-app">{it.app}</span>
+                )}
+                <span className="notify-main">
+                  <span className="notify-title">{it.title}</span>
+                  {it.body && <span className="notify-text">{it.body}</span>}
+                </span>
               </button>
               <span className="notify-time">{fmtRel(it.arrival)}</span>
             </li>
@@ -1680,6 +1699,10 @@ export default function App(): React.JSX.Element {
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
   const [notifyUnread, setNotifyUnread] = useState(0)
+  // 新消息到岛横幅（参考苹果灵动岛）：收起态弹「图标+应用名+标题」，5 秒后收回；
+  // 展开态忽略（用户正在看通知页）。后到覆盖先到（多条并发只显示最新一条）。
+  const [banner, setBanner] = useState<NotifyItem | null>(null)
+  const bannerTimer = useRef<number | null>(null)
   const hoverRef = useRef(false)
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
@@ -1722,6 +1745,40 @@ export default function App(): React.JSX.Element {
     const id = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(id)
   }, [])
+
+  // 新消息横幅：主进程轮询发现新通知时推送。
+  // 展开态不立即弹（用户正看着通知页），暂存 pendingBanner，收起瞬间补弹——
+  // 否则展开期间错过的消息会被主进程记入 bannerSent，收起后永远看不到横幅。
+  const pendingBanner = useRef<NotifyItem | null>(null)
+  useEffect(() => {
+    window.island.onNotifyArrived((item: NotifyItem) => {
+      if (expandedRef.current) {
+        pendingBanner.current = item // 最新一条覆盖旧的
+        return
+      }
+      showBanner(item)
+    })
+  }, [])
+
+  const showBanner = (item: NotifyItem): void => {
+    if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
+    setBanner(item)
+    window.island.setBannerVisible(true) // 收起窗口只有胶囊高，横幅期主进程加高窗口（否则渲染在窗口外看不见）
+    bannerTimer.current = window.setTimeout(() => {
+      setBanner(null)
+      bannerTimer.current = null
+      window.island.setBannerVisible(false)
+    }, 5000)
+  }
+
+  // 展开态切回收起态：若有展开期间错过的消息，补弹横幅
+  useEffect(() => {
+    if (!expanded && pendingBanner.current !== null) {
+      const item = pendingBanner.current
+      pendingBanner.current = null
+      showBanner(item)
+    }
+  }, [expanded])
 
   // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
   useEffect(() => {
@@ -2204,6 +2261,25 @@ export default function App(): React.JSX.Element {
           </>
         )}
       </div>
+      {/* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正下方，5 秒后收回。
+          必须挂在 .app 层（island 的兄弟节点）而不是 island 内——island 有 overflow:hidden
+          （圆角裁内容），横幅 top 超出胶囊下边界会被整个裁掉，屏幕上一个像素都不画
+          （六轮排障最终根因：CDP 查得到 DOM 和 rect，但渲染被裁）。 */}
+      {banner !== null && !expanded && (
+        <div className="collapsed-banner" role="status" aria-label={`新消息：${banner.app} ${banner.title}`}>
+          {banner.icon ? (
+            <img className="banner-icon" src={iconUrl(banner.icon)} alt="" aria-hidden="true" />
+          ) : (
+            <span className="banner-icon banner-icon-fallback" aria-hidden="true">
+              {banner.app.slice(0, 1)}
+            </span>
+          )}
+          <span className="banner-text">
+            <span className="banner-app">{banner.app}</span>
+            <span className="banner-title">{banner.title}</span>
+          </span>
+        </div>
+      )}
     </div>
   )
 }

@@ -30,6 +30,9 @@ body {
   display: flex;
   align-items: flex-start;
   justify-content: center;
+  /* 横幅锚点：.collapsed-banner 挂在 .app 下（island 的兄弟节点），相对整个窗口定位
+     （不能挂 island 内——island overflow:hidden 会把超出胶囊边界的横幅整个裁掉） */
+  position: relative;
 }
 
 .island {
@@ -74,6 +77,8 @@ body {
   padding: 0 16px;
   gap: 10px;
   cursor: default;
+  /* 横幅锚点：.collapsed-banner 相对本岛定位（覆盖在胶囊上方弹出） */
+  position: relative;
 }
 
 .island.expanded {
@@ -92,6 +97,80 @@ body {
 }
 
 /* ---------- 收起态 ---------- */
+
+/* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正下方，弹出/收回动画。
+   参考苹果灵动岛：胶囊向下「鼓出」一小条再收回。
+   位置换算：横幅相对 .app（position:relative，全窗口）定位。
+   收起窗口常驻高 88（主进程 COLLAPSED_WIN_HEIGHT）：胶囊 42 在窗口顶（flex-start），
+   top:48px = 胶囊下沿(42) + 6px 间隙，横幅 43px 高落在 48~91（窗口 88 内放得下主体）。
+   （不能放胶囊上方：岛贴屏幕顶 TOP_GAP=6，上方屏幕空间不足——第五轮截图实锤）
+   （不能挂 .island 内：island overflow:hidden 会把超出胶囊的横幅整个裁掉——六轮排障最终根因） */
+.collapsed-banner {
+  position: absolute;
+  left: 50%;
+  top: 48px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 300px;
+  padding: 7px 12px;
+  border-radius: 16px;
+  background: rgba(9, 9, 11, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+  animation: banner-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes banner-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.banner-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 图标解析失败：应用名首字占位（与列表文字徽标同思路） */
+.banner-icon-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9f8bff;
+}
+
+.banner-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.banner-app {
+  font-size: 10px;
+  color: #9f8bff;
+}
+
+.banner-title {
+  font-size: 12px;
+  color: #f2f3f5;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .collapsed-clock {
   font-size: 15px;
@@ -1545,6 +1624,24 @@ body {
   cursor: pointer;
 }
 
+/* 应用图标（US 通知图标）：列表条目左侧小方块，替代原「应用名」文字徽标的位置 */
+.notify-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* 图标 + 文案横排时，文案列纵向排（title/text 上下叠） */
+.notify-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .notify-app {
   font-size: 10.5px;
   color: #9f8bff;
@@ -1573,6 +1670,13 @@ body {
   color: rgba(242, 243, 245, 0.38);
   font-variant-numeric: tabular-nums;
   padding-top: 2px;
+}
+
+/* 图标横排时 notify-body 要改成行布局（图标左、文案右） */
+.notify-body.has-icon {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .shelf-actions {

@@ -10,8 +10,14 @@ import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
-/** 收起态高度（CSS 逻辑像素）；宽度由渲染层按内容量出后经 IPC 下发 */
-const COLLAPSED_HEIGHT = 42
+/**
+ * 收起态窗口总高：胶囊 42（渲染层 .island.collapsed 的固定高）+ 下方横幅预留区 46。
+ * 横幅（新消息到岛提示）显示在胶囊正下方的预留区，平时空置为透明。
+ * 为什么常驻而不是横幅期临时加高：动态 setBounds 加高后，透明窗口新区域在 Windows 上
+ * 可能不被合成器画出（实机截屏五轮验证：横幅 DOM/窗口尺寸全对但屏幕无像素）。
+ * 常驻透明区靠 Windows 透明窗口 per-pixel 命中测试：透明像素点击自动穿透到下层窗口。
+ */
+const COLLAPSED_WIN_HEIGHT = 88
 /** 收起态宽度上下限（防过窄/过宽） */
 const COLLAPSED_MIN_W = 150
 const COLLAPSED_MAX_W = 320
@@ -99,7 +105,7 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
   const { workArea } = screen.getPrimaryDisplay()
   const size = isExpanded
     ? expandedSize
-    : { width: collapsedWidth, height: COLLAPSED_HEIGHT }
+    : { width: collapsedWidth, height: COLLAPSED_WIN_HEIGHT }
   return {
     x: Math.round(workArea.x + (workArea.width - size.width) / 2),
     y: workArea.y + TOP_GAP,
@@ -274,6 +280,14 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
     mainWindow.setBounds(computeBounds(false))
   }
 })
+
+// 收起态窗口高 42px 只装得下胶囊；横幅需要 46px 额外空间。
+// **关键约束（第五轮截图实锤）**：岛贴屏幕顶（TOP_GAP=6），胶囊上方屏幕只剩 ~12px——
+// （历史）横幅期动态加高方案已废弃：实机截屏五轮验证，动态 setBounds 后透明窗口新增区域
+// 在 Windows 上不被合成器画出——横幅 DOM/尺寸/可见性全对但屏幕无像素。
+// 现方案：收起窗口常驻 COLLAPSED_WIN_HEIGHT（胶囊+横幅预留区），横幅显示不需要主进程配合，
+// set-banner-visible IPC 保留为空操作（渲染层调用点不删，避免改三处）。
+ipcMain.on('island:set-banner-visible', () => {})
 
 // 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）
 ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
