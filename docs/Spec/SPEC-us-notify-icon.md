@@ -85,3 +85,13 @@
 - 安装版 CDP 验证 [实测]（app.asar 10:33，端口 9322）：收起态发真实 toast → 3.3s 横幅出现，innerHeight 43→90，横幅 rect top=12 在窗口内（真实可见）→ 5.0s 收回 → 还原 44（42+2 边框误差）。补弹路径（展开→toast→35s 不弹→Esc 收起→补弹 34ms，补弹期 196→5s 后还原 38）✅。
 - e2e-notify-icon 首跑 I2b 失败原因：lingdong-island 图标路径在 app.asar 内，普通 node 的 fs 读不了 asar（Electron 扩展只在 Electron 进程内生效）——e2e 改为跳过 asar 内路径检查，复跑 8/8 PASS；回归 wifi/collapsed-todo/schedule/todo-today 全 PASS [实测]。
 - **未验证**：用户日常真实第三方通知的肉眼体验（本机验证用的也是真实 WinRT toast，但留用户实机确认）。
+
+### 四轮修复：横幅期胶囊跟着窗口上移（2026-11-07 10:51–10:57，提交 b21659f）
+
+用户第二轮实机（10:41 QQ 消息）反馈「没弹」+「岛消失几秒又出现」。
+
+- 「岛消失又出现」实锤：三轮修复的向上加高方案里，胶囊渲染贴窗口顶（.app flex-start），窗口向上加高 46px 时**胶囊跟着窗口顶上移 46px**——用户看到的「胶囊消失」就是胶囊跳走，收回又还原。
+- 修复：`.app` 改 `align-items:flex-end`——加高后窗口底=原窗口底（y-46, h+46），胶囊贴底位置纹丝不动；窗口顶 46px 成为横幅预留区。中途试过「向下加高」方案（胶囊不动但横幅仍在窗口外，实测横幅 rect top=-49 被裁），否决。
+- **屏幕级验证**（Win32 GetWindowRect + CDP 双取证，[实测]）：静止窗口 T=6/H=46、屏幕胶囊 top=11.2；横幅期 T=-40/H=94、屏幕胶囊 top=12.4（1.2px 动画误差，不动）；横幅渲染 rect 屏幕坐标 -35.9~7.2，完整落在窗口内（窗口顶-40）且在胶囊上方；收回 T=6/H=48 完全还原。
+- 安装版 10:56 打包安装，4 进程存活。回归：e2e-wifi / collapsed-todo / schedule / todo-today / notify-icon 8 项全 PASS [实测]。
+- 排障教训沉淀：①CSS absolute 定位必须先确认包含块（横幅 bottom:48px 一版量出 top=-49 就是因为把它当窗口定位、实际包含块是 .island）②「DOM 存在≠屏幕可见」的验证要量窗口 bounds（Win32 GetWindowRect 最直接）③PowerShell 脚本文件中文内容必须 UTF-8 带 BOM，否则 PS5 按 ANSI 读乱码。
