@@ -1683,6 +1683,67 @@ body {
   background: rgba(140, 110, 255, 0.12);
 }
 
+/* ===== 两级堆叠（US-040）===== */
+/* 组条目图标 + 右上角计数徽标 */
+.notify-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+.notify-badge {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #8b5cf6;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+.notify-badge-inline {
+  position: static;
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.notify-more-hint {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+  margin-left: 4px;
+}
+/* 二级/三级缩进：会话子组与具体条目列表挂在 li 内 */
+.notify-sublist {
+  list-style: none;
+  margin: 2px 0 2px 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: calc(100% - 14px);
+}
+.notify-thread > .notify-body {
+  padding-left: 10px;
+}
+.notify-leaf > .notify-body {
+  padding-left: 22px;
+}
+/* li 是 flex 容器，按钮需伸开占满 */
+.notify-group > .notify-body,
+.notify-thread > .notify-body,
+.notify-leaf > .notify-body {
+  flex: 1;
+  min-width: 0;
+}
+.notify-sublist .notify-item {
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .notify-body {
   flex: 1;
   min-width: 0;
