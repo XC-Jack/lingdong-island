@@ -1763,9 +1763,11 @@ export default function App(): React.JSX.Element {
   const showBanner = (item: NotifyItem): void => {
     if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
     setBanner(item)
+    window.island.setBannerVisible(true) // 收起窗口只有胶囊高，横幅期主进程加高窗口（否则渲染在窗口外看不见）
     bannerTimer.current = window.setTimeout(() => {
       setBanner(null)
       bannerTimer.current = null
+      window.island.setBannerVisible(false)
     }, 5000)
   }
 

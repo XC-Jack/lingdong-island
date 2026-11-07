@@ -191,6 +191,10 @@ const api = {
   onNotifyArrived(cb: (item: NotifyItem) => void): void {
     ipcRenderer.on('island:notify-arrived', (_e, item: NotifyItem) => cb(item))
   },
+  /** 横幅显示/隐藏时通知主进程：收起态窗口只有胶囊高，横幅期主进程向上加高窗口，否则横幅渲染在窗口外看不见 */
+  setBannerVisible(visible: boolean): void {
+    ipcRenderer.send('island:set-banner-visible', visible)
+  },
   /** 日程：列 / 增（文本 + 可选 'HH:mm' + 可选 'YYYY-MM-DD'）/ 勾选切换 / 删，全部返回最新全量列表 */
   scheduleList(): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:list')

@@ -148,8 +148,10 @@ async function main() {
       uwp === undefined || (typeof uwp.icon === 'string' && existsSync(uwp.icon)),
       uwp ? String(uwp.icon) : '(本机无 ScreenSketch 通知，跳过判定)',
     )
-    // icon 文件存在性（对每条有图标的）
-    const allExist = withIcon.every((i) => existsSync(i.icon))
+    // icon 文件存在性（对每条有图标的）。
+    // asar 内路径（如 lingdong-island → app.asar\build\icon.png）在普通 node 里 fs 读不了
+    // （Electron 的 asar 扩展只在 Electron 进程内生效），文件真实性由打包保证，跳过 fs 检查
+    const allExist = withIcon.every((i) => i.icon.includes('app.asar') || existsSync(i.icon))
     ok('I2b 所有 icon 文件存在', allExist, `${withIcon.length} 个文件`)
     // 缓存落盘检查（UWP 应用解析成功后必然拷贝进缓存）
     const uwpCacheOk = uwp === undefined || existsSync(join(ICON_DIR, `notify-${uwp.app}.png`))

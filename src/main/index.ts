@@ -275,6 +275,24 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   }
 })
 
+// 收起态窗口高 42px 只装得下胶囊；横幅 absolute 在胶囊上方 6px 处——窗口外渲染了也看不见
+// （用户实机反馈「横幅不弹」的根因）。横幅显示期间窗口向上加高 BANNER_EXTRA，消失时还原；
+// y 同步上移让胶囊位置不变。展开态由 computeBounds(true) 主导，无需处理。
+const BANNER_EXTRA = 46
+let bannerVisible = false
+
+ipcMain.on('island:set-banner-visible', (_event, value: unknown) => {
+  const next = value === true
+  if (next === bannerVisible) return
+  bannerVisible = next
+  if (expanded || !mainWindow || mainWindow.isDestroyed()) return
+  const b = mainWindow.getBounds()
+  // 显示：向上加高（y 上移、高增加）；隐藏：反向还原（此时 bounds 是加高后的）
+  const dy = next ? -BANNER_EXTRA : BANNER_EXTRA
+  const dh = next ? BANNER_EXTRA : -BANNER_EXTRA
+  mainWindow.setBounds({ x: b.x, y: b.y + dy, width: b.width, height: b.height + dh })
+})
+
 // 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）
 ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
   const nw = Number(w)

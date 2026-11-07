@@ -96,11 +96,13 @@ body {
 /* ---------- 收起态 ---------- */
 
 /* 新消息到岛横幅（US 通知图标故事）：覆盖在胶囊正上方，弹出/收回动画。
-   参考苹果灵动岛：胶囊向上「鼓出」一小条再收回 */
+   参考苹果灵动岛：胶囊向上「鼓出」一小条再收回。
+   位置换算：主进程横幅期把窗口向上加高 BANNER_EXTRA=46（y 上移，胶囊位置不变），
+   窗口顶=原窗口顶上方 46px；横幅贴窗口顶（top:6px）即胶囊上沿上方 6px */
 .collapsed-banner {
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 6px);
+  top: 6px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
