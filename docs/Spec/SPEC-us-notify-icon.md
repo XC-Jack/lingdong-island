@@ -95,3 +95,15 @@
 - **屏幕级验证**（Win32 GetWindowRect + CDP 双取证，[实测]）：静止窗口 T=6/H=46、屏幕胶囊 top=11.2；横幅期 T=-40/H=94、屏幕胶囊 top=12.4（1.2px 动画误差，不动）；横幅渲染 rect 屏幕坐标 -35.9~7.2，完整落在窗口内（窗口顶-40）且在胶囊上方；收回 T=6/H=48 完全还原。
 - 安装版 10:56 打包安装，4 进程存活。回归：e2e-wifi / collapsed-todo / schedule / todo-today / notify-icon 8 项全 PASS [实测]。
 - 排障教训沉淀：①CSS absolute 定位必须先确认包含块（横幅 bottom:48px 一版量出 top=-49 就是因为把它当窗口定位、实际包含块是 .island）②「DOM 存在≠屏幕可见」的验证要量窗口 bounds（Win32 GetWindowRect 最直接）③PowerShell 脚本文件中文内容必须 UTF-8 带 BOM，否则 PS5 按 ANSI 读乱码。
+
+### 五、六轮修复：overflow:hidden 裁剪——六轮排障的真正根因（2026-11-07 11:00–11:40，提交 810bd98）
+
+用户第三轮实机（11:03 连发三条通知）仍反馈「没看到」。
+
+- **五轮排查（截图取证）**：CDP 端到端诊断全绿（banner=true、rect/visibility/opacity 全对），但全屏截屏横幅区**无像素**——胶囊可见、岛是唯一 topmost，排除遮挡；岛移到屏幕中央空白处依然无像素，排除环境。中途误诊为「动态 setBounds 加高后 transparent 窗口新增区域不被合成器画出」。
+- **六轮方案（常驻窗口）**：收起窗口常驻高 88（胶囊 42+横幅区 46，`COLLAPSED_WIN_HEIGHT`），删掉动态加高整套逻辑（`island:set-banner-visible` 留空操作）。装机后横幅**依然不显示**——推翻动态 resize 假设。
+- **真正根因（PrintWindow + CDP 双确认实锤）**：横幅 JSX 挂在 `.island` **内部**（收起分支末尾），而 `.island { overflow: hidden }`（styles.css，圆角裁内容）——横幅 `top:calc(100%+6px)` 超出胶囊下边界，**被 island 自己裁掉，一个像素都不画**。CDP 的 getBoundingClientRect/visibility 查的是几何与样式，overflow 裁剪不改变这两者——所以六轮端到端诊断全部假阳性。
+- **修复（810bd98）**：①横幅 JSX 移出 `.island`，挂到 `.app` 层（island 兄弟节点，加 `!expanded` 条件）；②`.app` 加 `position:relative` 作横幅包含块，`.collapsed-banner` 改 `top:48px`（胶囊 42+间隙 6，相对全窗口）；③主进程常驻 88 高窗口保留（配合横幅区，透明区靠 Windows 透明窗口 per-pixel 命中测试点击穿透）。
+- **屏幕级验证 [实测]**（CDP 确认横幅存在瞬间 + 全屏 CopyFromScreen 同刻取证）：胶囊正下方弹出「lingdong-island + 图标 + 标题」横幅，位置正确；5s 后收回。
+- 回归 [实测]：e2e-notify-icon 8/8、notify、notify-clear 7、wifi、collapsed-todo、schedule、todo-today、pages-custom 6 全 PASS。typecheck/build PASS。打包安装（app.asar 11:36），窗口静止 H=88。
+- 排障教训补充：④overflow:hidden 裁剪与「窗口外渲染」症状相同（DOM 在、rect 对、屏幕无像素），排查时先查祖先链 overflow 再怀疑合成器；⑤PrintWindow 对分层透明窗口的 PW_RENDERFULLCONTENT 抓图不可靠（黑区=alpha 0），屏幕取证以 CopyFromScreen 为准；⑥CDP 断言「可见」必须同时验证 DOM+窗口 bounds+屏幕像素三层。
