@@ -1083,7 +1083,13 @@ function fmtRel(ms: number): string {
 }
 
 /** 通知面板：读取 Windows 通知中心历史（toast），点条目尝试打开来源应用 */
-function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX.Element {
+function NotifyPanel({
+  onUnread,
+  refreshTick,
+}: {
+  onUnread: (n: number) => void
+  refreshTick: number
+}): React.JSX.Element {
   const [items, setItems] = useState<NotifyItem[]>([])
   const [loaded, setLoaded] = useState(false)
   // 相对时间（"5 分钟前"）每 30s 重算一次，避免开着不动时间变陈旧
@@ -1095,7 +1101,7 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       onUnread(r.unread)
       setLoaded(true)
     })
-  }, [onUnread])
+  }, [onUnread, refreshTick]) // refreshTick 变化（展开期间有新消息）→ 重拉列表
 
   useEffect(() => {
     const id = window.setInterval(() => tickNow((n) => n + 1), 30_000)
@@ -1757,13 +1763,17 @@ export default function App(): React.JSX.Element {
   // 新消息横幅：主进程轮询发现新通知时推送。
   // 展开态不立即弹（用户正看着通知页），暂存 pendingBanner，收起瞬间补弹——
   // 否则展开期间错过的消息会被主进程记入 bannerSent，收起后永远看不到横幅。
+  // 展开期间同时自增 notifyRefreshTick，让挂载中的 NotifyPanel 重拉列表（否则停在通知页时
+  // 新消息要退出重进才出现——2026-11-07 用户实测反馈的 bug）。
   const pendingBanner = useRef<{ item: NotifyItem; count: number } | null>(null)
+  const [notifyRefreshTick, setNotifyRefreshTick] = useState(0)
   useEffect(() => {
     window.island.onNotifyArrived((item: NotifyItem) => {
       if (expandedRef.current) {
         // 展开期间累计条数：补弹时一次性显示总数
         if (pendingBanner.current === null) pendingBanner.current = { item, count: 1 }
         else pendingBanner.current = { item, count: pendingBanner.current.count + 1 }
+        setNotifyRefreshTick((t) => t + 1)
         return
       }
       showBanner(item)
@@ -2156,7 +2166,7 @@ export default function App(): React.JSX.Element {
                 ) : page === 1 ? (
                   <ShelfPanel />
                 ) : page === 2 ? (
-                  <NotifyPanel onUnread={onNotifyUnread} />
+                  <NotifyPanel onUnread={onNotifyUnread} refreshTick={notifyRefreshTick} />
                 ) : page === 4 ? (
                   <PageManagerPanel
                     pagesCustom={pagesCustom}
