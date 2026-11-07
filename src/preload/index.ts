@@ -205,6 +205,26 @@ const api = {
   clipboardWriteText(text: string): Promise<boolean> {
     return ipcRenderer.invoke('clipboard:write-text', text)
   },
+  /** US-041 全屏避让：主进程隐藏/恢复岛时推送（渲染层收到 hidden=true 收起面板） */
+  onAvoidChanged(cb: (hidden: boolean) => void): void {
+    ipcRenderer.on('island:avoid-changed', (_e, hidden: boolean) => cb(hidden))
+  },
+  /** US-041 手动隐藏（渲染层菜单项点击 → 状态机真正隐藏；manualHide 标志在主进程置位） */
+  manualHide(): void {
+    ipcRenderer.send('island:manual-hide')
+  },
+  /** US-041 手动隐藏后托盘唤回（托盘 click → 主进程转发给状态机） */
+  manualRestore(): void {
+    ipcRenderer.send('island:manual-restore')
+  },
+  /** US-041 横幅临时现身：通知/验证码横幅弹出时 true，收横幅时 false */
+  requestTempShow(on: boolean): void {
+    ipcRenderer.send('island:temp-show', on)
+  },
+  /** US-041 鼠标离开岛根（避让临时现身期间上报，主进程决定回隐） */
+  edgeLeave(): void {
+    ipcRenderer.send('island:edge-leave')
+  },
   /** 日程：列 / 增（文本 + 可选 'HH:mm' + 可选 'YYYY-MM-DD'）/ 勾选切换 / 删，全部返回最新全量列表 */
   scheduleList(): Promise<ScheduleItem[]> {
     return ipcRenderer.invoke('schedule:list')
