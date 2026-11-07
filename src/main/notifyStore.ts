@@ -1,6 +1,6 @@
 import { app, ipcMain, shell, BrowserWindow } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { existsSync, copyFileSync, rmSync, mkdirSync } from 'node:fs'
+import { existsSync, copyFileSync, rmSync, mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { appIcon, initIconCache } from './notifyIconStore'
@@ -15,7 +15,8 @@ import { appIcon, initIconCache } from './notifyIconStore'
 
 const WPN_DIR = join(process.env.LOCALAPPDATA ?? '', 'Microsoft', 'Windows', 'Notifications')
 const WPN_DB = join(WPN_DIR, 'wpndatabase.db')
-const POLL_MS = 30_000
+const POLL_MS = 30_000 // 兜底轮询（防 watcher 漏事件）；实时性由 wpndatabase 文件监听保证
+const DEBOUNCE_MS = 800 // 文件监听触发后的去抖：等系统写完 db/wal 再读
 const MAX_ITEMS = 50
 
 interface NotifyItem {
@@ -30,6 +31,8 @@ interface NotifyItem {
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let dbWatcher: FSWatcher | null = null
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 let cached: NotifyItem[] = []
 let tmpSeq = 0
 /** 横幅去重：已发过 island:notify-arrived 的通知 id（通知不会重复触发横幅） */
@@ -280,6 +283,7 @@ export function setupNotifyStore(): void {
   initIconCache()
   void refresh()
   pollTimer = setInterval(() => void refresh(), POLL_MS)
+  watchDatabase()
 
   ipcMain.handle('notify:list', () => ({ items: visibleItems(), unread: unreadCount() }))
   ipcMain.handle('notify:mark-read', () => {
@@ -298,5 +302,43 @@ export function stopNotifyStore(): void {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
+  }
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (dbWatcher) {
+    dbWatcher.close()
+    dbWatcher = null
+  }
+}
+
+/** 实时监听：wpndatabase.db / -wal 一有写入就（去抖后）立刻 refresh，横幅接近即时弹出。
+ *  监听失败不影响功能（还有 30s 兜底轮询）。 */
+function watchDatabase(): void {
+  try {
+    if (!existsSync(WPN_DIR)) return
+    let watching = false
+    const start = (): void => {
+      if (watching) return
+      try {
+        dbWatcher = watch(WPN_DIR, { persistent: false }, (_event, filename) => {
+          const name = typeof filename === 'string' ? filename : ''
+          // 只关心通知库本体和它的预写日志
+          if (!name.startsWith('wpndatabase')) return
+          scheduleRefresh()
+        })
+        watching = true
+      } catch {
+        /* 目录监听失败：静默退回轮询 */
+      }
+    }
+    const scheduleRefresh = (): void => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => void refresh(), DEBOUNCE_MS)
+    }
+    start()
+  } catch {
+    /* 任何监听异常都不冒错：轮询兜底 */
   }
 }
