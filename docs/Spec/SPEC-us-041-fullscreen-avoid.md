@@ -42,3 +42,28 @@
 - 不做 macOS/Linux 适配（本项目仅 Windows）。
 - 不做多显示器精修（只判主屏；感应窗只放主屏顶部）。
 - 不动通知数据层与横幅样式。
+
+## 七、自检记录（2026-11-07 开发完成）
+
+**跑了什么、结果如何**（[实测]）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `npx tsc --noEmit -p .` | PASS |
+| 构建 | `npm run build` | PASS |
+| 本故事 e2e | `node scripts/e2e-fullscreen-avoid.mjs` | **7/7 PASS**（A1~A7，含 A4 摸边唤回 / A5 移开回隐 / A6 手动隐藏+托盘恢复 / A7 横幅临时现身） |
+| 回归 | wifi / collapsed-todo / schedule / todo-today / notify / notify-icon | 全 PASS（notify-icon 8/8） |
+
+**e2e 断言口径说明**：岛可见性用 Win32 `EnumWindows(pid∈electron + class=Chrome_WidgetWin_1 + GetWindowRect 高度过滤) + IsWindowVisible` 断言，不用 CDP `document.visibilityState`——避让现身时 Chromium occlusion tracking 会把被前台全屏窗口遮挡的岛误报为 `hidden`（物理截图实锤岛在屏上而 visibilityState=hidden）。
+
+**实现与 SPEC 的差异**：
+1. 第四节定稿方案「长驻 PowerShell 子进程」改成了「每 1s 单发一次 PowerShell」（[实测] 长驻子进程会让 Electron DevTools HTTP 端口 hang 死无响应，二分定位实锤；单发模式无此问题）。
+2. 摸边唤回采用屏外衬底感应窗：Windows 对顶层窗口有最小尺寸约束（SM_CYMINTRACK），请求 4px 高被系统放大到 ~40px；窗口整体上移 36px 使屏内只露底部 4px 命中带（WindowFromPoint 实测 y=2 命中感应窗、y=20 穿透到下层全屏窗口，不遮挡全屏应用顶部交互）。
+3. 现身期间移开回隐用主进程 400ms 光标轮询（PS GetCursorPos）：岛 `showInactive` 后 Chromium 不认为光标在窗口内（不派发 mouseleave），渲染层 `onMouseLeave` 不可靠；Electron `screen.getCursorScreenPoint()` 与外部 `SetCursorPos` 读数不一致，故用 OS 层 GetCursorPos。
+4. 恢复现身用 `revealWindow()` 三连（showInactive+moveTop+setAlwaysOnTop screen-saver）：hide 过的窗口 show 后 Z 序会被重置，被全屏窗口盖住（Chrome occlusion 判定 hidden，用户看不见）。
+
+**未验证**（留用户实机验收）：
+- 真人鼠标摸边手感与灵敏度（e2e 用 SetCursorPos 模拟，非真人移动轨迹）。
+- QQ/微信/游戏等真实应用全屏场景（e2e 用 PowerShell WinForms 全屏窗模拟）。
+- 多显示器场景（SPEC 已声明不做精修）。
+- 感应窗屏内 4px 命中带对全屏应用顶部交互的长期影响（实测穿透正常）。
