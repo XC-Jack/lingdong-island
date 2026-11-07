@@ -55,3 +55,28 @@ docs/facts/本机约束与踩坑.md:52）——用户选好的视图在重启后
 - 不做 localStorage 数据迁移读回（旧值本来跨重启就丢，没有可迁移的数据）。
 - 不改视图切换的 UI 与交互。
 - 不动置物架其余功能（拖放、失效提示、排列）。
+
+## 七、自检记录（2026-11-07，分支 us-037-shelf-view-pref）
+
+跑了什么、结果如何（全部 [实测]）：
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | PASS（首跑报 setView 跨组件引用，已改到 ShelfPanel 内回填后过） |
+| `npm run build` | PASS |
+| `node scripts/e2e-shelf-view-pref.mjs`（新增，6 项） | PASS：A1 默认 lg 且不写 prefs.json / A2 选列表落盘 list / A3 重载恢复 list / A4 改 sm 落盘恢复 / A5 值改坏回落 lg 不白屏 / A6 切视图不动 pagesCustom |
+| `node scripts/e2e-exit-and-shelf-view.mjs`（改造：localStorage 断言改读 prefs.json） | PASS（A1~A5 + A6 退出真验证） |
+| 回归 e2e-pages-custom / e2e-shelf-missing / e2e-collapsed-todo / e2e-wifi | 全 PASS |
+| 打包 `npm run dist` + 静默安装到 D:\软件\灵动岛\ | app.asar 13:38:18，4 进程存活 |
+
+开发中发现并顺手处理：
+
+- e2e-exit-and-shelf-view.mjs 原断言 localStorage 落盘——新实现已不走 localStorage，脚本同步改造为断言 prefs.json（视图持久化完整断言在 e2e-shelf-view-pref.mjs）。
+- 新踩坑两条：①JS try 块里声明的 const 在 finally 里不可见（块级作用域），备份变量必须提到 try 外；②e2e 中途挂掉会把测试值残留进 prefs.json 污染后续运行——还原动作必须放 finally 且备份在进程启动时读。
+
+未验证（留用户实机验收）：
+
+- [未验证] 安装版真实点「视图菜单→列表」→ 右键退出 → 重开是否仍是列表（e2e 用 reload 模拟重启，真实跨进程退出只验证了 quitApp 接口本身）。
+- [未验证] 用户原有 localStorage 旧值（若有）不迁移——按设计直接回落默认大图标。
+
+提交：`ff53d44`（SPEC）→ `62a14e8`（代码 + e2e）。
