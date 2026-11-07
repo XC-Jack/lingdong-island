@@ -1175,28 +1175,31 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
         </div>
       ) : (
         <ul className="notify-list">
-          {items.map((it) => (
-            <li key={it.id} className="notify-item">
-              <button
-                type="button"
-                className={`notify-body ${it.icon ? 'has-icon' : ''}`}
-                title="点击打开来源应用"
-                onClick={() => openOne(it)}
-              >
-                {/* 应用图标（US 通知图标）：解析成功显示小方块，失败退回应用名文字徽标 */}
-                {it.icon ? (
-                  <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
-                ) : (
-                  <span className="notify-app">{it.app}</span>
-                )}
-                <span className="notify-main">
-                  <span className="notify-title">{it.title}</span>
-                  {it.body && <span className="notify-text">{it.body}</span>}
-                </span>
-              </button>
-              <span className="notify-time">{fmtRel(it.arrival)}</span>
-            </li>
-          ))}
+          {/* 空条目兜底（SPEC-us-notify-compact）：title/body 皆空的数据不再渲染成空白卡 */}
+          {items
+            .filter((it) => it.title || it.body)
+            .map((it) => (
+              <li key={it.id} className="notify-item">
+                <button
+                  type="button"
+                  className={`notify-body ${it.icon ? 'has-icon' : ''}`}
+                  title="点击打开来源应用"
+                  onClick={() => openOne(it)}
+                >
+                  {/* 应用图标（US 通知图标）：解析成功显示小方块，失败退回应用名文字徽标 */}
+                  {it.icon ? (
+                    <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
+                  ) : (
+                    <span className="notify-app">{it.app}</span>
+                  )}
+                  <span className="notify-main">
+                    <span className="notify-title">{it.title}</span>
+                    {it.body && <span className="notify-text">{it.body}</span>}
+                  </span>
+                </button>
+                <span className="notify-time">{fmtRel(it.arrival)}</span>
+              </li>
+            ))}
         </ul>
       )}
     </div>
