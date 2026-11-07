@@ -49,4 +49,10 @@
 
 ## 自检记录
 
-（开发完成后回填：跑了什么、结果、哪些没验证）
+- [实测] typecheck / build PASS。
+- [实测] e2e-notify-group 10/10 PASS：G1 堆叠发生（计数>组数 5>2）/ G2 计数徽标 4 / G3 点击展开会话子组 2 个 / G3b 会话计数总和=组计数 / G4 会话展开具体条目 3 条 / G5a/G5b 逐层收起 / G6 单条 app 无徽标 / G7 全部展开后具体条目数=计数（5=5）/ G8 新通知重拉后展开状态保留。
+- [实测] 回归：notify-live（实时刷新）1/1、notify-clear 7/7、notify-compact 2/2、code-hint 10/10、collapsed-todo PASS。
+- [实测] 打包安装 D:\软件\灵动岛\ app.asar 16:41:32，4 进程存活。
+- e2e 踩坑补录：①dev 启动默认收起态，.dot 不存在（dots 只在展开态渲染）——必须先点 .island 展开再切页（e2e-notify-live:118 同款）；②堆叠下「总条数」口径变了：收起态只渲染组条目，G1/G7 断言要对比工具栏计数（stated）与展开后的 leaf 数，不能数 .notify-item（层级节点都占一个 item）。
+- 测试数据：发 3 条 com.xcjack.lingdong-island toast（WinRT EncodedCommand）凑出同 app 多条场景；库中还有历史 e2e 残留（live-test-1 等）正好构成多会话分组。
+- **未验证**：真实 QQ 群/联系人的会话分组效果（title 分组依赖应用发送的 toast 文本，e2e 用自家 toast + 历史数据验证分组逻辑；真实「群的堆群、人的堆人」效果待用户实机确认）。
