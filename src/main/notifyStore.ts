@@ -28,6 +28,8 @@ interface NotifyItem {
   title: string
   body: string
   arrival: number // 到达时间（Unix ms）
+  /** toast 的 launch 深链（点击直达来源界面，如 QQ 聊天窗）；无属性/不可用为 null */
+  launch: string | null
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -51,6 +53,17 @@ function parseToastXml(xml: string): { title: string; body: string } {
   if (texts.length === 0) return { title: '', body: '' }
   if (texts.length === 1) return { title: texts[0], body: '' }
   return { title: texts[0], body: texts.slice(1).join(' ') }
+}
+
+/** 抽 toast XML 的 launch 属性（点击通知时系统分发的深链），URL 解码；无属性/解码失败返回 null */
+function parseToastLaunch(xml: string): string | null {
+  const m = xml.match(/\blaunch="([^"]*)"/)
+  if (!m) return null
+  try {
+    return decodeURIComponent(m[1]) || null
+  } catch {
+    return m[1] || null // 解码失败就用原始值（个别应用不做 URL 编码）
+  }
 }
 
 /** 解码 toast XML 里的 HTML 实体（&lt;h&gt; → <h>）；toast 正文是 XML 转义过的，不解码会显示成乱码 */
@@ -121,6 +134,7 @@ function readWpnDatabase(): NotifyItem[] | null {
           title: title || '(无标题)',
           body,
           arrival: filetimeToMs(r.arrival),
+          launch: parseToastLaunch(xml),
         }
       })
     } finally {
@@ -245,8 +259,16 @@ function clearAll(): void {
   if (maxOrder > readHidden()) writeMarkFile({ hiddenUntil: maxOrder, lastOrder: Math.max(maxOrder, readMark()) })
 }
 
-/** 通知来源打开：常见 AUMID 短名 → exe/URI。映射不到兜底打开 Windows 通知设置（点击必有反应） */
-function openSource(app_: string): boolean {
+/** launch 深链安全过滤：只放行合法 URI，拒绝危险协议（launch 由第三方应用写入通知库） */
+function launchUsable(launch: string | null): launch is string {
+  if (!launch) return false
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(launch)) return false
+  const scheme = launch.slice(0, launch.indexOf(':')).toLowerCase()
+  return !['file', 'javascript', 'data', 'vbscript'].includes(scheme)
+}
+
+/** 通知来源打开：优先 launch 深链（点击直达来源界面），映射不到兜底打开 Windows 通知设置（点击必有反应） */
+function openSource(app_: string, launch: string | null): boolean {
   // 自家通知：聚焦灵动岛主窗口（没有独立窗口可开）
   if (app_ === 'lingdong-island') {
     const { BrowserWindow } = require('electron') as typeof import('electron')
@@ -258,6 +280,11 @@ function openSource(app_: string): boolean {
       return true
     }
     return false
+  }
+  // 1) launch 深链：交给系统协议分发（QQ 的 ntqq-notification:// 由 QQ 注册到 timwp.exe）
+  if (launchUsable(launch)) {
+    void shell.openExternal(launch)
+    return true
   }
   const map: Record<string, string> = {
     Explorer: 'explorer.exe',
@@ -301,7 +328,7 @@ export function setupNotifyStore(): void {
     clearAll()
     return { items: visibleItems(), unread: unreadCount() }
   })
-  ipcMain.handle('notify:open-source', (_e, appName: string) => openSource(appName))
+  ipcMain.handle('notify:open-source', (_e, appName: string, launch: string | null) => openSource(appName, launch))
 }
 
 export function stopNotifyStore(): void {

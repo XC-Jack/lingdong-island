@@ -13,6 +13,8 @@ interface NotifyItem {
   title: string
   body: string
   arrival: number
+  /** toast 的 launch 深链（点击直达来源界面）；无属性为 null */
+  launch: string | null
 }
 
 interface NotifyListResult {
@@ -1081,7 +1083,13 @@ function fmtRel(ms: number): string {
 }
 
 /** 通知面板：读取 Windows 通知中心历史（toast），点条目尝试打开来源应用 */
-function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX.Element {
+function NotifyPanel({
+  onUnread,
+  refreshTick,
+}: {
+  onUnread: (n: number) => void
+  refreshTick: number
+}): React.JSX.Element {
   const [items, setItems] = useState<NotifyItem[]>([])
   const [loaded, setLoaded] = useState(false)
   // 相对时间（"5 分钟前"）每 30s 重算一次，避免开着不动时间变陈旧
@@ -1093,7 +1101,7 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
       onUnread(r.unread)
       setLoaded(true)
     })
-  }, [onUnread])
+  }, [onUnread, refreshTick]) // refreshTick 变化（展开期间有新消息）→ 重拉列表
 
   useEffect(() => {
     const id = window.setInterval(() => tickNow((n) => n + 1), 30_000)
@@ -1113,7 +1121,7 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
 
   const openOne = useCallback(
     (it: NotifyItem) => {
-      void window.island.notifyOpenSource(it.app)
+      void window.island.notifyOpenSource(it.app, it.launch)
       markRead()
     },
     [markRead]
@@ -1175,28 +1183,31 @@ function NotifyPanel({ onUnread }: { onUnread: (n: number) => void }): React.JSX
         </div>
       ) : (
         <ul className="notify-list">
-          {items.map((it) => (
-            <li key={it.id} className="notify-item">
-              <button
-                type="button"
-                className={`notify-body ${it.icon ? 'has-icon' : ''}`}
-                title="点击打开来源应用"
-                onClick={() => openOne(it)}
-              >
-                {/* 应用图标（US 通知图标）：解析成功显示小方块，失败退回应用名文字徽标 */}
-                {it.icon ? (
-                  <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
-                ) : (
-                  <span className="notify-app">{it.app}</span>
-                )}
-                <span className="notify-main">
-                  <span className="notify-title">{it.title}</span>
-                  {it.body && <span className="notify-text">{it.body}</span>}
-                </span>
-              </button>
-              <span className="notify-time">{fmtRel(it.arrival)}</span>
-            </li>
-          ))}
+          {/* 空条目兜底（SPEC-us-notify-compact）：title/body 皆空的数据不再渲染成空白卡 */}
+          {items
+            .filter((it) => it.title || it.body)
+            .map((it) => (
+              <li key={it.id} className="notify-item">
+                <button
+                  type="button"
+                  className={`notify-body ${it.icon ? 'has-icon' : ''}`}
+                  title="点击打开来源应用"
+                  onClick={() => openOne(it)}
+                >
+                  {/* 应用图标（US 通知图标）：解析成功显示小方块，失败退回应用名文字徽标 */}
+                  {it.icon ? (
+                    <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
+                  ) : (
+                    <span className="notify-app">{it.app}</span>
+                  )}
+                  <span className="notify-main">
+                    <span className="notify-title">{it.title}</span>
+                    {it.body && <span className="notify-text">{it.body}</span>}
+                  </span>
+                </button>
+                <span className="notify-time">{fmtRel(it.arrival)}</span>
+              </li>
+            ))}
         </ul>
       )}
     </div>
@@ -1752,13 +1763,17 @@ export default function App(): React.JSX.Element {
   // 新消息横幅：主进程轮询发现新通知时推送。
   // 展开态不立即弹（用户正看着通知页），暂存 pendingBanner，收起瞬间补弹——
   // 否则展开期间错过的消息会被主进程记入 bannerSent，收起后永远看不到横幅。
+  // 展开期间同时自增 notifyRefreshTick，让挂载中的 NotifyPanel 重拉列表（否则停在通知页时
+  // 新消息要退出重进才出现——2026-11-07 用户实测反馈的 bug）。
   const pendingBanner = useRef<{ item: NotifyItem; count: number } | null>(null)
+  const [notifyRefreshTick, setNotifyRefreshTick] = useState(0)
   useEffect(() => {
     window.island.onNotifyArrived((item: NotifyItem) => {
       if (expandedRef.current) {
         // 展开期间累计条数：补弹时一次性显示总数
         if (pendingBanner.current === null) pendingBanner.current = { item, count: 1 }
         else pendingBanner.current = { item, count: pendingBanner.current.count + 1 }
+        setNotifyRefreshTick((t) => t + 1)
         return
       }
       showBanner(item)
@@ -1776,6 +1791,17 @@ export default function App(): React.JSX.Element {
       bannerTimer.current = null
       window.island.setBannerVisible(false)
     }, 5000)
+  }
+
+  /** 点击横幅：打开来源应用并立即收回横幅（不收起/展开岛，不动已读水位） */
+  const openFromBanner = (): void => {
+    if (banner === null) return
+    void window.island.notifyOpenSource(banner.item.app, banner.item.launch)
+    if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
+    setBanner(null)
+    bannerCountRef.current = 0
+    bannerTimer.current = null
+    window.island.setBannerVisible(false)
   }
 
   // 展开态切回收起态：若有展开期间错过的消息，补弹横幅（带累计条数）
@@ -2140,7 +2166,7 @@ export default function App(): React.JSX.Element {
                 ) : page === 1 ? (
                   <ShelfPanel />
                 ) : page === 2 ? (
-                  <NotifyPanel onUnread={onNotifyUnread} />
+                  <NotifyPanel onUnread={onNotifyUnread} refreshTick={notifyRefreshTick} />
                 ) : page === 4 ? (
                   <PageManagerPanel
                     pagesCustom={pagesCustom}
@@ -2277,8 +2303,14 @@ export default function App(): React.JSX.Element {
         <div
           className={`collapsed-banner${banner.count > 1 ? ' banner-shake' : ''}`}
           key={banner.count} // 条数变化时重挂节点：重播入场动画+抖动
-          role="status"
-          aria-label={`新消息：${banner.item.app} ${banner.item.title}，共 ${banner.count} 条`}
+          role="button"
+          tabIndex={0}
+          title="点击打开来源应用"
+          aria-label={`新消息：${banner.item.app} ${banner.item.title}，共 ${banner.count} 条，点击打开`}
+          onClick={openFromBanner}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') openFromBanner()
+          }}
         >
           <span className="banner-count" aria-hidden="true">
             {banner.count > 99 ? '99+' : banner.count}
