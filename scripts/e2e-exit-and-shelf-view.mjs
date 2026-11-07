@@ -1,15 +1,27 @@
 // e2e-exit-and-shelf-view.mjs：验证 US-034「退出入口 + 记住置物架视图」
-// 覆盖：①默认视图是「大图标」②选「列表」后视图生效且写进 localStorage
+// 覆盖：①默认视图是「大图标」②选「列表」后视图生效（US-037 起落盘走 prefs.json，不再断言 localStorage）
 //      ③重载页面（模拟重启）后仍是「列表」④偏好值被改坏时回落到「大图标」不报错
 //      ⑤window.island.quitApp() 能让 electron 进程真正退出（不是隐藏窗口）
 // 用法：node scripts/e2e-exit-and-shelf-view.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
-// 注意：只动渲染层 localStorage，不碰 shelf.json / todos.json / schedule.json 任何用户数据。
+// 注意：只动 userData/prefs.json 的 shelfView 字段（跑完还原），不碰 shelf.json / todos.json / schedule.json 任何用户数据。
+//      视图记忆的完整断言（含 pagesCustom 互不干扰）在 e2e-shelf-view-pref.mjs。
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
-const VIEW_KEY = 'island.shelfView'
+// Electron userData 真实路径：%APPDATA%\lingdong-island（DSH 宿主 homedir() 在 D 盘，不能用）
+const PREFS_FILE = join(process.env.APPDATA, 'lingdong-island', 'prefs.json')
+
+/** 直接读磁盘上的 prefs.json（US-037 起视图记忆存这里） */
+function readPrefs() {
+  try {
+    return JSON.parse(readFileSync(PREFS_FILE, 'utf8'))
+  } catch {
+    return {}
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -98,8 +110,6 @@ const currentViewClass = `(() => {
   return ['lg','md','sm','list'].find(c => drop.classList.contains(c)) ?? null;
 })()`
 
-const storedView = `localStorage.getItem(${JSON.stringify(VIEW_KEY)})`
-
 const main = async () => {
   const child = spawn(
     join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'),
@@ -119,34 +129,36 @@ const main = async () => {
     exited = true
   })
 
+  // 备份在 try 外声明：finally 是独立块级作用域，看不到 try 内的 const（A5 残留踩过）
+  const prefsBackup = readPrefs()
   try {
     const wsUrl = await connect()
     await sleep(1500)
 
     // ---------- A1：无偏好记录时默认「大图标」 ----------
-    // 先记下用户原本的选择，脚本结束要还原（这是用户点出来的偏好，不该被测试清掉）
-    const viewBackup = await cdp(wsUrl, `localStorage.getItem(${JSON.stringify(VIEW_KEY)})`)
-    await cdp(wsUrl, `localStorage.removeItem(${JSON.stringify(VIEW_KEY)}); 1`)
+    // US-037 起视图记忆存 prefs.json；从全量默认状态开始，跑完由 finally 还原备份
+    writeFileSync(PREFS_FILE, '{}\n', 'utf8')
     await reload(wsUrl)
     await openShelf(wsUrl)
-    const a1 = await settle(wsUrl, `({ view: ${currentViewClass}, stored: ${storedView} })`)
+    const a1 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
     console.log('[A1] 首次进入:', JSON.stringify(a1))
     assert(a1.view === 'lg', `无偏好时默认应为 lg，实际 ${a1.view}`)
-    assert(a1.stored === null, '还没选过就不该写 localStorage')
+    assert(readPrefs().shelfView === undefined, '还没选过就不该写 prefs.json')
 
     // ---------- A2：选「列表」立即生效并落盘 ----------
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
     await sleep(200)
     await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][3].click(); 1`)
-    const a2 = await settle(wsUrl, `({ view: ${currentViewClass}, stored: ${storedView} })`)
-    console.log('[A2] 选「列表」后:', JSON.stringify(a2))
+    await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`) // 等 IPC 写盘
+    const a2 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
+    console.log('[A2] 选「列表」后:', JSON.stringify(a2), 'prefs.shelfView:', readPrefs().shelfView)
     assert(a2.view === 'list', `选完应立刻变成 list，实际 ${a2.view}`)
-    assert(a2.stored === 'list', `选择应写进 localStorage，实际 ${a2.stored}`)
+    assert(readPrefs().shelfView === 'list', `选择应写进 prefs.json，实际 ${JSON.stringify(readPrefs().shelfView)}`)
 
     // ---------- A3：重载（等价于重启）后仍是「列表」 ----------
     await reload(wsUrl)
     await openShelf(wsUrl)
-    const a3 = await settle(wsUrl, `({ view: ${currentViewClass}, stored: ${storedView} })`)
+    const a3 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
     console.log('[A3] 重载后:', JSON.stringify(a3))
     assert(a3.view === 'list', `重载后应记得 list，实际 ${a3.view}`)
 
@@ -154,16 +166,18 @@ const main = async () => {
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
     await sleep(200)
     await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][2].click(); 1`)
-    await sleep(300)
+    await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`)
     await reload(wsUrl)
     await openShelf(wsUrl)
-    const a4 = await settle(wsUrl, `({ view: ${currentViewClass}, stored: ${storedView} })`)
-    console.log('[A4] 改选「小图标」后重载:', JSON.stringify(a4))
+    const a4 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
+    console.log('[A4] 改选「小图标」后重载:', JSON.stringify(a4), 'prefs.shelfView:', readPrefs().shelfView)
     assert(a4.view === 'sm', `重载后应记得 sm，实际 ${a4.view}`)
-    assert(a4.stored === 'sm', `localStorage 应更新为 sm，实际 ${a4.stored}`)
+    assert(readPrefs().shelfView === 'sm', `prefs.json 应更新为 sm，实际 ${JSON.stringify(readPrefs().shelfView)}`)
 
     // ---------- A5：偏好值被改坏时回落「大图标」，不白屏 ----------
-    await cdp(wsUrl, `localStorage.setItem(${JSON.stringify(VIEW_KEY)}, 'xxx'); 1`)
+    const prefs5 = readPrefs()
+    prefs5.shelfView = 'xxx'
+    writeFileSync(PREFS_FILE, JSON.stringify(prefs5, null, 2), 'utf8')
     await reload(wsUrl)
     await openShelf(wsUrl)
     const a5 = await settle(wsUrl, `({ view: ${currentViewClass}, alive: !!document.querySelector('.island'), count: document.querySelectorAll('.shelf-cell,.shelf-item').length })`)
@@ -171,17 +185,7 @@ const main = async () => {
     assert(a5.view === 'lg', `非法值应回落到 lg，实际 ${a5.view}`)
     assert(a5.alive === true, '值非法也不该白屏')
 
-    // ---------- 恢复用户原本的偏好，别把测试值留在机器上 ----------
-    await cdp(
-      wsUrl,
-      `(() => {
-        const old = ${JSON.stringify(viewBackup)};
-        if (old === null || old === undefined) localStorage.removeItem(${JSON.stringify(VIEW_KEY)});
-        else localStorage.setItem(${JSON.stringify(VIEW_KEY)}, old);
-        return localStorage.getItem(${JSON.stringify(VIEW_KEY)});
-      })()`
-    )
-    console.log('[清理] 已还原用户原本的视图偏好:', JSON.stringify(viewBackup))
+    console.log('[清理] prefs.json 在 finally 还原')
 
     // ---------- A6：退出接口能让进程真正结束 ----------
     console.log('[A6] 调用 quitApp() …')
@@ -194,6 +198,12 @@ const main = async () => {
 
     console.log('E2E EXIT-AND-VIEW PASS')
   } finally {
+    // 还原用户原本的 prefs.json——不管跑到哪一步挂掉都不能把测试值留在机器上
+    try {
+      writeFileSync(PREFS_FILE, JSON.stringify(prefsBackup, null, 2), 'utf8')
+    } catch (err) {
+      console.error('[清理] 还原失败:', err?.message)
+    }
     if (!exited) {
       try {
         child.kill()
