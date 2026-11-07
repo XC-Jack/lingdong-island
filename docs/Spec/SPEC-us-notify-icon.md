@@ -107,3 +107,14 @@
 - **屏幕级验证 [实测]**（CDP 确认横幅存在瞬间 + 全屏 CopyFromScreen 同刻取证）：胶囊正下方弹出「lingdong-island + 图标 + 标题」横幅，位置正确；5s 后收回。
 - 回归 [实测]：e2e-notify-icon 8/8、notify、notify-clear 7、wifi、collapsed-todo、schedule、todo-today、pages-custom 6 全 PASS。typecheck/build PASS。打包安装（app.asar 11:36），窗口静止 H=88。
 - 排障教训补充：④overflow:hidden 裁剪与「窗口外渲染」症状相同（DOM 在、rect 对、屏幕无像素），排查时先查祖先链 overflow 再怀疑合成器；⑤PrintWindow 对分层透明窗口的 PW_RENDERFULLCONTENT 抓图不可靠（黑区=alpha 0），屏幕取证以 CopyFromScreen 为准；⑥CDP 断言「可见」必须同时验证 DOM+窗口 bounds+屏幕像素三层。
+
+### 第七轮：时序分析与实时化改造（2026-11-07 12:00–12:20，提交 085e185）
+
+用户第四轮实机（12:00:20 QQ 消息）反馈「没看到」，但取证发现 QQ 1694 已入库且条件全满足（进程 11:41 启动首轮已过、水位 1625）。
+
+- **时序真相 [实测]**：通知检查 POLL_MS=30s，QQ 12:00:20 到达 → 横幅最晚 12:00:50 弹；用户 12:00:41 就回复「没看到」——只等了 21 秒，横幅在他说完话之后才弹。计数监控证实（appeared_ms=25921）：横幅确实弹出但用户没等到。
+- 用户看后确认横幅能弹（「看到了，但是我需要实时的，等30秒太久了」），新要求：实时。
+- **实时化改造（085e185）**：src/main/notifyStore.ts 加 fs.watch(WPN_DIR)（$env:LOCALAPPDATA\Microsoft\Windows\Notifications），filename 以 wpndatabase 开头才触发，去抖 DEBOUNCE_MS=800ms 后 refresh（等系统写完 db/wal）；30s 轮询降级为兜底（防 watcher 漏事件）；stopNotifyStore 清理 watcher 与去抖计时器；任何监听异常静默退回轮询。
+- **实测 [实测]**：dev（electron.exe out/main/index.js）appeared_ms=1516、2066（含 0.8s 去抖），5s 收回；安装版（app.asar 12:17:46）发真实 toast 3s 后全屏截屏实锤横幅显示。typecheck/build PASS；回归 8 套 e2e 全 PASS（notify-icon 8/8、notify、notify-clear 7、wifi、collapsed-todo、schedule、todo-today、pages-custom 6）。
+- 踩坑补充：⑦安装版启动 0 进程先查 ELECTRON_RUN_AS_NODE（DSH 宿主注入 1 时 electron 被跑成纯 Node 秒退），Remove-Item 再启动；⑧npm run dist 报证书错误须同时设 ELECTRON_MIRROR 与 ELECTRON_BUILDER_BINARIES_MIRROR（缺后者只修前者无效）；⑨npm start 不透传 --remote-debugging-port，dev 调试直接跑 node_modules\electron\dist\electron.exe out\main\index.js。
+- **未验证**：用户实机 QQ 真实消息的体验（应 2 秒内弹）；透明区点击穿透的日常手感。
