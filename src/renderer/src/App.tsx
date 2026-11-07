@@ -54,9 +54,6 @@ function localDayKey(d: Date = new Date()): string {
 /** 置物架视图的四种形态 */
 type ShelfView = 'lg' | 'md' | 'sm' | 'list'
 
-/** 视图偏好的存储键（存在渲染层 localStorage，落在 userData 下的 Local Storage 里） */
-const SHELF_VIEW_KEY = 'island.shelfView'
-
 /** 收起态可裁剪组件的键（与勾选 UI 一一对应） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo'] as const
 type CollapsedKey = (typeof COLLAPSED_KEYS)[number]
@@ -99,29 +96,11 @@ function normalizePagesCustom(v: unknown): PagesCustom | null {
 }
 
 /**
- * 读上次选的置物架视图（US-034）。
- * 为什么不落成 settings.json：这只是「界面长什么样」的偏好，丢了顶多重置成默认，
- * 不涉及用户数据；localStorage 不用新增 IPC、不用新建文件、也不参与数据迁移。
- * 值不认识或读失败（隐私模式/手工改坏）一律回落到「大图标」，不报错不白屏。
+ * 置物架视图记忆（US-037）：存主进程 prefs.json（经 prefs:get/prefs:set IPC）。
+ * 为什么不用渲染层 localStorage：本机实测 file:// 来源的 localStorage 跨进程重启
+ * 会丢失（写入后优雅退出再启动读回为 null，本机约束与踩坑.md:52），视图选择必须
+ * 跨重启保留——与 US-032 页面裁剪同一存储通道。组件 mount 后异步回填。
  */
-function loadShelfView(): ShelfView {
-  try {
-    const v = localStorage.getItem(SHELF_VIEW_KEY)
-    if (v === 'lg' || v === 'md' || v === 'sm' || v === 'list') return v
-  } catch {
-    /* localStorage 不可用时用默认值 */
-  }
-  return 'lg'
-}
-
-/** 记住置物架视图；写失败不影响使用（下次还是默认值） */
-function saveShelfView(v: ShelfView): void {
-  try {
-    localStorage.setItem(SHELF_VIEW_KEY, v)
-  } catch {
-    /* 写不进去就算了，不打扰用户 */
-  }
-}
 
 /** 线性小图标（stroke 继承 currentColor，替代 emoji：跨平台渲染一致、可随主题着色、任意缩放不糊） */
 function IconSvg({ children }: { children: React.ReactNode }): React.JSX.Element {
@@ -690,8 +669,28 @@ function ShelfPanel(): React.JSX.Element {
     null
   )
   // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
-  // 初值读上次的选择（US-034）：不记住的话每次重启都回到「大图标」，用户已选过的白选
-  const [view, setView] = useState<ShelfView>(loadShelfView)
+  // 初值默认「大图标」，mount 后从 prefs.json 异步回填（US-037）——与页面裁剪同为
+  // 「先默认后异步回填」的既有模式；localStorage 版跨重启会丢已废弃。
+  const [view, setView] = useState<ShelfView>('lg')
+  // 视图记忆回填：只在挂载时读一次 prefs.json，合法值才应用（用户已点的操作不覆盖——
+  // 回填窗口极短（几十毫秒），实际冲突概率可忽略）
+  const viewDirty = useRef(false)
+  useEffect(() => {
+    let alive = true
+    window.island
+      .prefsGet()
+      .then((prefs) => {
+        if (!alive || viewDirty.current) return
+        const v = prefs.shelfView
+        if (v === 'lg' || v === 'md' || v === 'sm' || v === 'list') setView(v)
+      })
+      .catch(() => {
+        /* 读不到就用默认 */
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
   // 视图选择菜单展开态：点视图按钮弹出四项菜单（大/中/小/列表）
@@ -870,8 +869,11 @@ function ShelfPanel(): React.JSX.Element {
                   aria-checked={view === v}
                   className={`shelf-view-item ${view === v ? 'picked' : ''}`}
                   onClick={() => {
+                    viewDirty.current = true
                     setView(v)
-                    saveShelfView(v)
+                    window.island.prefsSet({ shelfView: v }).catch(() => {
+                      /* 写不进去就算了，不打扰用户 */
+                    })
                     setViewPop(false)
                   }}
                 >

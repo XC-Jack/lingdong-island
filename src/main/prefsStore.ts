@@ -13,6 +13,7 @@ interface PagesCustom {
 
 interface PrefsShape {
   pagesCustom?: PagesCustom
+  shelfView?: string
 }
 
 const EMPTY: PrefsShape = {}
@@ -38,12 +39,19 @@ function normalizePagesCustom(v: unknown): PagesCustom | undefined {
   return { pages, collapsed }
 }
 
+/** 置物架视图记忆（US-037）：只认四个合法值；不合法返回 undefined（调用方回落默认） */
+function normalizeShelfView(v: unknown): string | undefined {
+  return v === 'lg' || v === 'md' || v === 'sm' || v === 'list' ? v : undefined
+}
+
 function load(): PrefsShape {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as PrefsShape
     const out: PrefsShape = {}
     const pc = normalizePagesCustom(parsed.pagesCustom)
     if (pc) out.pagesCustom = pc
+    const sv = normalizeShelfView(parsed.shelfView)
+    if (sv) out.shelfView = sv
     return out
   } catch {
     return { ...EMPTY }
@@ -67,10 +75,13 @@ export function setupPrefsStore(): void {
 
   ipcMain.handle('prefs:set', (_e, payload: unknown): PrefsShape => {
     const data = load()
-    const { pagesCustom } = (payload ?? {}) as { pagesCustom?: unknown }
+    const { pagesCustom, shelfView } = (payload ?? {}) as { pagesCustom?: unknown; shelfView?: unknown }
     const pc = normalizePagesCustom(pagesCustom)
     if (pc) data.pagesCustom = pc
-    else delete data.pagesCustom
+    else if (pagesCustom !== undefined) delete data.pagesCustom // 显式传 pagesCustom 才动它，未传保持原值
+    const sv = normalizeShelfView(shelfView)
+    if (sv) data.shelfView = sv
+    else if (shelfView !== undefined) delete data.shelfView
     save(data)
     return data
   })

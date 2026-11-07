@@ -242,6 +242,7 @@ export interface PagesCustom {
 
 export interface PrefsShape {
   pagesCustom?: PagesCustom
+  shelfView?: 'lg' | 'md' | 'sm' | 'list'
 }
 
 contextBridge.exposeInMainWorld('island', api)
