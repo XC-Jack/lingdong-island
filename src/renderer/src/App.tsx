@@ -1701,8 +1701,9 @@ export default function App(): React.JSX.Element {
   const [notifyUnread, setNotifyUnread] = useState(0)
   // 新消息到岛横幅（参考苹果灵动岛）：收起态弹「图标+应用名+标题」，5 秒后收回；
   // 展开态忽略（用户正在看通知页）。后到覆盖先到（多条并发只显示最新一条）。
-  const [banner, setBanner] = useState<NotifyItem | null>(null)
+  const [banner, setBanner] = useState<{ item: NotifyItem; count: number } | null>(null)
   const bannerTimer = useRef<number | null>(null)
+  const bannerCountRef = useRef<number>(0)
   const hoverRef = useRef(false)
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
@@ -1749,11 +1750,13 @@ export default function App(): React.JSX.Element {
   // 新消息横幅：主进程轮询发现新通知时推送。
   // 展开态不立即弹（用户正看着通知页），暂存 pendingBanner，收起瞬间补弹——
   // 否则展开期间错过的消息会被主进程记入 bannerSent，收起后永远看不到横幅。
-  const pendingBanner = useRef<NotifyItem | null>(null)
+  const pendingBanner = useRef<{ item: NotifyItem; count: number } | null>(null)
   useEffect(() => {
     window.island.onNotifyArrived((item: NotifyItem) => {
       if (expandedRef.current) {
-        pendingBanner.current = item // 最新一条覆盖旧的
+        // 展开期间累计条数：补弹时一次性显示总数
+        if (pendingBanner.current === null) pendingBanner.current = { item, count: 1 }
+        else pendingBanner.current = { item, count: pendingBanner.current.count + 1 }
         return
       }
       showBanner(item)
@@ -1762,20 +1765,23 @@ export default function App(): React.JSX.Element {
 
   const showBanner = (item: NotifyItem): void => {
     if (bannerTimer.current !== null) window.clearTimeout(bannerTimer.current)
-    setBanner(item)
+    bannerCountRef.current += 1 // 横幅期内每条 +1；收回时清零
+    setBanner({ item, count: bannerCountRef.current })
     window.island.setBannerVisible(true) // 收起窗口只有胶囊高，横幅期主进程加高窗口（否则渲染在窗口外看不见）
     bannerTimer.current = window.setTimeout(() => {
       setBanner(null)
+      bannerCountRef.current = 0
       bannerTimer.current = null
       window.island.setBannerVisible(false)
     }, 5000)
   }
 
-  // 展开态切回收起态：若有展开期间错过的消息，补弹横幅
+  // 展开态切回收起态：若有展开期间错过的消息，补弹横幅（带累计条数）
   useEffect(() => {
     if (!expanded && pendingBanner.current !== null) {
-      const item = pendingBanner.current
+      const { item, count } = pendingBanner.current
       pendingBanner.current = null
+      bannerCountRef.current = count - 1 // showBanner 内部会 +1，这里预扣使最终显示恰好为 count
       showBanner(item)
     }
   }, [expanded])
@@ -2266,17 +2272,25 @@ export default function App(): React.JSX.Element {
           （圆角裁内容），横幅 top 超出胶囊下边界会被整个裁掉，屏幕上一个像素都不画
           （六轮排障最终根因：CDP 查得到 DOM 和 rect，但渲染被裁）。 */}
       {banner !== null && !expanded && (
-        <div className="collapsed-banner" role="status" aria-label={`新消息：${banner.app} ${banner.title}`}>
-          {banner.icon ? (
-            <img className="banner-icon" src={iconUrl(banner.icon)} alt="" aria-hidden="true" />
+        <div
+          className={`collapsed-banner${banner.count > 1 ? ' banner-shake' : ''}`}
+          key={banner.count} // 条数变化时重挂节点：重播入场动画+抖动
+          role="status"
+          aria-label={`新消息：${banner.item.app} ${banner.item.title}，共 ${banner.count} 条`}
+        >
+          <span className="banner-count" aria-hidden="true">
+            {banner.count > 99 ? '99+' : banner.count}
+          </span>
+          {banner.item.icon ? (
+            <img className="banner-icon" src={iconUrl(banner.item.icon)} alt="" aria-hidden="true" />
           ) : (
             <span className="banner-icon banner-icon-fallback" aria-hidden="true">
-              {banner.app.slice(0, 1)}
+              {banner.item.app.slice(0, 1)}
             </span>
           )}
           <span className="banner-text">
-            <span className="banner-app">{banner.app}</span>
-            <span className="banner-title">{banner.title}</span>
+            <span className="banner-app">{banner.item.app}</span>
+            <span className="banner-title">{banner.item.title}</span>
           </span>
         </div>
       )}
