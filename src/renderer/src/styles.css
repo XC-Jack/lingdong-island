@@ -182,6 +182,13 @@ body {
   color: #fafafa;
 }
 
+.banner-code-copied {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: #86efac;
+}
+
 /* 右上角未读计数徽标 */
 .banner-count {
   position: absolute;

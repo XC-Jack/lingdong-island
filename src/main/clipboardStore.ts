@@ -6,8 +6,7 @@
  * - 识别防误报优先：整段短文本匹配码模式直接弹；长文本只在含验证码关键词时提取行内数字。
  * - 同码 30s 去重；展开态不弹（渲染层自行判断）；内容只在内存，不落盘。
  */
-import { clipboard } from 'electron'
-import { BrowserWindow } from 'electron'
+import { clipboard, ipcMain, BrowserWindow } from 'electron'
 
 const POLL_MS = 1000
 const REPEAT_SUPPRESS_MS = 30_000
@@ -49,6 +48,13 @@ export function initClipboardWatch(): void {
   if (timer) return
   void clipboard.readText().then((t) => { lastText = t }) // 初值对齐，避免启动时把旧剪贴板当新变化
   timer = setInterval(() => { void pollOnce() }, POLL_MS)
+  // 渲染层点击验证码横幅 → 写入剪贴板（渲染层已弃用 clipboard，统一走主进程）
+  ipcMain.handle('clipboard:write-text', (_event, text: unknown) => {
+    if (typeof text !== 'string' || text === '' || text.length > 64) return false
+    lastText = text // 写入来自我们自己，防止下一轮轮询把这次写入当新变化再弹一次
+    void clipboard.writeText(text)
+    return true
+  })
 }
 
 async function pollOnce(): Promise<void> {

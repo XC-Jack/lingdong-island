@@ -27,6 +27,14 @@ function setClip(text) {
   )
 }
 
+function readClip() {
+  return execFileSync(
+    'powershell',
+    ['-NoProfile', '-EncodedCommand', Buffer.from('Get-Clipboard -Raw', 'utf16le').toString('base64')],
+    { timeout: 10_000, encoding: 'utf8' }
+  ).trim()
+}
+
 async function cdpEval(expr) {
   const targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
   const page = targets.find((t) => t.type === 'page')
@@ -98,12 +106,22 @@ try {
   }
   ok('C6 「验证码 7731」→ 弹且显示 7731', found)
 
-  // C5b 点击关闭
+  // C5b 点击横幅 → 复制验证码到剪贴板（不关闭，显示「已复制」，照常 8s 计时）
   await sleep(500)
+  // 先用无关文本占位剪贴板，验证点击复制真的写入了
+  setClip('placeholder-before-copy')
+  await sleep(1300) // 让轮询吃掉占位文本
   await cdpEval(`(() => { const el = document.querySelector('.code-banner'); if (el) el.dispatchEvent(new MouseEvent('click', {bubbles:true})); return true })()`)
-  await sleep(500)
-  const closedByClick = await cdpEval(`document.querySelector('.code-banner') === null`)
-  ok('C5b 点击横幅立即关闭', closedByClick === true)
+  await sleep(800)
+  const copiedText = readClip()
+  const copiedBadge = await cdpEval(`document.querySelector('.code-banner .banner-code-copied')?.textContent ?? null`)
+  const stillOpen = await cdpEval(`document.querySelector('.code-banner') !== null`)
+  ok('C8 点击横幅复制验证码到剪贴板', copiedText === '7731', `clip=${copiedText}`)
+  ok('C8b 点击后显示「已复制」且横幅不关闭', copiedBadge === '已复制' && stillOpen === true, `badge=${copiedBadge} open=${stillOpen}`)
+  // 点击后等 8s 计时结束，横幅应自动收回
+  await sleep(8300)
+  const closedAfterCopy = await cdpEval(`document.querySelector('.code-banner') === null`)
+  ok('C8c 复制后 8s 计时照常收回', closedAfterCopy === true)
 
   // C7 收起窗口高度：横幅系列改版后收起窗口常驻 COLLAPSED_WIN_HEIGHT=88（胶囊+横幅预留区，
   // set-banner-visible 已是空操作），验证码横幅不需要主进程加高
