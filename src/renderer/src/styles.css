@@ -1970,6 +1970,29 @@ div.pm-row[draggable='true'] {
 .pm-row.pm-row-off {
   opacity: 0.55;
 }
+/* 插入位置提示（美化-02 修正）：拖动时在目标行上/下边画一条绿线，表示松手后插到这里。
+   用伪元素而不是 border，避免出现/消失时行高变化导致鼠标「抖」出目标行。 */
+.pm-row.pm-drop-before,
+.pm-row.pm-drop-after {
+  position: relative;
+}
+.pm-row.pm-drop-before::before,
+.pm-row.pm-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: #7dd87d;
+  pointer-events: none;
+}
+.pm-row.pm-drop-before::before {
+  top: -1px;
+}
+.pm-row.pm-drop-after::after {
+  bottom: -1px;
+}
 .pm-actions {
   display: flex;
   justify-content: flex-end;

@@ -267,7 +267,9 @@ export interface ExportResult {
 /** 界面偏好（US-032，与主进程 prefsStore 保持一致） */
 export interface PagesCustom {
   pages: number[]
-  collapsed: Record<'pet' | 'clock' | 'battery' | 'net' | 'todo', boolean>
+  collapsed: Record<'pet' | 'clock' | 'battery' | 'net' | 'todo' | 'bell', boolean>
+  /** 收起态组件从左到右的顺序（美化-02） */
+  order: ('pet' | 'clock' | 'battery' | 'net' | 'todo' | 'bell')[]
 }
 
 export interface PrefsShape {
