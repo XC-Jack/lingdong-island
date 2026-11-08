@@ -24,7 +24,8 @@
 
 | 文件 | 改什么 |
 |---|---|
-| `src/renderer/src/App.tsx` | `CollapsedKey` 增加 `bell`；`PagesCustom` 增加 `order: CollapsedKey[]`；`defaultPagesCustom()` 补默认顺序；`normalizePagesCustom()` 校验顺序（去重、补全缺失项）；`COLLAPSED_LABELS` 加铃铛；`PageManagerPanel` 的「收起态组件」区改成可拖动排序；收起态渲染由写死 JSX 改为按 `order` 顺序遍历 |
+| `src/renderer/src/App.tsx` | `CollapsedKey` 增加 `bell`；`PagesCustom` 增加 `order: CollapsedKey[]`；`defaultPagesCustom()` 补默认顺序；`normalizePagesCustom()` 校验顺序（去重、补全缺失项）；`COLLAPSED_LABELS` 加铃铛；`PageManagerPanel` 的「收起态组件」区改成可拖动排序（插入语义 + 落点提示）；收起态渲染由写死 JSX 改为按 `order` 顺序遍历 |
+| `src/renderer/src/styles.css` | 新增 `.pm-drop-before` / `.pm-drop-after` 落点提示线（伪元素，不改行高） |
 | `src/main/prefsStore.ts` | 同步 `normalizePagesCustom`：加 `bell`、加 `order` 校验与落盘，保持与渲染层一致 |
 | `src/preload/index.ts` | `PagesCustom` 类型同步（`collapsed` 加 `bell`，新增 `order`） |
 | `scripts/e2e-collapse-order.mjs` | 新建：排序 + 铃铛开关 + 旧偏好兼容 |
@@ -41,7 +42,8 @@
 
 1. 右键岛（或托盘右键）→「页面管理…」→ 面板里「收起态组件」区列出 6 项：岛仔、时钟、电量圈、网络图标、待办数字、通知铃铛。
 2. **显隐**：每项前面的勾选框控制收起态是否显示；取消勾选立即从胶囊上消失，勾上立即出现（有数据的前提下）。
-3. **排序**：按住任意一行拖到另一行上松手，两行**互换位置**（与「页面」区既有的拖动交互一致）；胶囊上的组件顺序立刻跟着变。
+3. **排序（插入语义）**：按住任意一行拖到目标行上方松手——落在目标行**上半**就插到它前面，落在**下半**就插到它后面，其余组件顺移（不是两两互换）。拖动时目标行上/下边缘出现一条绿线提示落点。胶囊上的组件顺序立刻跟着变。
+   - 变更说明（2026-11-08 验收反馈）：首版实现的是「互换」，用户实测后要求改成「插空放」，本 SPEC 按插入语义修订。
 4. **铃铛**：默认勾选。勾选且有未读 → 显示白铃铛 + 红点；勾选但无未读 → 不显示；取消勾选 → 有未读也不显示。
 5. **持久化**：顺序与勾选写进 `%APPDATA%\lingdong-island\prefs.json` 的 `pagesCustom.order` / `pagesCustom.collapsed`，重启后保持。
 6. **旧偏好兼容**：升级前已有的 `prefs.json`（只有 5 个 `collapsed` 键、没有 `order`）读入后回落为默认顺序 `电量 → 岛仔 → 时钟 → 网络 → 待办 → 铃铛`，铃铛按「开启」处理，用户此前的勾选状态不丢。
@@ -57,7 +59,7 @@
 - [ ] e2e-collapse-order：R2 旧格式 prefs（`collapsed` 只有 5 个键、无 `order`）启动后不崩，顺序为默认，`collapsed.bell` 视为开启。
 - [ ] e2e-collapse-order：R3 `collapsed.bell=false` 且有未读时，收起态不渲染 `.collapsed-bell`；改回 `true` 后渲染。
 - [ ] e2e-collapse-order：R4 面板里「收起态组件」区有 6 行，铃铛一份。
-- [ ] e2e-collapse-order：R5 面板拖动互换后，拍到的 `prefs.json` 里 `order` 已交换且长度仍为 6（不丢项、不重项）。
+- [ ] e2e-collapse-order：R5 面板拖动为**插入**语义——拖到目标行上半插到其前、下半插到其后，断言整条 `order` 数组（中间项会顺移）且不等于互换结果；长度恒为 6、无重复；拖自身不改变。
 - [ ] 回归 e2e：`e2e-pages-custom`、`e2e-collapse-beautify`、`e2e-collapsed-todo`、`e2e-shelf-view-pref` 全 PASS。
 - [ ] `npm run typecheck` / `npm run build` PASS。
 - [ ] 打包装机，`D:\软件\灵动岛\` 下 4 进程存活，用户实机可在面板里拖动换位并看到胶囊顺序变化。
@@ -66,6 +68,7 @@
 
 - 不做自由拖拽岛窗口到屏幕任意位置 / 左右预设位置（用户本次已确认不是这个意思；真要做得另开 SPEC，涉及主进程窗口定位与多显示器）。
 - 不改展开态头部（迷你岛仔 + 时钟 + 电量）的顺序。
+- 不把面板上半部分「页面」区的拖动也从互换改成插入——用户只反馈了收起态组件区的语义，页面区维持既有互换（要改另开 SPEC）。
 - 不加新组件类型（倒计时、歌词、天气等），只整理现有 6 个。
 - 不改 prefs.json 的存储通道与文件名。
 - 不做收起态「至少保留一个组件」的限制（维持现状：允许全关，胶囊变空条）。
@@ -76,8 +79,8 @@
 | 日期 | 执行内容 | 结果 | 未验证部分 |
 |---|---|---|---|
 | 2026-11-08 | `npm run typecheck`（node + web 两套 tsconfig） | PASS，无输出即无错 | — |
-| 2026-11-08 | `npm run build`（electron-vite） | PASS，产出 `out/renderer/assets/index-CDi8OvRF.js` 663.59 kB | — |
-| 2026-11-08 | `node scripts/e2e-collapse-order.mjs`（新增，16 条断言） | **PASS 16/0**：R1 自定义 order 生效（离屏写 `['bell','clock','net','battery','pet','todo']` 后收起态横向坐标顺序一致）；R2 旧偏好（无 `order`、`collapsed` 只有 5 键）补全为默认顺序且 `bell` 视为 true；R3 面板取消勾选 → `prefs.json` `bell=false` → 收岛后不渲染 → 再勾回 `true`（正反对照）；R4 面板 6 行、含「通知铃铛」、行顺序 = order；R5 拖 pet 到 bell → `prefs.json` order 变 `['battery','bell','clock','net','todo','pet']`、长度 6 无重复 → 收岛后视觉顺序同步 | 本机通知库为空时 R3a 会失败（该条依赖真实未读）；本轮跑时库里有未读，通过 |
+| 2026-11-08 | `npm run build`（electron-vite） | PASS，产出 `out/renderer/assets/index-C5hVss3o.js` 664.40 kB（插入语义版） | — |
+| 2026-11-08 | `node scripts/e2e-collapse-order.mjs`（新增，**22 条断言**，按插入语义修订后重跑） | **PASS 22/0**：R1 自定义 order 生效；R2a-d 旧偏好（无 `order`、`collapsed` 只有 5 键）补全默认顺序且 `bell` 视为 true；R3a-d 铃铛开关正反对照；R4a-c 面板 6 行/含「通知铃铛」/行序 = order；R5a-j 拖动插入——悬停上半出现 `pm-drop-before` 提示、插入后 order = `['battery','pet','todo','clock','net','bell']`（`net` 顺移，证明不是互换）、悬停下半出现 `pm-drop-after`、插入后 order = `['battery','bell','pet','todo','clock','net']`、长度 6 无重复、拖自身不改变、收岛后视觉顺序同步 | 本机通知库为空时 R3a 会失败（该条依赖真实未读）；本轮跑时库里有未读，通过 |
 | 2026-11-08 | 回归 `node scripts/e2e-pages-custom.mjs` | PASS 6/6（页面显隐、页面顺序持久化未受影响） | — |
 | 2026-11-08 | 回归 `node scripts/e2e-collapse-beautify.mjs` | PASS 7/0（美化-01 铃铛形态、电量在岛仔前仍在） | — |
 | 2026-11-08 | 回归 `node scripts/e2e-collapsed-todo.mjs` | PASS（待办数字出现/消失/收回刷新、DOM 几何顺序） | — |

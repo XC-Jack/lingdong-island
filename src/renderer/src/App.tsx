@@ -1778,20 +1778,28 @@ function PageManagerPanel({
     pages[ti] = from
     onChange({ ...pagesCustom, pages })
   }
-  // 收起态组件排序（美化-02）：与上面的页面排序同一套「互换」语义和同一个 dragFrom。
-  // 区别是这里没有勾选门槛——6 个组件恒在 order 里，关掉的只是显隐，位置照样能调
+  // 收起态组件排序（美化-02）：**插入**语义，不是互换——用户 2026-11-08 验收反馈
+  // 「拖动组件插空放」，即把被拖项抽出来插到目标行的前/后空隙，其余组件顺移。
+  // 这里没有勾选门槛——6 个组件恒在 order 里，关掉的只是显隐，位置照样能调
   // （用户常先摆好位置再逐个关，位置信息不该因为关掉就丢）。
-  const reorderCollapsed = (targetKey: CollapsedKey): void => {
+  const [dropHint, setDropHint] = useState<{ key: CollapsedKey; before: boolean } | null>(null)
+  /** 光标落在目标行的上半还是下半：决定插到它前面还是后面 */
+  const dropEdge = (el: HTMLElement, clientY: number): boolean => {
+    const r = el.getBoundingClientRect()
+    return clientY < r.top + r.height / 2
+  }
+  const reorderCollapsed = (targetKey: CollapsedKey, before: boolean): void => {
     const from = dragFrom.current as CollapsedKey | null
     dragFrom.current = null
+    setDropHint(null)
     if (from === null || from === targetKey) return
-    const order = [...pagesCustom.order]
-    const fi = order.indexOf(from)
-    const ti = order.indexOf(targetKey)
-    if (fi === -1 || ti === -1) return
-    order[fi] = targetKey
-    order[ti] = from
-    onChange({ ...pagesCustom, order })
+    // 先把被拖项抽掉再插：这样「前/后」直接以抽掉后的列表为准，不用为 fi<ti 单独减一
+    const rest = pagesCustom.order.filter((k) => k !== from)
+    const ti = rest.indexOf(targetKey)
+    if (ti === -1) return
+    const insertAt = before ? ti : ti + 1
+    rest.splice(insertAt, 0, from)
+    onChange({ ...pagesCustom, order: rest })
   }
   return (
     <div className="pm-panel">
@@ -1835,11 +1843,13 @@ function PageManagerPanel({
           )
         })
       })()}
-      <div className="pm-section">收起态组件（勾选显示，按住拖动换位置）</div>
+      <div className="pm-section">收起态组件（勾选显示，按住拖到目标行插入）</div>
       {pagesCustom.order.map((k) => (
         <div
           key={k}
-          className={`pm-row ${pagesCustom.collapsed[k] ? '' : 'pm-row-off'}`}
+          className={`pm-row ${pagesCustom.collapsed[k] ? '' : 'pm-row-off'} ${
+            dropHint?.key === k ? (dropHint.before ? 'pm-drop-before' : 'pm-drop-after') : ''
+          }`}
           data-comp={k}
           draggable
           onDragStart={(e) => {
@@ -1847,13 +1857,26 @@ function PageManagerPanel({
             e.dataTransfer.effectAllowed = 'move'
             dragFrom.current = k
           }}
-          onDragOver={(e) => e.preventDefault()}
+          onDragOver={(e) => {
+            e.preventDefault()
+            // 光标在上半 → 插到本行前面，下半 → 插到本行后面；拖自己身上不显示提示
+            if (dragFrom.current !== null && dragFrom.current !== k) {
+              setDropHint({ key: k, before: dropEdge(e.currentTarget, e.clientY) })
+            }
+          }}
+          onDragLeave={(e) => {
+            // 只在真正离开本行时清提示（子元素间移动不算离开）
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              setDropHint((h) => (h?.key === k ? null : h))
+            }
+          }}
           onDrop={(e) => {
             e.preventDefault()
-            reorderCollapsed(k)
+            reorderCollapsed(k, dropEdge(e.currentTarget, e.clientY))
           }}
           onDragEnd={() => {
             dragFrom.current = null
+            setDropHint(null)
           }}
         >
           {/* 复选框自己处理点击并阻止冒泡：否则点勾选框时会先触发下一行拖拽逻辑 */}
@@ -1867,7 +1890,9 @@ function PageManagerPanel({
             onClick={(e) => e.stopPropagation()}
           />
           <span className="pm-name">{COLLAPSED_LABELS[k]}</span>
-          <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
+          <span className="pm-grip" title="按住拖到目标行：落在上半插到它前面，落在下半插到它后面">
+            ⋮⋮
+          </span>
         </div>
       ))}
       <div className="pm-actions">

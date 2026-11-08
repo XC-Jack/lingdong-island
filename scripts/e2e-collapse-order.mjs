@@ -6,7 +6,8 @@
  * R2 旧偏好兼容：只有 5 个 collapsed 键、无 order → prefs:get 回落默认顺序且 bell 视为开启
  * R3 铃铛可关：面板里取消勾选 → prefs.json bell=false → 收起态不渲染；再勾回 → 重新渲染（正反对照）
  * R4 面板：收起态组件区 6 行、含「通知铃铛」、行顺序与 order 一致
- * R5 面板拖动互换：拖 pet 到 bell 上 → prefs.json 两项交换，长度仍 6、无重复
+ * R5 面板拖动**插入**（不是互换）：落在目标行上半 → 插到它前面，下半 → 插到它后面；
+ *    断言整条 order 数组（插入会让中间项顺移，互换不会），并反证结果不等于互换结果
  *
  * 面板打开方式：主进程 --inspect=9229 里执行 BrowserWindow.webContents.send('island:manage-pages')，
  * 这是唯一不经过真实右键菜单的入口（菜单是原生 popup，CDP 点不到）。
@@ -232,34 +233,97 @@ try {
     ok('R3d 重新勾选写回 true', readPrefs()?.pagesCustom?.collapsed?.bell === true,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
 
-    // ---- R5 拖动互换（pet ↔ bell） ----
-    const dragResult = await cdpEval(`(() => {
-      const from = document.querySelector('.pm-row[data-comp="pet"]')
-      const to = document.querySelector('.pm-row[data-comp="bell"]')
+    // ---- R5 拖动**插入**（不是互换）：用户 2026-11-08 验收反馈「我想要的是我拖动组件插空放」 ----
+    // 落在目标行上半 → 插到它前面；落在下半 → 插到它后面；其余组件顺移，被拖项从原位置抽出。
+    // 只要断言「整条 order 数组」，就能区分插入与互换（互换不会让第三者移动，插入会）。
+    ok('R5a 拖动开始前 order 为默认顺序',
+      JSON.stringify(readPrefs()?.pagesCustom?.order) === JSON.stringify(DEFAULT_ORDER),
+      JSON.stringify(readPrefs()?.pagesCustom?.order))
+
+    // 拖到上半 → 出现「插到我前面」的提示线
+    const hint = await cdpEval(`(() => {
+      const from = document.querySelector('.pm-row[data-comp="todo"]')
+      const to = document.querySelector('.pm-row[data-comp="clock"]')
       if (!from || !to) return 'missing-row'
       const dt = new DataTransfer()
       from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }))
-      to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }))
-      to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }))
+      const r = to.getBoundingClientRect()
+      to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientY: r.top + r.height / 4 }))
       from.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }))
-      return 'done'
+      return 'ok'
     })()`)
-    ok('R5a 拖拽事件已派发', dragResult === 'done', dragResult)
-    await sleep(900)
-    const p = readPrefs()?.pagesCustom
-    ok('R5b prefs.json 里 pet 与 bell 互换位置',
-      JSON.stringify(p?.order) === JSON.stringify(['battery', 'bell', 'clock', 'net', 'todo', 'pet']),
+    ok('R5b 拖动时可派发事件', hint === 'ok', hint)
+    await sleep(400)
+
+    /** 把 fromKey 拖到 targetKey 的上半(before)/下半(after)并松手；返回松手前目标行的 className。
+     *  拆成三步：dragover → 等 React 提交一次 → 读 className → drop。
+     *  dragover 是连续事件，React 18 对它的 setState 不一定同步落地，同一段 eval 里读 className 会读到旧值。 */
+    const dragRow = async (fromKey, targetKey, half) => {
+      const start = await cdpEval(`(() => {
+        const from = document.querySelector('.pm-row[data-comp="${fromKey}"]')
+        const to = document.querySelector('.pm-row[data-comp="${targetKey}"]')
+        if (!from || !to) return 'missing-row'
+        window.__e2eDt = new DataTransfer()
+        from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt }))
+        const b = to.getBoundingClientRect()
+        window.__e2eY = b.top + b.height * ${half === 'before' ? 0.25 : 0.75}
+        to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt, clientY: window.__e2eY }))
+        return 'ok'
+      })()`)
+      if (start !== 'ok') return start
+      await sleep(300)
+      const hintCls = await cdpEval(
+        `(document.querySelector('.pm-row[data-comp="${targetKey}"]')?.className ?? 'missing-row')`
+      )
+      await cdpEval(`(() => {
+        const from = document.querySelector('.pm-row[data-comp="${fromKey}"]')
+        const to = document.querySelector('.pm-row[data-comp="${targetKey}"]')
+        if (!from || !to) return 'missing-row'
+        to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt, clientY: window.__e2eY }))
+        from.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt }))
+        return 'ok'
+      })()`)
+      await sleep(900)
+      return hintCls
+    }
+
+    // ① todo 拖到 clock 上半 → 插到 clock **前面**；clock 与 todo 之间的 net 不会被换走
+    const cls1 = await dragRow('todo', 'clock', 'before')
+    ok('R5c 悬停在目标行上半时出现「插到前面」提示类',
+      typeof cls1 === 'string' && cls1.includes('pm-drop-before'), cls1)
+    let p = readPrefs()?.pagesCustom
+    ok('R5d 插入到前面：order 变为 battery,pet,todo,clock,net,bell',
+      JSON.stringify(p?.order) === JSON.stringify(['battery', 'pet', 'todo', 'clock', 'net', 'bell']),
       JSON.stringify(p?.order))
-    ok('R5c order 长度仍为 6 且无重复',
+    // 反证不是互换：互换会得到 ['battery','pet','todo','net','clock','bell']（net 与 clock 换位）
+    ok('R5e 不是互换语义（clock 没被顶到 todo 原位置）',
+      JSON.stringify(p?.order) !== JSON.stringify(['battery', 'pet', 'todo', 'net', 'clock', 'bell']),
+      JSON.stringify(p?.order))
+
+    // ② bell 拖到 battery 下半 → 插到 battery **后面**
+    const cls2 = await dragRow('bell', 'battery', 'after')
+    ok('R5f 悬停在目标行下半时出现「插到后面」提示类',
+      typeof cls2 === 'string' && cls2.includes('pm-drop-after'), cls2)
+    p = readPrefs()?.pagesCustom
+    ok('R5g 插入到后面：order 变为 battery,bell,pet,todo,clock,net',
+      JSON.stringify(p?.order) === JSON.stringify(['battery', 'bell', 'pet', 'todo', 'clock', 'net']),
+      JSON.stringify(p?.order))
+    ok('R5h order 长度仍为 6 且无重复',
       Array.isArray(p?.order) && p.order.length === 6 && new Set(p.order).size === 6,
       JSON.stringify(p?.order))
 
-    // ---- R5d 收岛后视觉顺序跟着变（bell 紧跟 battery、pet 落到最后） ----
+    // ③ 拖到自己身上：不变化、不丢项
+    await dragRow('bell', 'bell', 'before')
+    ok('R5i 拖到自身不改变 order',
+      JSON.stringify(readPrefs()?.pagesCustom?.order) === JSON.stringify(['battery', 'bell', 'pet', 'todo', 'clock', 'net']),
+      JSON.stringify(readPrefs()?.pagesCustom?.order))
+
+    // ---- R5j 收岛后视觉顺序跟着变 ----
     await closePanel()
     const after = await cdpEval(READ_ORDER)
-    // 同样只比较真正渲染出来的组件（本机待办为空时 todo 不渲染）
-    const afterExpect = ['battery', 'bell', 'clock', 'net', 'todo', 'pet'].filter((k) => after.includes(k))
-    ok('R5d 收起态视觉顺序随 order 改变', JSON.stringify(after) === JSON.stringify(afterExpect),
+    // 只比较真正渲染出来的组件（本机待办为空时 todo 不渲染）
+    const afterExpect = ['battery', 'bell', 'pet', 'todo', 'clock', 'net'].filter((k) => after.includes(k))
+    ok('R5j 收起态视觉顺序随 order 改变', JSON.stringify(after) === JSON.stringify(afterExpect),
       `实际 ${JSON.stringify(after)} / 期望 ${JSON.stringify(afterExpect)}`)
   }
   await stopApp(child); child = null
