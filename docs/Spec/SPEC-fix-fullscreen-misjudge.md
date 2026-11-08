@@ -77,6 +77,7 @@
 | 2026-11-08 | [实测] 其余 7 套 e2e 回归 | 全 PASS：`e2e-head-order` 14/0、`e2e-collapse-order` 22/0、`e2e-collapse-beautify` 7/0、`e2e-pages-custom` 6/6、`e2e-collapsed-todo` PASS、`e2e-wifi` PASS、`e2e-todo-today` PASS | — |
 | 2026-11-08 | [实测] `npm run dist` + 静默安装 + 启动 | `release\灵动岛 Setup 0.1.0.exe` 打包成功（electron 45.2.1、无代码签名）；`D:\软件\灵动岛\resources\app.asar` = 9148248 字节 / 17:02:44；asar 内 UTF-8 校验含 `Windows.UI.Core.CoreWindow`、`Progman`、`MultitaskingViewFrame`、`IsWindowVisible`、`DwmGetWindowAttribute`；启动后 `灵动岛` 4 进程存活（PID 2152/8236/18700/22916） | — |
 | 2026-11-08 | [实测] `.tmp/probe-installed-misjudge.mjs` 安装版运行时重放 | **3 过 / 0 败**：V0 初始可见、V1 `TextInputHost` 场景岛保持可见、V2 把 `Progman` 强制置前（`fg=Progman`）岛仍可见 | **V1 未真正复现成功**：该探针回报置前后前台仍是 `Chrome_WidgetWin_1`，说明当时 `TextInputHost` 的 cloak 窗口不存在或未铺满屏，等于没测到；该场景只有开发态 e2e F2 覆盖 |
+| 2026-11-08 | [实测] 安装版「前台=Progman」直接核对（重启安装版后复查） | 前台类名为 `Progman` 时读主窗口 `hwnd=18286372`：`vis=True rect=674,6,864,94` —— 岛**没有被隐藏**，正是修复目标 | — |
 
 **自检过程中踩到并已修的坑（记录以免复发）**：
 
