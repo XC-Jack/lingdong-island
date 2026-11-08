@@ -66,12 +66,13 @@
 | 2026-11-08 | `node scripts/e2e-wifi.mjs`（回归，A4 已按上文语义变更改写） | PASS（A4 实测「展开态网络图标位于头部信息行」） | — |
 | 2026-11-08 | `node scripts/e2e-todo-today.mjs`（回归） | PASS（A1-A10） | — |
 | 2026-11-08 | 几何探针 `.tmp/probe-head-shot.mjs`（展开态截图 + 三块矩形） | 岛 420×232；`.panel-head` top 21-bottom 62；岛仔 16×16 @top 22-38；信息行 118×20 @top 40-60；标题 right 89 vs 状态区 left 151（不重叠）；自启开关 left 331 vs 状态区 right 269（不重叠）；`.todo-stat` top 64-bottom 76（在头部下边框之外） | 目视截图见交付说明 |
-| 2026-11-08 | 打包装机 | 见下一条（SPEC 第八节前由交付消息说明） | — |
+| 2026-11-08 | 打包装机 | `npm run dist` 成功（electron 45.2.1）；静默安装到 `D:\软件\灵动岛\`；`app.asar` 9145402 字节 / 16:23:32，asar 内 `head-pet`、`head-info`、`renderStatusItem` 均存在；启动后 `灵动岛` 4 进程存活 | — |
+| 2026-11-08 | 安装版运行时验证 `.tmp/probe-installed-head.mjs`（写 order `bell→net→clock→battery→pet→todo`、造未读 + 1 条待办、合成点击展开） | PASS 4 / 0：已展开、`.head-pet`/`.head-info` 都在、信息行实测顺序 = `["bell","net","clock","battery","todo"]` 与 order 一致、岛仔 top < 信息行 top 且不在 `.head-info` 内 | 探针为临时脚本，不进交付 |
 
 **尚未验证**：
 - 真实物理鼠标点击展开后的观感（e2e 与探针均由合成事件触发展开），以及在多显示器不同 DPI 缩放下的头部尺寸余量——仅在本机 100% 缩放验证。
 - 高 DPI（125%/150%）下信息行是否仍不挤压标题、`.head-info:empty` 隐藏后是否残留 2px gap 的视觉影响，未逐档验证。
-- 安装版运行时的展开态头部顺序（打包前只验证了开发态 `out/` 产物）。
+- 通过「页面管理」面板交互改动勾选后，展开态**当场**刷新的观感（e2e 是通过重载验证的）。
 
 ## 八、验收记录
 
