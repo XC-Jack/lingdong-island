@@ -8,9 +8,15 @@ import { BrowserWindow, ipcMain, screen } from 'electron'
  *  - avoided   前台窗口全屏/最大化占满屏幕 → 岛 hide()，摸顶边临时唤回
  *  - manual    用户从菜单选了「暂时隐藏」→ 岛 hide()，摸边无效；托盘点击恢复
  *
- * 全屏判定：长驻 PowerShell 子进程每 1s 输出一行 fullscreen|normal（读
- * GetForegroundWindow 的 rect 是否覆盖整个主屏）。比主进程每秒 spawn 一次
- * 轻得多（一个常驻进程 vs 每秒一次进程创建）。无 npm 新依赖。
+ * 全屏判定：每 1s spawn 一个短命 PowerShell 子进程，输出一行 fullscreen|normal。
+ * 判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来
+ * （2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
+ *   1. DWM 已 cloak（不可见）的 Shell 窗口，典型是 TextInputHost 的
+ *      `Windows.UI.Core.CoreWindow`（标题「Windows 输入体验」，rect=0,0,1536,960，
+ *      但 cloaked=2，用户在屏幕上根本看不到它）；
+ *   2. 桌面本身 `Progman` / `WorkerW`（点桌面时它们会成为前台）。
+ * 故判据 = 前台窗口 可见 ∧ 未最小化 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧
+ * 不属于本进程 ∧ 矩形覆盖整个主屏。无 npm 新依赖。
  *
  * 摸边唤回：隐藏期间在主屏顶部放一条 4px 高的隐形感应窗（不可聚焦、不进
  * 任务栏、鼠标穿透关不掉也无所谓——它只有 4px，盖在岛平时待的位置），
@@ -60,15 +66,59 @@ const probeTimers = new Set<NodeJS.Timeout>()
  * 主进程与窗口却正常）。单发短命 PS 实测 ONESHOT-OK 无此问题。 */
 function watchScript(): string {
   const TICK = '`"'
+  // C# 里字符串字面量统一用 TICK 包裹（在 PS 双引号字符串中表示一个双引号）。
+  // 本进程 pid 直接内插成数字常量，用来排除灵动岛自己的窗口。
+  const ownPid = String(process.pid)
+  const cs = [
+    'using System;',
+    'using System.Runtime.InteropServices;',
+    'using System.Text;',
+    'public class FS {',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern IntPtr GetForegroundWindow();',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsWindowVisible(IntPtr h);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
+    '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
+    'public struct RECT { public int L, T, R, B; }',
+    // DWMWA_CLOAKED = 14：返回 0 表示窗口没被 DWM 隐藏
+    'public static int Cloak(IntPtr h) { int v; int r = DwmGetWindowAttribute(h, 14, out v, 4); return r == 0 ? v : -1; }',
+    'public static string Cls(IntPtr h) { StringBuilder s = new StringBuilder(256); GetClassNameW(h, s, 256); return s.ToString(); }',
+    // 已知的壳层/系统 UI 窗口类名：它们可能铺满整屏，但不是「用户在全屏使用某个应用」
+    'public static bool ShellClass(string c) {',
+    '  if (c == ' + TICK + 'Progman' + TICK + ') return true;', // 桌面
+    '  if (c == ' + TICK + 'WorkerW' + TICK + ') return true;', // 桌面的另一层宿主
+    '  if (c == ' + TICK + 'Shell_TrayWnd' + TICK + ') return true;', // 任务栏
+    '  if (c == ' + TICK + 'Shell_SecondaryTrayWnd' + TICK + ') return true;', // 副屏任务栏
+    '  if (c == ' + TICK + 'Windows.UI.Core.CoreWindow' + TICK + ') return true;', // 输入体验等 XAML 壳层（常被 cloak）
+    '  if (c == ' + TICK + 'XamlExplorerHostIslandWindow' + TICK + ') return true;',
+    '  if (c == ' + TICK + 'ForegroundStaging' + TICK + ') return true;', // 前台切换的过渡窗
+    '  if (c == ' + TICK + 'TaskSwitcherWnd' + TICK + ') return true;', // Alt+Tab
+    '  if (c == ' + TICK + 'MultitaskingViewFrame' + TICK + ') return true;', // 任务视图
+    '  return false;',
+    '}',
+    'public static bool Covers(IntPtr h, int sw, int sh) {',
+    '  RECT r; if (!GetWindowRect(h, out r)) return false;',
+    '  return r.L <= 0 && r.T <= 0 && r.R >= sw && r.B >= sh;',
+    '}',
+    'public static bool IsFs(IntPtr h, int sw, int sh) {',
+    '  if (h == IntPtr.Zero) return false;', // 没有前台窗口（桌面上什么都没选）
+    '  if (!IsWindowVisible(h)) return false;',
+    '  if (Cloak(h) != 0) return false;', // DWM 已隐藏：用户根本看不到它
+    '  if (ShellClass(Cls(h))) return false;',
+    '  uint p; GetWindowThreadProcessId(h, out p);',
+    '  if (p == ' + ownPid + ') return false;', // 别把自己的窗口当全屏
+    '  return Covers(h, sw, sh);',
+    '}',
+    'public static string Probe(int sw, int sh) { return IsFs(GetForegroundWindow(), sw, sh) ? ' + TICK + 'fullscreen' + TICK + ' : ' + TICK + 'normal' + TICK + '; }',
+    '}'
+  ].join(' ')
   return [
-    'Add-Type "using System; using System.Runtime.InteropServices; public class FG { [DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern IntPtr GetForegroundWindow(); [DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r); public struct RECT { public int L, T, R, B; } }"',
+    'Add-Type "' + cs + '"',
     'Add-Type -AssemblyName System.Windows.Forms',
     '$sw=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width',
     '$sh=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height',
-    '$h=[FG]::GetForegroundWindow()',
-    '$r=New-Object FG+RECT',
-    '[void][FG]::GetWindowRect($h,[ref]$r)',
-    'if($r.L -le 0 -and $r.T -le 0 -and $r.R -ge $sw -and $r.B -ge $sh){"fullscreen"}else{"normal"}'
+    '[FS]::Probe($sw,$sh)'
   ].join('; ')
 }
 
@@ -109,7 +159,11 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     }
   }
 
-  /** 判定结果落地（带 300ms 去抖） */
+  /** 判定结果落地（带 300ms 去抖）。
+   * 按**状态**推进而不是只看「判定值翻没翻」：旧实现 `if (fullscreen === lastFullscreen) return`
+   * 一旦被误判成 avoided、而判定值又没翻回 false（例如误判源一直挂在前台），
+   * 岛就会永久藏着不回来（2026-11-08 用户报「岛消失后一直没恢复」）。
+   * 改成每次判定都对齐一次状态机，重复判定为同值时是幂等的（visible 已对就什么都不做）。 */
   const commit = (fullscreen: boolean): void => {
     if (debounceTimer) {
       clearTimeout(debounceTimer)
@@ -117,13 +171,14 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     }
     debounceTimer = setTimeout(() => {
       debounceTimer = null
-      if (fullscreen === lastFullscreen) return
       lastFullscreen = fullscreen
       if (state === 'manual') return // 手动隐藏不受全屏变化影响
-      if (fullscreen && state === 'normal') {
-        state = 'avoided'
-        apply(true)
-      } else if (!fullscreen && state === 'avoided' && !tempVisible && !bannerHold) {
+      if (fullscreen) {
+        if (state === 'normal') {
+          state = 'avoided'
+          apply(true)
+        }
+      } else if (state === 'avoided' && !tempVisible && !bannerHold) {
         state = 'normal'
         apply(false)
       }
