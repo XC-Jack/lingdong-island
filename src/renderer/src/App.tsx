@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Todo, ShelfItem } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -142,6 +142,17 @@ const IcoBell = (): React.JSX.Element => (
     <path d="M12 4a5.5 5.5 0 0 0-5.5 5.5v3l-1.4 2.4a.8.8 0 0 0 .7 1.2h12.4a.8.8 0 0 0 .7-1.2l-1.4-2.4v-3A5.5 5.5 0 0 0 12 4z" />
     <path d="M10 19a2 2 0 0 0 4 0" />
   </IconSvg>
+)
+
+/** 实心铃铛（收起态美化-01）：白色填充铃铛，贴合用户参考图（黑底白铃铛+红点） */
+const IcoBellSolid = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+    <path
+      fill="currentColor"
+      d="M12 3a6 6 0 0 0-6 6v2.8l-1.5 2.6a1 1 0 0 0 .87 1.5h13.26a1 1 0 0 0 .87-1.5L18 11.8V9a6 6 0 0 0-6-6z"
+    />
+    <path fill="currentColor" d="M9.8 17.6a2.3 2.3 0 0 0 4.4 0z" />
+  </svg>
 )
 
 /** Wi-Fi（收起态 US-005）：三段弧线信号图标 */
@@ -2130,6 +2141,12 @@ export default function App(): React.JSX.Element {
   // 通知未读回调（NotifyPanel 上抛）
   const onNotifyUnread = useCallback((n: number) => setNotifyUnread(n), [])
 
+  // 启动时拉一次未读数（美化-01）：收起态铃铛/红点依赖 notifyUnread，但 NotifyPanel 只在
+  // 展开态挂载——重启后不拉一次，收起态永远不知道有未读（既有缺口，铃铛改造时补齐）
+  useEffect(() => {
+    void window.island.notifyList().then((r: NotifyListResult) => setNotifyUnread(r.unread)).catch(() => {})
+  }, [])
+
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
   const onEnter = (): void => {
@@ -2433,9 +2450,8 @@ export default function App(): React.JSX.Element {
           </>
         ) : (
           <>
-            {/* 收起态组件按「页面管理」（US-032）的开关显隐；未读红点不参与裁剪 */}
-            {pagesCustom.collapsed.pet && <Pet mood={mood} />}
-            {pagesCustom.collapsed.clock && <span className="collapsed-clock">{formatClock(now)}</span>}
+            {/* 收起态组件按「页面管理」（US-032）的开关显隐；铃铛不参与裁剪。
+                美化-01：电量环在岛仔前面（用户指定顺序） */}
             {pagesCustom.collapsed.battery && battery !== null && (
               <span
                 className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
@@ -2457,6 +2473,8 @@ export default function App(): React.JSX.Element {
                 <span className="ring-num">{battery}</span>
               </span>
             )}
+            {pagesCustom.collapsed.pet && <Pet mood={mood} />}
+            {pagesCustom.collapsed.clock && <span className="collapsed-clock">{formatClock(now)}</span>}
             {/* 网络（收起态 US-005）：电量环右侧。Wi-Fi 弧线 / 插网线显示水晶头图标；
                 有网白色，连上但没网橙色警示；读不到（没联网 / 命令失败）不渲染，不打扰 */}
             {pagesCustom.collapsed.net && wifi !== null && (
@@ -2493,7 +2511,13 @@ export default function App(): React.JSX.Element {
                 <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
               </span>
             )}
-            {notifyUnread > 0 && <span className="collapsed-dot" title={`${notifyUnread} 条未读通知`} />}
+            {/* 通知铃铛（收起态，美化-01）：有未读时白铃铛 + 右上红点（替代原纯红点） */}
+            {notifyUnread > 0 && (
+              <span className="collapsed-bell" title={`${notifyUnread} 条未读通知`} role="img" aria-label={`${notifyUnread} 条未读通知`}>
+                <IcoBellSolid />
+                <i className="bell-badge" aria-hidden="true" />
+              </span>
+            )}
           </>
         )}
       </div>

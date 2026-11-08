@@ -274,10 +274,20 @@ body {
   white-space: nowrap;
 }
 
-/* 通知未读红点（收起态，有未读通知时出现） */
-.collapsed-dot {
-  width: 7px;
-  height: 7px;
+/* 通知铃铛（收起态，美化-01）：白色实心铃铛 + 右上红点徽标（替代原纯红点） */
+.collapsed-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: rgba(242, 243, 245, 0.92);
+}
+
+.collapsed-bell .bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #ff5f57;
   box-shadow: 0 0 6px rgba(255, 95, 87, 0.8);
