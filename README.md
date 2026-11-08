@@ -31,7 +31,7 @@ Windows 桌面顶部居中的悬浮胶囊：收起时是一条窄条，点开展
 │   ├── preload/             中间人：前台要做事必须经它转达给幕后
 │   └── shared/              公用字典：两边共用的数据格式
 │
-├── scripts/               ※ 自动测试脚本（10 个 .mjs），AI 用，用户不用管
+├── scripts/               ※ 自动测试脚本（33 个 e2e-*.mjs + 2 个辅助 .mjs = 35 个，2026-11-08 核对），AI 用，用户不用管
 ├── build/                 图标等打包资源（icon.ico / icon.png）
 │
 ├── node_modules/          （自动）第三方工具包，几万个文件，不要手动改
@@ -53,6 +53,11 @@ Windows 桌面顶部居中的悬浮胶囊：收起时是一条窄条，点开展
 | `src/main/shelfStore.ts` | 置物架数据的读写 + 提取系统图标（存 `shelf.json` 和 `icon-cache/`） |
 | `src/main/notifyStore.ts` | 通知已读记录的读写（存 `notif-read.json`） |
 | `src/main/statusStore.ts` | 电量等系统状态的读取 |
+| `src/main/prefsStore.ts` | 界面偏好（页面显隐、组件顺序、置物架视图）的读写（存 `prefs.json`） |
+| `src/main/exportStore.ts` | 数据导出：把待办和日程打包成一个 JSON 文件（US-029） |
+| `src/main/fullscreenWatch.ts` | 全屏自动避让：有应用全屏时岛自动隐藏（US-041） |
+| `src/main/notifyIconStore.ts` | 解析通知来自哪个应用、提取该应用的图标 |
+| `src/main/clipboardStore.ts` | 验证码提示：轮询剪贴板，识别到验证码后弹横幅（US-039） |
 | `src/preload/index.ts` | 中间人：把主进程的能力安全地交给界面 |
 | `src/renderer/src/App.tsx` | **界面主体**——你看到的全部画面和交互都在这里 |
 | `src/renderer/src/main.tsx` | 界面的启动入口，只负责把 App 挂上去 |
