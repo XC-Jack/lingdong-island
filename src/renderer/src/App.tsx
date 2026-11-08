@@ -57,25 +57,55 @@ function localDayKey(d: Date = new Date()): string {
 type ShelfView = 'lg' | 'md' | 'sm' | 'list'
 
 /** 收起态可裁剪组件的键（与勾选 UI 一一对应） */
-const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo'] as const
+const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
 type CollapsedKey = (typeof COLLAPSED_KEYS)[number]
 
-/** 页面裁剪偏好：pages 是显示的页面索引集合，collapsed 是收起态组件开关 */
+/** 收起态组件的默认顺序（美化-02）：电量 → 岛仔 → 时钟 → 网络 → 待办 → 铃铛 */
+const DEFAULT_COLLAPSED_ORDER: CollapsedKey[] = ['battery', 'pet', 'clock', 'net', 'todo', 'bell']
+
+/**
+ * 页面裁剪偏好：pages 是显示的页面索引集合，collapsed 是收起态组件开关，
+ * order 是收起态组件从左到右的顺序（美化-02，用户可拖动调整）。
+ */
 interface PagesCustom {
   pages: number[]
   collapsed: Record<CollapsedKey, boolean>
+  order: CollapsedKey[]
 }
 
-/** 默认全开（4 页 + 5 个收起态组件） */
+/** 默认全开（4 页 + 6 个收起态组件）+ 默认顺序 */
 function defaultPagesCustom(): PagesCustom {
   return {
     pages: [0, 1, 2, 3],
-    collapsed: { pet: true, clock: true, battery: true, net: true, todo: true }
+    collapsed: { pet: true, clock: true, battery: true, net: true, todo: true, bell: true },
+    order: [...DEFAULT_COLLAPSED_ORDER]
   }
 }
 
 /**
- * 校验并规整页面裁剪偏好（US-032）。数据存主进程 userData/prefs.json（经 IPC 读写）。
+ * 规整收起态组件顺序（美化-02）：只保留合法键并去重，再把缺失的键按默认顺序补到末尾。
+ * 为什么必须补全而不是丢弃：order 是「渲染清单」——少一个键该组件就永远不显示；
+ * 旧版 prefs 没有 order、或用户手改坏了，都不该让组件消失，按默认位置补回即可。
+ */
+function normalizeOrder(v: unknown): CollapsedKey[] {
+  const arr = Array.isArray(v) ? v : []
+  const seen = new Set<CollapsedKey>()
+  const out: CollapsedKey[] = []
+  for (const item of arr) {
+    if (typeof item === 'string' && (COLLAPSED_KEYS as readonly string[]).includes(item)) {
+      const k = item as CollapsedKey
+      if (!seen.has(k)) {
+        seen.add(k)
+        out.push(k)
+      }
+    }
+  }
+  for (const k of DEFAULT_COLLAPSED_ORDER) if (!seen.has(k)) out.push(k)
+  return out
+}
+
+/**
+ * 校验并规整页面裁剪偏好（US-032 / 美化-02）。数据存主进程 userData/prefs.json（经 IPC 读写）。
  * 为什么不用渲染层 localStorage：本机实测 file:// 来源的 localStorage 跨进程重启会丢失
  * （写入后优雅退出再启动读回为 null），裁剪偏好必须跨重启保留。
  * 值不合法（手工改坏/缺字段/全空页面）一律回落默认全开。
@@ -94,7 +124,7 @@ function normalizePagesCustom(v: unknown): PagesCustom | null {
       if (typeof raw.collapsed[k] === 'boolean') collapsed[k] = raw.collapsed[k]
     }
   }
-  return { pages, collapsed }
+  return { pages, collapsed, order: normalizeOrder(raw.order) }
 }
 
 /**
@@ -1696,13 +1726,14 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string 
   { icon: IcoCal, label: '日程', accent: '#64b5f6' },
 ]
 
-/** 收起态组件在页面管理面板里的显示名（US-032） */
+/** 收起态组件在页面管理面板里的显示名（US-032 / 美化-02） */
 const COLLAPSED_LABELS: Record<CollapsedKey, string> = {
   pet: '岛仔',
   clock: '时钟',
   battery: '电量圈',
   net: '网络图标',
-  todo: '待办数字'
+  todo: '待办数字',
+  bell: '通知铃铛'
 }
 
 /**
@@ -1733,11 +1764,11 @@ function PageManagerPanel({
   const reset = (): void => onChange(defaultPagesCustom())
   // 拖拽排序（US-032 反馈）：只在「显示的页面」列表里拖换位；HTML5 dataTransfer 必须带数据
   // 才稳定触发 dragover/drop（项目踩坑记录）；语义与置物架一致用「互换」。
-  const dragFrom = useRef<number | null>(null)
+  const dragFrom = useRef<number | CollapsedKey | null>(null)
   const reorderTo = (targetPageId: number): void => {
     const from = dragFrom.current
     dragFrom.current = null
-    if (from === null || from === targetPageId) return
+    if (typeof from !== 'number' || from === targetPageId) return
     const pages = pagesCustom.pages.includes(from) ? [...pagesCustom.pages] : null
     if (!pages) return
     const fi = pages.indexOf(from)
@@ -1746,6 +1777,21 @@ function PageManagerPanel({
     pages[fi] = targetPageId
     pages[ti] = from
     onChange({ ...pagesCustom, pages })
+  }
+  // 收起态组件排序（美化-02）：与上面的页面排序同一套「互换」语义和同一个 dragFrom。
+  // 区别是这里没有勾选门槛——6 个组件恒在 order 里，关掉的只是显隐，位置照样能调
+  // （用户常先摆好位置再逐个关，位置信息不该因为关掉就丢）。
+  const reorderCollapsed = (targetKey: CollapsedKey): void => {
+    const from = dragFrom.current as CollapsedKey | null
+    dragFrom.current = null
+    if (from === null || from === targetKey) return
+    const order = [...pagesCustom.order]
+    const fi = order.indexOf(from)
+    const ti = order.indexOf(targetKey)
+    if (fi === -1 || ti === -1) return
+    order[fi] = targetKey
+    order[ti] = from
+    onChange({ ...pagesCustom, order })
   }
   return (
     <div className="pm-panel">
@@ -1789,12 +1835,40 @@ function PageManagerPanel({
           )
         })
       })()}
-      <div className="pm-section">收起态组件</div>
-      {COLLAPSED_KEYS.map((k) => (
-        <label key={k} className="pm-row">
-          <input type="checkbox" checked={pagesCustom.collapsed[k]} onChange={() => toggleCollapsed(k)} />
+      <div className="pm-section">收起态组件（勾选显示，按住拖动换位置）</div>
+      {pagesCustom.order.map((k) => (
+        <div
+          key={k}
+          className={`pm-row ${pagesCustom.collapsed[k] ? '' : 'pm-row-off'}`}
+          data-comp={k}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData('text/plain', k)
+            e.dataTransfer.effectAllowed = 'move'
+            dragFrom.current = k
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            reorderCollapsed(k)
+          }}
+          onDragEnd={() => {
+            dragFrom.current = null
+          }}
+        >
+          {/* 复选框自己处理点击并阻止冒泡：否则点勾选框时会先触发下一行拖拽逻辑 */}
+          <input
+            type="checkbox"
+            checked={pagesCustom.collapsed[k]}
+            onChange={(e) => {
+              e.stopPropagation()
+              toggleCollapsed(k)
+            }}
+            onClick={(e) => e.stopPropagation()}
+          />
           <span className="pm-name">{COLLAPSED_LABELS[k]}</span>
-        </label>
+          <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
+        </div>
       ))}
       <div className="pm-actions">
         <button type="button" className="pm-reset" onClick={reset}>
@@ -2450,74 +2524,102 @@ export default function App(): React.JSX.Element {
           </>
         ) : (
           <>
-            {/* 收起态组件按「页面管理」（US-032）的开关显隐；铃铛不参与裁剪。
-                美化-01：电量环在岛仔前面（用户指定顺序） */}
-            {pagesCustom.collapsed.battery && battery !== null && (
-              <span
-                className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
-                role="img"
-                aria-label={`电量 ${battery}%`}
-                title={`电量 ${battery}%`}
-              >
-                <svg viewBox="0 0 36 36" aria-hidden="true">
-                  <circle className="ring-bg" cx="18" cy="18" r="15.5" />
-                  <circle
-                    className="ring-fg"
-                    cx="18"
-                    cy="18"
-                    r="15.5"
-                    strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
-                    transform="rotate(-90 18 18)"
-                  />
-                </svg>
-                <span className="ring-num">{battery}</span>
-              </span>
-            )}
-            {pagesCustom.collapsed.pet && <Pet mood={mood} />}
-            {pagesCustom.collapsed.clock && <span className="collapsed-clock">{formatClock(now)}</span>}
-            {/* 网络（收起态 US-005）：电量环右侧。Wi-Fi 弧线 / 插网线显示水晶头图标；
-                有网白色，连上但没网橙色警示；读不到（没联网 / 命令失败）不渲染，不打扰 */}
-            {pagesCustom.collapsed.net && wifi !== null && (
-              <span
-                className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
-                title={
-                  wifi.kind === 'ethernet'
-                    ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-                    : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-                }
-                role="img"
-                aria-label={
-                  wifi.kind === 'ethernet'
-                    ? wifi.online
-                      ? '网线已连接，网络正常'
-                      : '网线已连接但没有网络'
-                    : wifi.online
-                      ? 'Wi-Fi 已连接，网络正常'
-                      : 'Wi-Fi 已连接但没有网络'
-                }
-              >
-                {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
-              </span>
-            )}
-            {/* 待办剩余（收起态）：只在真有未完成的事时出现，全部做完就收起不再催。
-                US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」 */}
-            {pagesCustom.collapsed.todo && todoStats.total - todoStats.done > 0 && (
-              <span
-                className="collapsed-todo"
-                title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}
-                role="img"
-                aria-label={`今天还有 ${todoStats.total - todoStats.done} 件没做完`}
-              >
-                <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
-              </span>
-            )}
-            {/* 通知铃铛（收起态，美化-01）：有未读时白铃铛 + 右上红点（替代原纯红点） */}
-            {notifyUnread > 0 && (
-              <span className="collapsed-bell" title={`${notifyUnread} 条未读通知`} role="img" aria-label={`${notifyUnread} 条未读通知`}>
-                <IcoBellSolid />
-                <i className="bell-badge" aria-hidden="true" />
-              </span>
-            )}
+            {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。
+                order 恒含全部 6 项（normalizeOrder 会补齐），关掉的只是不渲染，位置信息保留。
+                用 Fragment 包一层只为了带 key，不产生额外 DOM 节点，DOM 顺序即胶囊视觉顺序。 */}
+            {pagesCustom.order.map((k) => {
+              if (!pagesCustom.collapsed[k]) return null
+              switch (k) {
+                case 'battery':
+                  // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染
+                  return battery !== null ? (
+                    <span
+                      key="battery"
+                      className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
+                      role="img"
+                      aria-label={`电量 ${battery}%`}
+                      title={`电量 ${battery}%`}
+                    >
+                      <svg viewBox="0 0 36 36" aria-hidden="true">
+                        <circle className="ring-bg" cx="18" cy="18" r="15.5" />
+                        <circle
+                          className="ring-fg"
+                          cx="18"
+                          cy="18"
+                          r="15.5"
+                          strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
+                          transform="rotate(-90 18 18)"
+                        />
+                      </svg>
+                      <span className="ring-num">{battery}</span>
+                    </span>
+                  ) : null
+                case 'pet':
+                  return <Pet key="pet" mood={mood} />
+                case 'clock':
+                  return (
+                    <span key="clock" className="collapsed-clock">
+                      {formatClock(now)}
+                    </span>
+                  )
+                case 'net':
+                  // 网络（US-005）：Wi-Fi 弧线 / 插网线显示水晶头图标；有网白色、连上没网橙色；
+                  // 读不到（没联网 / 命令失败）不渲染，不打扰
+                  return wifi !== null ? (
+                    <span
+                      key="net"
+                      className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
+                      title={
+                        wifi.kind === 'ethernet'
+                          ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+                          : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+                      }
+                      role="img"
+                      aria-label={
+                        wifi.kind === 'ethernet'
+                          ? wifi.online
+                            ? '网线已连接，网络正常'
+                            : '网线已连接但没有网络'
+                          : wifi.online
+                            ? 'Wi-Fi 已连接，网络正常'
+                            : 'Wi-Fi 已连接但没有网络'
+                      }
+                    >
+                      {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
+                    </span>
+                  ) : null
+                case 'todo':
+                  // 待办剩余：只在真有未完成的事时出现，全部做完就收起不再催。
+                  // US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」
+                  return todoStats.total - todoStats.done > 0 ? (
+                    <span
+                      key="todo"
+                      className="collapsed-todo"
+                      title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}
+                      role="img"
+                      aria-label={`今天还有 ${todoStats.total - todoStats.done} 件没做完`}
+                    >
+                      <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
+                    </span>
+                  ) : null
+                case 'bell':
+                  // 通知铃铛（美化-01）：有未读时白铃铛 + 右上红点；无未读不渲染
+                  return notifyUnread > 0 ? (
+                    <span
+                      key="bell"
+                      className="collapsed-bell"
+                      title={`${notifyUnread} 条未读通知`}
+                      role="img"
+                      aria-label={`${notifyUnread} 条未读通知`}
+                    >
+                      <IcoBellSolid />
+                      <i className="bell-badge" aria-hidden="true" />
+                    </span>
+                  ) : null
+                default:
+                  return null
+              }
+            })}
           </>
         )}
       </div>
