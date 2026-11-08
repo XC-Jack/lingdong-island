@@ -154,7 +154,9 @@ const main = async () => {
       console.log('[3] A3 跳过（本机无已连接网络，图标未渲染）')
     }
 
-    // —— A4：展开态头部不出现 Wi-Fi/网线图标 ——
+    // —— A4：展开态的网络图标只能出现在头部信息行内 ——
+    // 美化-03 起展开态头部也按「页面管理」的开关与顺序展示网络图标（与收起态完全同步），
+    // 所以原断言「展开态不出现网络图标」作废；改为约束位置：必须在 .head-info 里，不得散落到别处。
     await cdp(
       wsUrl,
       `(() => {
@@ -166,11 +168,24 @@ const main = async () => {
     const a4b = JSON.parse(
       await cdp(
         wsUrl,
-        `JSON.stringify({ wifi: !!document.querySelector('.collapsed-wifi'), expanded: !!document.querySelector('.page-todo, .page-notify, .page-schedule, .page-shelf, .page-settings') || document.querySelector('.island').className.includes('expanded') })`
+        `(() => {
+          const el = document.querySelector('.collapsed-wifi')
+          const info = document.querySelector('.head-info')
+          return JSON.stringify({
+            wifi: !!el,
+            inInfo: !!(el && info && info.contains(el)),
+            expanded: document.querySelector('.island').className.includes('expanded'),
+            hasPetRow: !!document.querySelector('.head-pet'),
+            hasInfoRow: !!info
+          })
+        })()`
       )
     )
-    assert(!a4b.wifi || !a4b.expanded, 'A4 展开态仍显示 Wi-Fi 图标')
-    console.log('[4] A4 通过：展开态无网络图标')
+    assert(a4b.expanded, 'A4 点击后未进入展开态')
+    assert(a4b.hasPetRow && a4b.hasInfoRow, 'A4 展开态头部缺岛仔层或信息行: ' + JSON.stringify(a4b))
+    assert(!a4b.wifi || a4b.inInfo, 'A4 展开态网络图标跑到 .head-info 之外: ' + JSON.stringify(a4b))
+    assert(a4b.wifi === a2.has && !!(!a4b.wifi || a4b.inInfo), 'A4 展开态与收起态的网络图标显隐不一致')
+    console.log('[4] A4 通过：展开态网络图标位于头部信息行（wifi=' + a4b.wifi + '）')
     // 收回来：展开态里 island 类名含 expanded，直接再次 dispatch click（收起态↔展开态互切）
     await cdp(
       wsUrl,
