@@ -1,4 +1,4 @@
-# SPEC 美化-01 收起态通知铃铛 + 电量前移
+﻿# SPEC 美化-01 收起态通知铃铛 + 电量前移
 
 ## 一、目标
 
@@ -44,6 +44,24 @@
 - 不改铃铛在横幅/展开态的出现逻辑。
 - 不动通知数据与已读水位。
 
-## 七、自检记录
+## 七、自检记录（2026-11-08 开发完成）
 
-（开发完成后回填）
+**跑了什么、结果如何**（[实测]）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `npx tsc --noEmit -p .` | PASS |
+| 构建 | `npm run build` | PASS |
+| 本故事 e2e | `node scripts/e2e-collapse-beautify.mjs` | 7/7 PASS |
+| 回归 | collapsed-todo / wifi / notify-icon / fullscreen-avoid | 全 PASS（notify-icon 8/8、fullscreen-avoid 7/7） |
+| 打包安装 | npm run dist → /S 静默安装 | app.asar 2026-11-08 11:42:30，启动 4 进程存活 |
+
+**实现说明**：
+1. 铃铛用实心 SVG（IcoBellSolid，currentColor 白色）+ `.bell-badge` 右上红点（#ff5f57 带光晕），贴合用户参考图。
+2. **顺手补齐既有缺口**：收起态未读数原先只由展开态 NotifyPanel 更新——重启后收起态红点/铃铛恒不亮。App 根组件启动时现在会拉一次 `notifyList()`。
+3. 排障记录：回归时 e2e-fullscreen-avoid 曾 4/7，根因是**残留 electron 进程污染 EnumWindows 断言**（vis 统计把残留进程的主窗也计入）——清进程后 7/7，watcher 与本次改动无关。教训：跑 e2e 前先清 electron 进程。
+
+**未验证**（留用户实机）：
+- 铃铛造型的审美是否满意（按参考图实现，未给用户看过成品）。
+- 真实新通知到达时铃铛+红点即时点亮（e2e 用改水位方式模拟，未发真实 toast 验证收起态铃铛）。
+
