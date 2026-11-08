@@ -2362,6 +2362,107 @@ export default function App(): React.JSX.Element {
     })
   }
 
+  /**
+   * 单个状态组件（美化-03）：收起态胶囊与展开态头部共用这一份实现，避免两处 JSX 漂移。
+   * 返回 null = 现在不该显示：未勾选（pagesCustom.collapsed[k] === false）或没有数据
+   * （读不到电量 / 没有网络 / 今天没有未完成 / 没有未读通知），沿用收起态既有语义。
+   * 只有 'pet' 会返回岛仔本体，且由调用方决定放在哪一层——展开态必须放在信息行外层，不能进 .head-info。
+   */
+  const renderStatusItem = (k: CollapsedKey): React.JSX.Element | null => {
+    if (!pagesCustom.collapsed[k]) return null
+    switch (k) {
+      case 'battery':
+        // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染
+        return battery !== null ? (
+          <span
+            key="battery"
+            className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
+            role="img"
+            aria-label={`电量 ${battery}%`}
+            title={`电量 ${battery}%`}
+          >
+            <svg viewBox="0 0 36 36" aria-hidden="true">
+              {/* 底环 + 进度环：stroke-dasharray 按 battery% 画弧（r=15.5 周长≈97.4） */}
+              <circle className="ring-bg" cx="18" cy="18" r="15.5" />
+              <circle
+                className="ring-fg"
+                cx="18"
+                cy="18"
+                r="15.5"
+                strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
+                transform="rotate(-90 18 18)"
+              />
+            </svg>
+            <span className="ring-num">{battery}</span>
+          </span>
+        ) : null
+      case 'pet':
+        return <Pet key="pet" mood={mood} />
+      case 'clock':
+        return (
+          <span key="clock" className="collapsed-clock">
+            {formatClock(now)}
+          </span>
+        )
+      case 'net':
+        // 网络（US-005）：Wi-Fi 弧线 / 插网线显示水晶头图标；有网白色、连上没网橙色；
+        // 读不到（没联网 / 命令失败）不渲染，不打扰
+        return wifi !== null ? (
+          <span
+            key="net"
+            className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
+            title={
+              wifi.kind === 'ethernet'
+                ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+                : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
+            }
+            role="img"
+            aria-label={
+              wifi.kind === 'ethernet'
+                ? wifi.online
+                  ? '网线已连接，网络正常'
+                  : '网线已连接但没有网络'
+                : wifi.online
+                  ? 'Wi-Fi 已连接，网络正常'
+                  : 'Wi-Fi 已连接但没有网络'
+            }
+          >
+            {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
+          </span>
+        ) : null
+      case 'todo':
+        // 待办剩余：只在真有未完成的事时出现，全部做完就收起不再催。
+        // US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」
+        return todoStats.total - todoStats.done > 0 ? (
+          <span
+            key="todo"
+            className="collapsed-todo"
+            title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}
+            role="img"
+            aria-label={`今天还有 ${todoStats.total - todoStats.done} 件没做完`}
+          >
+            <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
+          </span>
+        ) : null
+      case 'bell':
+        // 通知铃铛（美化-01）：有未读时白铃铛 + 右上红点；无未读不渲染
+        return notifyUnread > 0 ? (
+          <span
+            key="bell"
+            className="collapsed-bell"
+            title={`${notifyUnread} 条未读通知`}
+            role="img"
+            aria-label={`${notifyUnread} 条未读通知`}
+          >
+            <IcoBellSolid />
+            <i className="bell-badge" aria-hidden="true" />
+          </span>
+        ) : null
+      default:
+        return null
+    }
+  }
+
   return (
     <div className="app">
       <div
@@ -2418,32 +2519,14 @@ export default function App(): React.JSX.Element {
                 <span className="panel-badge-icon">{page === 4 ? <IcoCheck /> : PAGE_META[page].icon()}</span>
               </span>
               <span className="panel-title">{page === 4 ? '页面管理' : PAGE_META[page].label}</span>
-              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）——迷你岛仔 + 时钟 + 电量圈，居中 */}
+              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）。
+                  美化-03：与收起态共用同一套 pagesCustom（显隐 + 顺序）——
+                  岛仔不参与排序，单独占上面一层；其余组件按 order 排在下面一行。 */}
               <span className="head-status">
-                <Pet mood={mood} />
-                <span className="head-clock">{formatClock(now)}</span>
-                {battery !== null && (
-                  <span
-                    className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
-                    role="img"
-                    aria-label={`电量 ${battery}%`}
-                    title={`电量 ${battery}%`}
-                  >
-                    <svg viewBox="0 0 36 36" aria-hidden="true">
-                      {/* 底环 + 进度环：stroke-dasharray 按 battery% 画弧（r=15.5 周长≈97.4） */}
-                      <circle className="ring-bg" cx="18" cy="18" r="15.5" />
-                      <circle
-                        className="ring-fg"
-                        cx="18"
-                        cy="18"
-                        r="15.5"
-                        strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
-                        transform="rotate(-90 18 18)"
-                      />
-                    </svg>
-                    <span className="ring-num">{battery}</span>
-                  </span>
-                )}
+                {pagesCustom.collapsed.pet && <span className="head-pet">{renderStatusItem('pet')}</span>}
+                <span className="head-info">
+                  {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
+                </span>
               </span>
               {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度+自启开关推到右侧，
                   与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
@@ -2551,100 +2634,8 @@ export default function App(): React.JSX.Element {
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。
                 order 恒含全部 6 项（normalizeOrder 会补齐），关掉的只是不渲染，位置信息保留。
-                用 Fragment 包一层只为了带 key，不产生额外 DOM 节点，DOM 顺序即胶囊视觉顺序。 */}
-            {pagesCustom.order.map((k) => {
-              if (!pagesCustom.collapsed[k]) return null
-              switch (k) {
-                case 'battery':
-                  // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染
-                  return battery !== null ? (
-                    <span
-                      key="battery"
-                      className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
-                      role="img"
-                      aria-label={`电量 ${battery}%`}
-                      title={`电量 ${battery}%`}
-                    >
-                      <svg viewBox="0 0 36 36" aria-hidden="true">
-                        <circle className="ring-bg" cx="18" cy="18" r="15.5" />
-                        <circle
-                          className="ring-fg"
-                          cx="18"
-                          cy="18"
-                          r="15.5"
-                          strokeDasharray={`${(battery / 100) * 97.4} 97.4`}
-                          transform="rotate(-90 18 18)"
-                        />
-                      </svg>
-                      <span className="ring-num">{battery}</span>
-                    </span>
-                  ) : null
-                case 'pet':
-                  return <Pet key="pet" mood={mood} />
-                case 'clock':
-                  return (
-                    <span key="clock" className="collapsed-clock">
-                      {formatClock(now)}
-                    </span>
-                  )
-                case 'net':
-                  // 网络（US-005）：Wi-Fi 弧线 / 插网线显示水晶头图标；有网白色、连上没网橙色；
-                  // 读不到（没联网 / 命令失败）不渲染，不打扰
-                  return wifi !== null ? (
-                    <span
-                      key="net"
-                      className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
-                      title={
-                        wifi.kind === 'ethernet'
-                          ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-                          : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-                      }
-                      role="img"
-                      aria-label={
-                        wifi.kind === 'ethernet'
-                          ? wifi.online
-                            ? '网线已连接，网络正常'
-                            : '网线已连接但没有网络'
-                          : wifi.online
-                            ? 'Wi-Fi 已连接，网络正常'
-                            : 'Wi-Fi 已连接但没有网络'
-                      }
-                    >
-                      {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
-                    </span>
-                  ) : null
-                case 'todo':
-                  // 待办剩余：只在真有未完成的事时出现，全部做完就收起不再催。
-                  // US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」
-                  return todoStats.total - todoStats.done > 0 ? (
-                    <span
-                      key="todo"
-                      className="collapsed-todo"
-                      title={`今天还有 ${todoStats.total - todoStats.done} 件没做完（共 ${todoStats.total} 件）`}
-                      role="img"
-                      aria-label={`今天还有 ${todoStats.total - todoStats.done} 件没做完`}
-                    >
-                      <b className="collapsed-todo-num">{todoStats.total - todoStats.done}</b>
-                    </span>
-                  ) : null
-                case 'bell':
-                  // 通知铃铛（美化-01）：有未读时白铃铛 + 右上红点；无未读不渲染
-                  return notifyUnread > 0 ? (
-                    <span
-                      key="bell"
-                      className="collapsed-bell"
-                      title={`${notifyUnread} 条未读通知`}
-                      role="img"
-                      aria-label={`${notifyUnread} 条未读通知`}
-                    >
-                      <IcoBellSolid />
-                      <i className="bell-badge" aria-hidden="true" />
-                    </span>
-                  ) : null
-                default:
-                  return null
-              }
-            })}
+                渲染实现抽到 renderStatusItem（美化-03），与展开态头部共用同一份。 */}
+            {pagesCustom.order.map((k) => renderStatusItem(k))}
           </>
         )}
       </div>
