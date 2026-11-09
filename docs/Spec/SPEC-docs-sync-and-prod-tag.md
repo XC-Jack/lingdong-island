@@ -48,7 +48,7 @@
 |---|---|
 | D1 | `Select-String -Path "docs\facts\*.md","README.md" -Pattern "不新建 JSON|开发完成待验收|约 55KB|约 29KB|10 个|倒计时未做|Wi-Fi、倒计时未做"` 在**现行结论**里零命中（历史 SPEC 与 `docs/archive/` 不算） |
 | D2 | `docs/facts/数据规则.md` 第 5 条含 `prefs.json`、`prefs:get`/`prefs:set`、三道白名单，且明确标注旧 localStorage 结论作废 |
-| D3 | `docs/facts/数据规则.md` 存储位置表格的 5 处源码行号与 `grep` 实测一致：`todoStore.ts:37`、`shelfStore.ts:173`、`:174`、`scheduleStore.ts:32`、`notifyStore.ts:195`、`prefsStore.ts:106` |
+| D3 | `docs/facts/数据规则.md` 存储位置表格里的源码行号与 `grep` 实测一致（含 `todoStore.ts:37`、`shelfStore.ts:173`、`:174`、`scheduleStore.ts:32`、`notifyStore.ts:195`、`prefsStore.ts:106`、`notifyIconStore.ts:262`、`index.ts:289`） |
 | D4 | `git show HEAD:docs/facts/用户角色与用户故事.md` 中 US-029 为「已验收合并 `d30e801`」、US-035 为 `prefs.json` |
 | D5 | `git tag -l prod-20261108` 有输出；`git rev-parse prod-20261108^{commit}` = `15c6da0` 的完整哈希 |
 | D6 | `git describe --tags --always 15c6da0` = `prod-20261108` |
@@ -91,4 +91,37 @@
 
 ## 八、验收记录
 
-（留空。按 `docs/工程规则.md` 第 3.2 / 3.3 节，由未参与实现的会话或用户针对固定提交逐条核对 D1–D9；不以自检结果代替。）
+角色：独立验收（未参与实现的独立会话 `docs-acceptance`，fresh context），2026-11-09 上午，针对**固定提交 `27d7646`**（父提交 `15c6da0`，分支 `docs-sync-and-prod-tag`，工作区干净），全程只读：未切分支、未提交、未打标签、未改任何文件、未联网、未跑构建。逐条独立重跑，不照抄第七节。
+
+| 编号 | 独立核对结果 | 判定 |
+|---|---|---|
+| D1 | `Select-String -Path "docs\facts\*.md","README.md" -Pattern "不新建 JSON\|开发完成待验收\|约 55KB\|约 29KB\|10 个\|倒计时未做\|Wi-Fi、倒计时未做"` → 命中 0 | ✅ 通过 |
+| D2 | `docs/facts/数据规则.md:30` 含 `prefs.json`、`prefs:get`/`prefs:set`、`normalizeOrder()` / `normalizePagesCustom()` / `normalizeShelfView()`；`:31` 明写「旧结论作废」 | ✅ 通过 |
+| D3 | 逐行读源码核对表格 8 处行号（含 `todoStore.ts:37`、`shelfStore.ts:173/:174/:175`、`scheduleStore.ts:32/:82`、`notifyStore.ts:195/:225`、`prefsStore.ts:106/:107`、`notifyIconStore.ts:262`、`index.ts:289`），全部精确命中 | ✅ 通过 |
+| D4 | `git show HEAD:docs/facts/用户角色与用户故事.md` → `:216`「已验收合并 `d30e801`」、`:162`「迁移到主进程 `prefs.json` 的 `shelfView` 字段」 | ✅ 通过 |
+| D5 | `git rev-parse prod-20261108^{commit}` = `15c6da0f64303664eb79fc1fe3b727496c998429`（= `git rev-parse 15c6da0`）；`git cat-file -t` = `commit`，`for-each-ref` 显示无 tag object → 轻量标签；`main` 同在 `15c6da0` | ✅ 通过 |
+| D6 | `git describe --tags --always 15c6da0` = `prod-20261108`（HEAD 为 `prod-20261108-1-g27d7646`，正常） | ✅ 通过 |
+| D7 | `git diff --name-only 15c6da0` 与 `27d7646^ 27d7646` 同为 10 文件（`README.md`、本 SPEC、7 份 `docs/facts/*`、`docs/状态.md`），无 `src/`、`package.json`、`scripts/`；`--stat` 150+/37- | ✅ 通过 |
+| D8 | `docs/状态.md:13` 含本轮、`:18`「P1 已全部完成」；全仓库「P1 未完成」仅剩本 SPEC 内描述改动对象的字样，非现行结论 | ✅ 通过 |
+| D9 | `docs/facts/版本历史.md:20` 有 `prod-20261108` 行，`:34` 含 `prod-<日期>`、`:36` 写明「即时给当前 `main` 的 HEAD 补打」 | ✅ 通过 |
+
+额外核对：diff 范围全为文档/README/Spec、零代码零配置（通过）；标签指向与类型（通过）；`polish-video-20261104..15c6da0` = 198 个提交、e2e 33 / 辅助 2 / 合计 35、`src/main/*.ts` = 11、`App.tsx` = 114250、`styles.css` = 45707，均与改后文档一致 [实测]。
+
+**验收结论**：D1–D9 全部通过，diff 干净、标签指向与类型正确，**不存在阻断合并的实质问题**。
+
+**验收意见里如实记录的两类非阻断项**：
+
+- 存疑（不阻断）：D1 指定范围零命中、现行结论干净；但全仓库 broad 扫描的命中「不只」落在已作废说明 / 历史 SPEC / `docs/archive/` —— 还有 `.backups/docs-sync-20261108/`（改动前本地快照，Git 忽略）、`docs/状态.md` 背景引用、本 SPEC 自身字面、历史 SPEC 与 archive。均非现行结论，故验收任务里「是否只落在三类」的预设说法不够严谨，此处如实更正；D1 的验收口径本来就限定为 `docs/facts/*.md` 与 `README.md` 的现行结论，不受影响。
+- 措辞瑕疵：本 SPEC D3 文字写「5 处」却列 6 个选择器，已在本轮收口提交改正为不带数字的「表格里的源码行号」。
+
+**按 `docs/工程规则.md` 第 3.4 节的收口提交**：验收指出合并前两项必办（本回填、改写 `docs/状态.md:13` 的「进行中 / 尚未合并 / 待办」措辞）与 3 处本轮改后残留，均由紧随其后的收口提交在任务分支上处理，未改 `27d7646` 本身：
+
+1. `docs/facts/功能清单.md:69`「⬜ 倒计时」→「⛔ 倒计时已否决不做（US-006）」，与本文件 `:14`、SPEC 预期行为 3 口径一致。
+2. `docs/facts/用户角色与用户故事.md:197` US-025 否决依据补指「第五节 5.2」；5.2 表格补 US-025 一行，使「已否决」4 项在 5.2 / `docs/状态.md:62` / `docs/facts/里程碑.md` 之间一致（原 5.2 只有 3 项，导致指向不实）。
+3. `docs/状态.md:13` 去掉时序依赖的「进行中 / 待办」，改为完成态并记明用户 2026-11-09 授权合并。
+
+受影响检查（D1、D7、D8、D9 及新增的口径核对）在收口提交后重跑，结果见本节下方「收口提交后复验」。
+
+**未纳入本轮、留待另开 SPEC 的既有瑕疵**（验收员指出，非本轮引入，按「不顺手改无关功能」不动）：`docs/facts/用户角色与用户故事.md` 第 5.1 节标题「P1 四条」与表格 5 行 / `docs/状态.md` 表格 7 行的条数不一致；`docs/状态.md:64` 把 US-025 否决依据指向 5.2 而 5.2 原不含该项（已在收口提交中通过补行消除）。
+
+**收口提交后复验**（实现方执行，[实测]）：D1 指定范围零命中；`git diff --name-only 27d7646..HEAD` 只列收口涉及的 4 个文档，无代码；`docs/facts/功能清单.md:14` 与 `:69`、5.2 表格 4 行与 `docs/状态.md:62` 的 4 项否决口径一致；`git rev-parse prod-20261108^{commit}` 仍为 `15c6da0`；工作区干净。独立验收针对的 `27d7646` 内容未被改写，收口提交只做上述文字修正与记录回填，不引入新的行为变更。
