@@ -13,9 +13,10 @@
 |---|---|---|---|
 | V0 原始 | `($b.BatteryStatus -eq 2)` | `96\|True` | 错：拔电后仍绿（系统还报 AC=1） |
 | V1（`0dfcc8f`） | `($b.BatteryStatus -in 6,7,8,9) -or [bool]$w.Charging` | `96\|False` | **错：插着电却是白弧**，用户 17:37 驳回 |
-| V2 最终 | `($b.BatteryStatus -notin 1,4,5) -and -not [bool]$w.Discharging` | `96\|True` | 待用户确认观感 |
+| V2 最终 | `($b.BatteryStatus -notin 1,4,5) -and -not [bool]$w.Discharging` | `96\|True` | 独立验收发现 `4/5` 被排除导致「插电 + 15%」走红态，与第 4 条矛盾 |
+| V3 定版 | `($b.BatteryStatus -notin 1) -and -not [bool]$w.Discharging` | `96\|True` | 待用户确认观感 |
 
-V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft 的严格语义（`6/7/8/9`＝正在充电）实现，而电池到 96% 后系统停止充电、仍在供电，`BatteryStatus` 是 `2`（接 AC）或 `3`（已充满），于是显示白弧。用户的实际口径是「插着电源就该是绿的」。V2 改成「不是放电态即为充电态」。
+V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft 的严格语义（`6/7/8/9`＝正在充电）实现，而电池到 96% 后系统停止充电、仍在供电，`BatteryStatus` 是 `2`（接 AC）或 `3`（已充满），于是显示白弧。用户的实际口径是「插着电源就该是绿的」。V2 改成「不是放电态即为充电态」；V3 再把 `4/5`（低电/临界）也纳入充电态，修掉「插着电的低电量反而显示红色」这个矛盾——只有 `BatteryStatus=1`（放电中）或 WMI 明确报 `Discharging=True` 才算没接电。
 
 ## 一、目标
 
@@ -40,28 +41,33 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 
 ## 二、修改范围
 
-| 文件 | 改什么 |
-|---|---|
-| `src/main/statusStore.ts` | 电量行（改动后 `:44`）的充电判定：`($b.BatteryStatus -eq 2)` → `(($b.BatteryStatus -notin 1,4,5) -and -not [bool]$w.Discharging)`，先取 `root\wmi` 的 `Discharging` 作排除项；`:84` 的 `charging = chg === 'True'` 不变（协议约定不变） |
-| `src/renderer/src/App.tsx` | 删掉 case 'battery' 里的 `.ring-bolt` 闪电 SVG（改动前的 `:2404-2409`）与相关注释；`charging` state（`:1915`）、`setCharging`（`:2103`）、`low` 判定（`:2382`）、三态 className/title/aria（`:2386-2389`）全部保留 |
-| `src/renderer/src/styles.css` | 删掉 `.head-battery-ring .ring-bolt` 规则块（改动前的 `:505-518`）；`.head-info .head-battery-ring svg:not(.ring-bolt)`（`:452`）还原成 `.head-info .head-battery-ring svg`（闪电不存在了，`:not()` 失去意义） |
-| `scripts/e2e-battery-states.mjs` | ①patch 目标串 OLD 换成新的 PS 电量行；②断言改为「四场景一律无 `.ring-bolt`」，其余（类名/数字/title/aria/弧色/数字色）不变 |
-| `docs/Spec/SPEC-battery-charging-accuracy.md` | 本文件 |
-| `docs/Spec/SPEC-battery-charge-low-indicator.md` | 第一节与第二节补一句「闪电已按用户要求移除」，避免两份文档互相矛盾 |
-| `docs/状态.md` | 一句话状态追加本轮修正 |
-| `docs/facts/功能清单.md` | 第 5 节电量环描述从「`≤20%` 变红」升级为三态（充电绿 / 低电红 / 普通白）+ 充电判据与刷新延迟说明 |
-| `docs/facts/本机约束与踩坑.md` | 「系统能力」节新增「充电判定别用 `BatteryStatus -eq 2`」踩坑条目（含四种判据对比）；「验证边界」节补注真实充电 WMI 仍未验证 |
+| 文件 | 改什么 | 落在哪个提交 |
+|---|---|---|
+| `src/main/statusStore.ts` | 电量行（改动后 `:48`）的充电判定：`($b.BatteryStatus -eq 2)` → `(($b.BatteryStatus -notin 1) -and -not [bool]$w.Discharging)`，先取 `root\wmi` 的 `Discharging` 作排除项；`:88` 的 `charging = chg === 'True'` 不变（协议约定不变） | `0dfcc8f`（V1）→ `f42464e`（V2）→ 本次（V3） |
+| `src/renderer/src/App.tsx` | 删掉 case 'battery' 里的 `.ring-bolt` 闪电 SVG（改动前的 `:2404-2408`）与相关注释；`charging` state（`:1915`）、`setCharging`（`:2103`）、`low` 判定（`:2382`）、三态 className/title/aria（`:2386-2389`）全部保留 | `0dfcc8f` |
+| `src/renderer/src/styles.css` | 删掉 `.head-battery-ring .ring-bolt` 规则块（改动前的 `:505-518`）；`.head-info .head-battery-ring svg:not(.ring-bolt)`（`:452`）还原成 `.head-info .head-battery-ring svg`（闪电不存在了，`:not()` 失去意义）。现存相关行：`:495` 红弧、`:499` 绿弧、`:502` 红数字 | `0dfcc8f` |
+| `scripts/e2e-battery-states.mjs` | ①patch 目标串 OLD 换成新的 PS 电量行；②断言改为「四场景一律无 `.ring-bolt`」，其余（类名/数字/title/aria/弧色/数字色）不变 | `0dfcc8f` → 本次（OLD 串跟 V3） |
+| `docs/Spec/SPEC-battery-charging-accuracy.md` | 本文件 | 本次 |
+| `docs/Spec/SPEC-battery-charge-low-indicator.md` | 第一节与第二节补一句「闪电已按用户要求移除」，避免两份文档互相矛盾 | `0dfcc8f` |
+| `docs/状态.md` | 一句话状态追加本轮修正 | `0dfcc8f` + 本次 |
+| `docs/facts/功能清单.md` | 第 5 节电量环描述从「`≤20%` 变红」升级为三态（充电绿 / 低电红 / 普通白）+ 充电判据与刷新延迟说明 | `0dfcc8f` |
+| `docs/facts/本机约束与踩坑.md` | 「系统能力」节新增「充电判定别用 `BatteryStatus -eq 2`」踩坑条目（含四种判据对比）；「验证边界」节补注真实充电 WMI 仍未验证 | `0dfcc8f` |
+
+> **范围口径说明（独立验收 C1）**：上表是「本轮累积范围」（相对上一轮交付 `2aaa9c0` 共 9 个文件）。单个提交只含其中一部分：`f42464e` 是 6 个文件，V3 这次只动 `src/main/statusStore.ts`、`scripts/e2e-battery-states.mjs`、本 SPEC 与 `docs/状态.md`。B6 里「只含第二节列出的文件」按累积口径核对。
 
 **明确不改**：`src/preload/index.ts`（`charging: boolean` 协议不变）、`src/main/` 其它模块、阈值 20%、轮询频率（主进程缓存 30s / 渲染层 60s）、布局与组件结构、`package.json`、`out/`（构建产物，跑完 e2e 会字节还原）。
 
 ## 三、预期行为
 
-> **2026-11-09 17:37 订正**：用户原话「我现在冲着电，他是白的；我要的就是充电时是绿色，低于20变红色，正常就是白色」。原第 1 条只认 `6/7/8/9`（「正在充电」的严格语义），但电池到 96% 后系统停止充电仍在供电，`BatteryStatus` 是 `2`（接交流电）或 `3`（已充满），于是显示白弧——用户看到的是「插着电却是白的」，判定为错。判据改为第 1a 条，下面 1–6 条按新判据重写。
+> **2026-11-09 17:37 订正**：用户原话「我现在冲着电，他是白的；我要的就是充电时是绿色，低于20变红色，正常就是白色」。原第 1 条只认 `6/7/8/9`（「正在充电」的严格语义），但电池到 96% 后系统停止充电仍在供电，`BatteryStatus` 是 `2`（接交流电）或 `3`（已充满），于是显示白弧——用户看到的是「插着电却是白的」，判定为错。判据改为第 1a 条，下面 1–5 条按新判据重写。
+> **2026-11-09 17:56 再订正（V3）**：独立验收 C3 指出，上一版判据把 `4/5`（低电/临界）排除在充电态之外，于是「插着电 + 15%」会被判成没充电、走红态，与第 4 条「接着电源且 ≤20% → 绿」自相矛盾。判据再放宽为「只有 `BatteryStatus=1`（放电中）或 WMI 明确 `Discharging=True` 才算没接电」，`4/5` 归入充电态。
+>
+> 模拟对象实测（`EstimatedChargeRemaining=15`）：`1 → 15|False`；`2/3/4/5/6/7/8/9/10/11 → 15|True`；`2 且 Discharging=True → 15|False`。本机现况仍是 `96|True`。
 
-1. **接着电源**（`BatteryStatus` 不是 `1`/`4`/`5`，即不是放电/低电临界，且 WMI 没报 `Discharging=True`）：弧绿 `rgba(75, 214, 130, 0.9)`，无闪电，title/aria = `充电中 · 电量 X%`。包含 `2`（接 AC 未充）、`3`（已充满）、`6/7/8/9`（正在充）、`11`（部分充电）。
+1. **接着电源**（`BatteryStatus` 不是 `1`，且 WMI 没报 `Discharging=True`）：弧绿 `rgba(75, 214, 130, 0.9)`，无闪电，title/aria = `充电中 · 电量 X%`。包含 `2`（接 AC 未充）、`3`（已充满）、`4/5`（低电/临界但插着电）、`6/7/8/9`（正在充）、`11`（部分充电）。
 2. **没接电源且 >20%**：普通态——弧白 `rgba(255, 255, 255, 0.85)`、数字白、title/aria = `电量 X%`。
 3. **没接电源且 ≤20%**：弧红 `rgba(255, 107, 107, 0.9)` + 数字红 `rgba(255, 107, 107, 0.95)`，title/aria = `电量偏低 · X%`。
-4. **接着电源且 ≤20%**：以充电为准——弧绿、不出现红色、`充电中 · 电量 X%`（沿用优先级规则）。
+4. **接着电源且 ≤20%**：以充电为准——弧绿、不出现红色、`充电中 · 电量 X%`（V3 下这条对 `4/5` 也可达，不再自相矛盾）。
 5. 读不到电池（`null`）：整环不渲染（不变）。
 
 **用户口径的三态映射**：充电=绿、≤20% 且没充电=红、其余=白。这三条就是本轮唯一的行为契约，不再引入「严格充电语义」这种用户看不见的区分。
@@ -75,7 +81,7 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 | 编号 | 可亲手核对的结果 |
 |---|---|
 | B1 | `npm run typecheck` 退出码 0（node + web 两个子命令均无错误输出），原始输出贴进第七节 |
-| B2 | 直接跑主进程取数命令（V2 判据），本机当前（插电、96%、系统已停充）输出 `96\|True`；第七节附命令原文与输出。同时附反证：`-in 6,7,8,9`（V1）在同机输出 `96\|False`，说明 V1 会漏判 |
+| B2 | 直接跑主进程取数命令（V3 判据），本机当前（插电、95%、系统已停充）输出 `96\|True`；第七节附命令原文与输出。同时附反证：`-in 6,7,8,9`（V1）在同机输出 `96\|False`，说明 V1 会漏判 |
 | B3 | 四场景 e2e 全过：S1 普通 `80\|false`、S2 充电 `99\|True`、S3 充电且低电 `15\|True`、S4 低电 `15\|false`；且**四个场景一律断言无 `.ring-bolt`**（证明闪电已移除） |
 | B4 | e2e 结束后 `out/main/index.js` 字节级还原（脚本内 R1 断言 `Buffer.compare === 0`） |
 | B5 | 回归：`scripts/e2e-m3.mjs`、`scripts/e2e-wifi.mjs`（`:66` 断言 charging 是 boolean）、`scripts/e2e-collapse-beautify.mjs`（收起态组件顺序与显隐）全部 PASS |
@@ -102,11 +108,11 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 | 编号 | 命令 / 做法 | 实际输出 | 结论 |
 |---|---|---|---|
 | B1 | `npm run typecheck` | `typecheck:node`（`tsc --noEmit -p tsconfig.node.json`）与 `typecheck:web`（`-p tsconfig.web.json`）均只有命令行、无错误输出，退出码 0 | ✅ 通过 |
-| B2 | 直接内联跑 `src/main/statusStore.ts:44` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | **V2 判据：`96\|True`**（本机插电 96% 已停充，应符合用户口径「插电即绿」）。反证：V1 判据 `-in 6,7,8,9` 同机输出 `96\|False`（白弧，用户 17:37 驳回）；V0 判据 `-eq 2` 输出 `96\|True`（数值对但语义错，拔电仍绿） | ✅ 通过 |
+| B2 | 直接内联跑 `src/main/statusStore.ts:48` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | **V3 判据：`96\|True`**（本机插电 96% 已停充，符合用户口径「插电即绿」）。反证：V1 判据 `-in 6,7,8,9` 同机输出 `96\|False`（白弧，用户 17:37 驳回）；V0 判据 `-eq 2` 输出 `96\|True`（数值对但语义错，拔电仍绿）。逐状态模拟见第九节 | ✅ 通过 |
 | B3 | `node scripts/e2e-battery-states.mjs` | `== 结果：31 过 / 0 败 ==`；四个场景 DOM 快照见下 | ✅ 通过 |
 | B4 | 同上（脚本内 R1） | `✓ R1 out/main/index.js 还原字节一致` | ✅ 通过 |
-| B5 | `node scripts/e2e-m3.mjs` / `node scripts/e2e-wifi.mjs` / `node scripts/e2e-collapse-beautify.mjs` | m3：`[1] statusSnapshot: {"battery":96,"charging":true,...}`（V2 判据下本机插电 → `charging:true`，与 V1 时的 `false` 相反，符合用户口径）、`E2E PASS`；wifi：A1–A5 全通过、`E2E WIFI PASS`（A3 DOM 顺序 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`）；collapse-beautify：`7 过 / 0 败`（B3 电量环在岛仔之前） | ✅ 通过 |
-| B6 | `git status --porcelain` + `git diff --stat` | 提交前只有第二节列出的文件（4 改 + 1 新增 SPEC）；工作区干净见提交时核对 | ✅ 通过 |
+| B5 | `node scripts/e2e-m3.mjs` / `node scripts/e2e-wifi.mjs` / `node scripts/e2e-collapse-beautify.mjs` | m3：`[1] statusSnapshot: {"battery":95,"charging":true,...}`（V3 判据下本机插电 → `charging:true`，与 V1 时的 `false` 相反，符合用户口径）、`E2E PASS`；wifi：A1–A5 全通过、`E2E WIFI PASS`（A3 DOM 顺序 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`）；collapse-beautify：`7 过 / 0 败`（B3 电量环在岛仔之前） | ✅ 通过 |
+| B6 | `git status --porcelain` + `git show --stat` | 提交前只有第二节列出的文件；工作区干净见提交时核对 | ✅ 通过 |
 
 B3 四场景原始 DOM 快照（脚本输出照抄）：
 
@@ -119,13 +125,16 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 
 四条关键点：S2/S3 弧绿且**无** `low` 类（充电优先成立）；S4 弧红且数字红；四场景 `hasBolt` 全 false（闪电已移除）；S1 是纯白普通态。
 
+**自检踩坑（重要，记入流程）**：第一次跑 B3 得到 `15 过 / 16 败`，四个场景读到的 DOM 全是同一个 `95% / charging` 真机快照——原因是上一轮遗留的预览版 electron 仍占着 CDP 端口 `9321`，e2e 的 `connect()` 连上了那个旧实例，而**新打补丁的实例端口被占、根本没被查**。杀掉预览版（`taskkill /IM electron.exe /T /F`）后重跑才得 `31 过 / 0 败`。教训：跑任何 `--remote-debugging-port=9321` 的 e2e 前必须先确认没有别的 electron 占着这个端口，否则测试会静默连错实例、给出假通过或假失败。
+
 **本轮未验证 / 已知边界（如实记录）**：
 
-1. **真实硬件「正在充电」现场未复现**：本机电池 96%、`ChargeRate=0`，`BatteryStatus` 恒为 `2`、WMI `Charging=False`。V2 判据对本机的结论是 `96|True`（绿弧，与用户口径一致，已真机截图核对），但「`BatteryStatus ∈ 6,7,8,9` 的真充电」只能靠注入 `99|True` 覆盖渲染层，**不是**真实充电现场。
-2. **拔插电源后界面不立刻变**：主进程缓存 30s + 渲染层轮询 60s，最坏约 90 秒。用户报「拔了还绿」的直接原因是 V0 判据错，但拔电后要等一会儿才变色这个体验问题**本轮没处理**，另行提出。V2 判据本身依赖系统 `ACLineStatus`，本机之前出现过「用户拔了电、系统仍报 AC=1」的情况（`powercfg /batteryreport` 末条仍记 AC），这类情况 V2 也无法分辨——**这是已知残留风险**。
-3. **低电量真机未验证**：本机电池长期 96% 以上，红色低电态只在 e2e 注入 `15|false` 时验过 DOM 与 computed style，真机自然掉电到 ≤20% 未验证。
-4. **视觉观感待用户确认**：绿弧已在真机界面看到（收起态与展开态头部），红色数字与「电量偏低 · X%」提示只在注入下验过，未人眼确认。
+1. **真实硬件「正在充电」现场未复现**：本机电池 96%→95%、`ChargeRate=0`，`BatteryStatus` 恒为 `2`、WMI `Charging=False`。V3 判据对本机的结论是 `96|True`（绿弧，与用户口径一致，已真机 CDP 核对两态：收起 ring 22x22、展开 ring 20x20，均 `cls="head-battery-ring  charging"`、`title/aria="充电中 · 电量 95%"`、`bolt=null`），但「`BatteryStatus ∈ 6,7,8,9` 的真充电」只能靠注入 `99|True` 覆盖渲染层，**不是**真实充电现场。
+2. **拔插电源后界面不立刻变**：主进程缓存 30s + 渲染层轮询 60s，最坏约 90 秒。用户报「拔了还绿」的直接原因是 V0 判据错，但拔电后要等一会儿才变色这个体验问题**本轮没处理**，另行提出。V3 判据本身依赖系统 `ACLineStatus`，本机之前出现过「用户拔了电、系统仍报 AC=1」的情况（`powercfg /batteryreport` 末条仍记 AC），这类情况 V3 也无法分辨——**这是已知残留风险**。
+3. **低电量真机未验证**：本机电池长期 95% 以上，红色低电态只在 e2e 注入 `15|false` 时验过 DOM 与 computed style，真机自然掉电到 ≤20% 未验证。
+4. **视觉观感待用户确认**：绿弧已在真机界面看到（收起态与展开态头部，CDP 截元素 10 倍图），红色数字与「电量偏低 · X%」提示只在注入下验过，未人眼确认。
 5. 未打包、未装机（用户机器跑的是安装版 `D:\软件\灵动岛\`，仍是旧包）。
+6. **`BatteryStatus=10`（Undefined）被算充电态**：独立验收 C10 指出，属极端边界，本轮不改。
 
 ## 八、验收记录
 
@@ -158,9 +167,37 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 - **charging 三态未被误删**：`App.tsx:1915` state、`:2103` setCharging、`:2382` low 判定、`:2386-2389` 三态 className/title/aria；`styles.css:452`、`:495`、`:499`、`:502` 四条规则全在。
 - e2e 隔离真的生效：`isolate-userdata.mjs` 改写 `APPDATA` + 追加 `--user-data-dir`，隔离目录有实时写入；bundle 注入是真还原（从 `.bak` 起步 + `finally` 还原 + `Buffer.compare` 逐字节校验）。
 
-### 第二轮（V2 判据，最终）
+### 第二轮（V2 判据，`f42464e`）
 
-待填（针对 V2 的固定提交重跑 B1–B6，重点是 B2 应得 `96|True`）。
+角色：独立验收（teammate `verifier`，独立上下文，未参与实现）。验收对象：固定提交 `f42464e`。时间：2026-11-09 17:45–18:02。原始报告：`.tmp/独立验收-f42464e.md`（24.7 KB，423 行，`.tmp/` 被 git 忽略）。
+
+**结论：通过，无阻断项。**
+
+| 编号 | 独立复跑结果 |
+|---|---|
+| B1 | ✅ 通过。`npm run typecheck` EXIT 0，node/web 均无错误输出 |
+| B2 | ✅ 通过。内联跑 `src/main/statusStore.ts:46` 那条 PS 行得 **`96\|True`**（V1 时是 `96\|False`，翻转成立，符合用户「插电即绿」口径） |
+| B3 | ✅ 通过。`31 过 / 0 败`，四场景 DOM 快照与第七节逐字符一致，四场景 `hasBolt` 全 false |
+| B4 | ✅ 通过。`✓ R1 out/main/index.js 还原字节一致`；`git ls-files out` 为空 |
+| B5 | ✅ 通过。m3 `statusSnapshot {"battery":95,"charging":true}` + `E2E PASS`；wifi `E2E WIFI PASS` + A3 顺序正确；collapse-beautify `7 过 / 0 败` |
+| B6 | ✅ 通过。工作区干净，提交 6 个文件全在第二节累积范围表内 |
+
+**验收方挑刺（C1–C10，均非阻断）**：
+
+- **C1 范围表口径**：第二节 9 项是累积范围（`git diff --name-status 2aaa9c0 f42464e` 正好 9 个），`f42464e` 只含 6 个。→ 已在第二节加「落在哪个提交」列 + 口径说明段。
+- **C2 行号漂移**：写 `statusStore.ts:44` 实际 `:46`、`:84` 实际 `:86`、App.tsx 闪电「删 `:2404-2409`」实际 `:2404-2408`。→ 已全部按 V3 后的实际行号重核并订正（见第二节表）。
+- **C3 实质语义缺口（本轮唯一真问题）**：第三节第 4 条「接着电源且 ≤20% → 绿」在 `BatteryStatus=4/5` 时不可达——V2 判据 `-notin 1,4,5` 显式排除 4/5，模拟实测 `4 → 15|False`、`5 → 15|False`，渲染层 `low = !charging && <=20` 成立 → 走红态。→ **采纳「放宽判据」方案，产出 V3**（`-notin 1`），详见第三节订正与第九节；`4/5` 矛盾已消除。
+- **C7** 第七节 B6 曾写「4 改 + 1 新增 SPEC」，实际 6 个 M、0 个 A。→ 已改为「只含第二节列出的文件」。
+- **C8** 第八节第二轮当时是「待填」。→ 本段即回填。
+- **C9 预览版进程**：验收窗口实测 electron 进程为 0——`e2e-collapse-beautify.mjs` 的 `taskkill /IM electron.exe /T /F` 会把预览版一起杀掉（本轮第二次踩到）。真实 `%APPDATA%\lingdong-island` 114 个文件、17:44 后零写入；隔离目录 `.tmp/e2e-userdata/lingdong-island` 65 文件、17:44 后 8 个变化 → **数据隔离真生效**。
+- **C10** `BatteryStatus=10`（Undefined）被算充电态，属极端边界；`=null` 走 `pct === 'null'` 分支安全。本轮不改，已记入第七节未验证清单第 6 条。
+- **C4/C5/C6** 为既有脚本瑕疵（`e2e-m3.mjs:39` 空转断言、`e2e-wifi.mjs:125` `[object SVGAnimatedString]`、`e2e-collapse-beautify.mjs:64/:156` 按镜像名全杀），不在本 SPEC 范围。
+
+**验收方明确列出「不得读成通过」的项**：真实充电现场（`BatteryStatus ∈ 6,7,8,9` / `Charging=True`）、真机自然低电红态、拔插电源 90 秒延迟、拔线后系统仍报 AC=1 的残留风险、人眼观感、打包装机。
+
+### 第三轮（V3 判据，本次提交）
+
+**尚未做独立验收**。V3 只改了 `src/main/statusStore.ts` 一行判据表达式与 e2e 的 `OLD` 常量，其余全部沿用 `f42464e`；等 V3 固定提交落定后，需由未参与实现的会话针对该提交重跑 B1–B6（B2 预期仍为 `96|True`，并追加 `4/5` 两个模拟状态必须得 `15|True`）。**在此之前，本 SPEC 的独立验收结论只覆盖到 V2，V3 只有研发自检，不得当成已验收。**
 
 ## 九、判据实测对比记录（2026-11-09，本机）
 
@@ -175,9 +212,21 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 '... (($b.BatteryStatus -in 6,7,8,9) -or [bool]($w|Where-Object {$_.Charging})) ...'
 # → 96|False   ← 用户 17:37 驳回：插着电却是白弧
 
-# V2（最终）：不是放电态即为充电态
-'$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1,4,5) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{"null|false"}'
+# V2（f42464e）：不是放电态即为充电态（但排除了 4/5，见独立验收 C3）
+'... (($b.BatteryStatus -notin 1,4,5) -and -not [bool]($w|Where-Object {$_.Discharging})) ...'
+# → 96|True；但 15% + BatteryStatus=4/5 时 → 15|False（插着电的低电量走红态，与预期行为第 4 条矛盾）
+
+# V3（定版）：只有「放电中」才算没接电
+'$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{"null|false"}'
 # → 96|True
+```
+
+V3 逐状态模拟（`EstimatedChargeRemaining=15`，`$w` 为空）：
+
+```
+1 -> 15|False    2 -> 15|True     3 -> 15|True     4 -> 15|True
+5 -> 15|True     6 -> 15|True     9 -> 15|True    10 -> 15|True
+2 且 Discharging=True -> 15|False
 ```
 
 同时实测的三种「看起来能用但不行」的替代判据：
@@ -188,7 +237,7 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 | `System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus` | `Online` | 同上，只表示插着线 |
 | kernel32 `GetSystemPowerStatus().BatteryFlag` bit3 | `1`（不含 8 位） | 本机 `ACLineStatus=1` 但 `BatteryFlag=1`（放电中），自身就矛盾；用户拔线后系统仍报 AC=1 |
 
-**残留风险 [实测依据 + 推断]**：本机曾出现「用户拔了电源、系统仍报 `ACLineStatus=1`、`powercfg /batteryreport` 末条仍写 AC」的情况。V2 判据在这种情况下仍会显示绿弧。最可能错在：那台机器的 USB-C 供电链路在拔线后仍有残余供电/系统状态更新滞后，不是软件能判干净的。真正的兜底是让用户拔线后等一个刷新周期（≤90 秒）再看；若仍绿，说明系统层面仍认为在供电。
+**残留风险 [实测依据 + 推断]**：本机曾出现「用户拔了电源、系统仍报 `ACLineStatus=1`、`powercfg /batteryreport` 末条仍写 AC」的情况。V3 判据在这种情况下仍会显示绿弧。最可能错在：那台机器的 USB-C 供电链路在拔线后仍有残余供电/系统状态更新滞后，不是软件能判干净的。真正的兜底是让用户拔线后等一个刷新周期（≤90 秒）再看；若仍绿，说明系统层面仍认为在供电。
 
 真机截面截图（2026-11-09 17:39，预览版 `npm start`）：
 

@@ -37,13 +37,15 @@ function readStatus(): StatusSnapshot {
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
     const script = [
       // 电量行（与 US-005 之前格式一致）：电量|是否充电中
-      // 判据＝「不是放电状态」（BatteryStatus 不是 1/4/5，且 WMI 没报 Discharging）。
+      // 判据＝「不是放电状态」（BatteryStatus 不是 1，且 WMI 没报 Discharging）。
       // 用户口径（2026-11-09 17:37 原话「我现在冲着电，他是白的」）：插着电源就该显示充电态。
       // 不能只看 6/7/8/9——电池到 96% 后系统会停止充电但仍在供电，那时 BatteryStatus=2
       // （接交流电）或 3（已充满），只按 6-9 判就会漏掉，界面显示白弧，用户认为错。
       // 也不能用 `-eq 2`：那会连「拔了电但系统还认为在 AC」的情况一起算成充电。
+      // 4/5（低电/临界）同样不能排除：插着电且电量低时必须走绿（充电优先），
+      // 排除它们会让「15% 插着电」显示成低电红，与用户口径相反。
       // 实测记录见 docs/Spec/SPEC-battery-charging-accuracy.md 第九节。
-      '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1,4,5) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{"null|false"}',
+      '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{"null|false"}',
       // 网络行：net|IPv4类别|IPv6类别|接口名|介质类型|是否虚拟
       // 按 InterfaceIndex 关联连接配置与网卡：MediaType 802.11=无线 / 802.3=有线，
       // Virtual=True 是 VPN 等虚拟网卡（如 Radmin VPN），不算真网线（实测踩坑）
