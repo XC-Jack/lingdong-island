@@ -1,8 +1,9 @@
 # SPEC：电量显示状态——新增充电态与低电量态
 
-> 任务分支：`battery-charge-low-indicator`，基线 `main`（`7d4089b`，2026-11-09 文档收口）。固定提交：`2c71cca39f9d2cf809e5d202b8f1b693ab5eef7f`（短哈希 `2c71cca`）。
+> 任务分支：`battery-charge-low-indicator`，基线 `main`（`7d4089b`，2026-11-09 文档收口）。固定提交：`2c71cca39f9d2cf809e5d202b8f1b693ab5eef7f`（短哈希 `2c71cca`），闪电图标修正追加提交 `2aaa9c0`。
 > 设计已由用户确认（本轮开工提示词原文），不再访谈。实现已在本分支完成，SPEC 按要求在提交前补齐；本文件如实写明「实现先于 SPEC 文档落盘」这一时序，自检以最终固定提交为准。
 > 时序说明：工程规则要求「先写 SPEC 再开工」，本轮实际是先把改动做完、再补 SPEC——原因是注入验证链路（CDP 无法改 contextBridge 数据，改用 patch out/main bundle 的 PowerShell 电量行）需要反复探索，SPEC 的验收条件依赖探索结论（见第七节「时序与合规说明」）。
+> 追加说明（2026-11-09 晚）：首版交付后用户实测指出闪电图标在两态下尺寸不一致且盖住数字，已追加提交 `2aaa9c0` 修正（见第三节 1a 与第七节「追加修正」）。原固定提交 `2c71cca` 保留不重写历史，独立验收请以**最新提交**为准。
 
 ## 一、目标
 
@@ -19,7 +20,7 @@
 | 文件 | 改什么 |
 |---|---|
 | `src/renderer/src/App.tsx` | ①新增 `charging` state（:1915）；②轮询 `pull()` 里 `setCharging(s.charging)`（:2103）；③case 'battery' 改块级：`low` 判定改「没充电且 ≤20%」、className 加 `charging`、aria-label/title 三态、charging 时渲染 `.ring-bolt` 小闪电 SVG（:2377-2409） |
-| `src/renderer/src/styles.css` | `.head-battery-ring.charging .ring-fg`（弧绿）、`.head-battery-ring.low .ring-num`（数字红）、`.head-battery-ring .ring-bolt`（小闪电定位/填色/投影）（:498-513） |
+| `src/renderer/src/styles.css` | `.head-battery-ring.charging .ring-fg`（弧绿）、`.head-battery-ring.low .ring-num`（数字红）、`.head-battery-ring .ring-bolt`（小闪电定位/填色/投影）（:498-513）；追加修正 `2aaa9c0`：`.head-info .head-battery-ring svg` 改为 `svg:not(.ring-bolt)`（:452），闪电定 7px 去深底（:505-517） |
 | `scripts/e2e-battery-states.mjs` | 新增 e2e：四场景注入验证（第七节详述） |
 | `docs/Spec/SPEC-battery-charge-low-indicator.md` | 本文件 |
 | `docs/状态.md` | 一句话状态加一条本轮记录 |
@@ -28,7 +29,8 @@
 
 ## 三、预期行为
 
-1. `charging === true`：环加 `charging` 类 → `.ring-fg` stroke 变 `rgba(75, 214, 130, 0.9)`（绿）；右上角渲染 10×10 小闪电 SVG（绿，带轻投影）；title/aria = `充电中 · 电量 X%`；中间数字颜色不变。
+1. `charging === true`：环加 `charging` 类 → `.ring-fg` stroke 变 `rgba(75, 214, 130, 0.9)`（绿）；右上角渲染小闪电 SVG（绿，带淡投影）；title/aria = `充电中 · 电量 X%`；中间数字颜色不变。
+   1a. **闪电尺寸（2026-11-09 追加修正 `2aaa9c0`）**：闪电固定 7×7px，钉在环的 1-2 点位置（`top:-3px; right:-4px`），不加深色圆底（圆底会在绿环上切缺口），只用 `drop-shadow(0 0 1px rgba(0,0,0,.9))` 与环线分离；收起态与展开态尺寸必须一致。修正前展开态因 `.head-info .head-battery-ring svg`（选择器权重 0,2,0）覆盖 `.head-battery-ring .ring-bolt`（0,1,0），闪电实际一直是 20px、盖住中间数字，收起态才是 10px——这是首版交付的真实缺陷。
 2. `charging === false && battery <= 20`：环加 `low` 类 → 弧变红 `rgba(255, 107, 107, 0.9)`、数字变红 `rgba(255, 107, 107, 0.95)`；title/aria = `电量偏低 · X%`；无闪电。
 3. 其余（没充电且 >20%）：保持原样——弧白 `rgba(255, 255, 255, 0.85)`、数字白、title/aria = `电量 X%`、无闪电、无类。
 4. `battery === null`（读不到）：与此前一致，整个电量环不渲染。
@@ -92,6 +94,21 @@
 - 未跑 `npm run dist` / 未装机 / 未启动安装版（本轮明确不做，用户机器上仍跑旧版）。
 - 收起态与展开态头部**共用同一 JSX**（App.tsx:2377-2409 只有一份 case 'battery'），e2e 断言的是收起态 DOM；展开态头部为推断同效 [推断：两处引用同一 renderStatusItem 输出，样式类同名；最可能错在展开态有独立的覆盖 CSS——已查 styles.css 495-513 无展开态作用域选择器，风险低]。
 - 闪电图标的实际视觉效果（位置/大小观感）未经人眼在真实界面确认，e2e 只验证了 DOM 存在与 CSS 值正确。
+
+### 追加修正（2026-11-09 晚，提交 `2aaa9c0`）
+
+用户实测指出闪电图标有问题（m00918/m00920/m01026「界面这个图标，你看不到问题吗」「你自己看看你改了啥」）。首版交付的闪电在展开态一直是 20px（原因见第三节 1a），盖住中间数字，与收起态完全不一致，是真实缺陷，不是观感偏好。修正与复检：
+
+| 检查 | 做法 | 结果 |
+|---|---|---|
+| 几何核实 | 临时给 electron 加 `--remote-debugging-port=9321`，CDP 读 `.ring-bolt` 的 `getBoundingClientRect()` | [实测] 修前展开态 bolt 计算宽高 **20px**、收起态 **10px**；修后两态均 **7px**（展开 ring 20px、收起 ring 22px，比例各自协调） |
+| 视觉对比 | CDP `Page.captureScreenshot` 截图元素（10× 放大 + 1× 实尺），四种候选（8px 深底 / 6px 深底 / 7px 无底 / 7px 描边）拼对比图 | [实测] 深底方案会在绿环上切出缺口（A/B 明显）、描边方案把闪电压暗（D）、无底最干净（C）→ 采用 C 风格 |
+| 两态一致性 | 点击切换收起/展开各截一次 | [实测] 收起态 bolt 7×7 @ (36.5,7)，ring 22×22 @ (17.6,10)；展开态 bolt 7×7 @ (175.3,36.8)，ring 20×20 @ (158.3,39.8)；两态视觉一致 |
+| typecheck | `npm run typecheck` | [实测] `typecheck:node` 与 `typecheck:web` 均无错误输出 |
+| 四场景 e2e | `node scripts/e2e-battery-states.mjs` | [实测] **31 过 / 0 败**（改 CSS 尺寸不影响断言项） |
+| 回归 | `e2e-m3` / `e2e-collapse-beautify` / `e2e-wifi` | [实测] `E2E PASS` / 7 过 0 败 / `E2E WIFI PASS` |
+
+仍**未验证**：闪电在真实界面（非 CDP 截图）的人眼观感确认——只是把几何尺寸改对、把切缺口和压数字去掉了，好不好看要用户看。
 
 独立验收按 `docs/工程规则.md` 第 3.2 节，由未参与实现的会话针对**固定提交**逐条重跑 A1–A6，结论写进第八节，不以本节自检结果代替。
 
