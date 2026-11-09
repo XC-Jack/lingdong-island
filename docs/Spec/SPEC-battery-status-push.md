@@ -4,6 +4,7 @@
 > 基线：`12fd736`（V3 判据定版 + 第三轮独立验收记录）。
 > 起因：用户 2026-11-09 19:45 原文「现在没什么问题了，就是反应太慢了，我插了半天才显示」。
 > **固定提交：`36f6dc3`（perf: 插拔电源即时刷新（powerMonitor 事件推送 + 2s 看门狗））。**
+> **本轮追加（2026-11-09 22:00 之后，尚未提交）**：用户原话「最好就是这个拔插的显示可以实时的…截图是我的笔记本的充电图标，他就是实时的，不像你那么慢」。上一版虽然做到 1–3 秒，但**颜色仍要等一次约 1 秒的 PowerShell 取数**才翻转。本轮改为「事件到达即翻转颜色并广播，百分比随后补」。用户已选定「23 分钟档」：不做独立验收（第八节写 `[未做]`）、不打包、不备份（文件均已提交、可 `git checkout` 还原）。
 
 ## 一、目标
 
@@ -15,7 +16,7 @@
 
 | 文件 | 改什么 | 是否本次 |
 |---|---|---|
-| `src/main/statusStore.ts` | ① 缓存常量抽成 `CACHE_MS`；② 新增 `refreshAndBroadcast()`（重读 + 广播）；③ `setupStatus()` 里注册 `powerMonitor` 的 `on-ac` / `on-battery` / `resume`，事件到达时作废缓存并补一次延迟重读；④ 新增 `powerMonitor.isOnBatteryPower()` 的 2 秒轻量看门狗（不 spawn 子进程）作为事件缺失时的兜底；⑤ 新增导出 `stopStatus()` | ✅ |
+| `src/main/statusStore.ts` | ① 缓存常量抽成 `CACHE_MS`；② 新增 `refreshAndBroadcast()`（重读 + 广播）与 `broadcast()`；③ `setupStatus()` 里注册 `powerMonitor` 的 `on-ac` / `on-battery` / `resume`；④ `powerMonitor.isOnBatteryPower()` 的看门狗（不 spawn 子进程）兜住事件缺失；⑤ 新增导出 `stopStatus()`；**⑥（本轮追加）`applyPowerEvent()` 让事件当场翻转颜色并广播、`EVENT_TRUST_MS` 事件优先窗口、`WATCH_MS` 1000 / `EVENT_SETTLE_MS` 300** | ✅ |
 | `src/main/index.ts` | `import { setupStatus, stopStatus }`；`window-all-closed` 里加 `stopStatus()`（与 `stopNotifyStore` / `stopScheduleStore` 同型） | ✅ |
 | `src/preload/index.ts` | `api` 内新增 `onStatusChanged(cb)` → `ipcRenderer.on('island:status-changed', ...)`（照抄 `onAvoidChanged` 的写法） | ✅ |
 | `src/renderer/src/App.tsx` | 电量/Wi-Fi 那个 `useEffect` 里加订阅 `window.island.onStatusChanged(...)`，收到即 `setBattery/setCharging/setWifi`；60 秒轮询**保留**作为兜底 | ✅ |
@@ -30,8 +31,8 @@
 
 ## 三、预期行为
 
-1. 插上电源（或拔掉）：约 1–3 秒内弧变绿（或变回白/红），title 与 aria-label 同步。依据是「事件先到 → 重读 → 广播」。
-2. 系统不发事件时（部分扩展坞/驱动）：2 秒看门狗发现 `powerMonitor.isOnBatteryPower()` 翻转，走同一条重读+广播路径，最坏约 3 秒。
+1. 插上电源（或拔掉）：颜色**当场**翻转（几十毫秒级，不等取数），title 与 aria-label 同步；百分比、Wi-Fi 在 300 ms 后补读一次再更新。依据是「事件先到 → `applyPowerEvent` 直接改 `cache` 并广播 → 再去读真实值」。3 秒事件优先窗口内，即使系统的电量读数还报旧方向，也以事件为准，避免「闪一下又弹回去」。
+2. 系统不发事件时（部分扩展坞/驱动）：1 秒看门狗发现 `powerMonitor.isOnBatteryPower()` 翻转，走同一条 `applyPowerEvent` 路径，最坏约 1 秒 + 一帧。
 3. 60 秒轮询仍在，作为最后兜底（例如事件与看门狗双双失灵时，最坏仍是原来的 90 秒，不会更差）。
 4. 判定口径不变：V3 那套语义原样保留——插着电源绿、没接电且 ≤20% 红、其余白。
 5. 其它状态项（Wi-Fi / 时钟 / 待办 / 铃铛）行为不变；广播里带的 `wifi` 字段与以前一致。
@@ -48,7 +49,7 @@
 |---|---|---|
 | P1 | `npm run typecheck` 通过 | 原样贴输出，退出码 0 |
 | P2 | `npm run build` 通过 | 贴产物文件名与大小 |
-| P3 | 主进程广播通路真的活着（不是靠轮询） | `node scripts/e2e-battery-push.mjs`：把主进程取数行换成「从测试控件文件读值」，并把 `electron.powerMonitor.on("on-ac", scheduleRefresh);` 这一行换成 `setTimeout(scheduleRefresh, 6000);`——即人为制造一次「插电事件」，走的是与真实插拔**完全相同**的 `scheduleRefresh → refreshAndBroadcast → webContents.send` 路径；脚本在 **12 秒内**（远小于 60 秒轮询）观察 DOM 从注入值 A 变成注入值 B 即算通过；跑完字节还原 `out/main/index.js`。**注意：本测试只覆盖「事件驱动」这条路径，2 秒看门狗与 `resume` 路径零覆盖**（见第七节未验证清单、第八节 C12） |
+| P3 | 主进程广播通路真的活着，且**颜色不等取数** | `node scripts/e2e-battery-push.mjs`：把取数行换成「先睡 2 秒再读测试文件」（制造慢取数），把传感器换成读假文件，把 `on-ac` / `on-battery` 注册行换成两个定时器在 12 秒 / 22 秒分别调用 `applyPowerEvent(true)` / `applyPowerEvent(false)`（与真实插拔同一条代码路径）。断言里最关键的两条：**变绿那一刻百分比还是旧的 80、变白那一刻百分比还是旧的 99**，且百分比更新比变色晚 1 秒以上。跑完字节还原 `out/main/index.js`。**注意：看门狗与 `resume` 路径仍零 e2e 覆盖** |
 | P4 | 三态视觉没被改坏 | `node scripts/e2e-battery-states.mjs` 仍 31 过 0 败（四场景：普通白 / 充电绿 / 充电且低电绿 / 低电红） |
 | P5 | 回归三件套 | `scripts/e2e-m3.mjs`、`scripts/e2e-wifi.mjs`、`scripts/e2e-collapse-beautify.mjs` 全过 |
 | P6 | 提交范围不越界 | `git show --stat <固定提交>` 只含第二节"✅ 本次"列出的文件；工作区干净 |
@@ -240,6 +241,85 @@ $ git show --stat --oneline 1006314
 2. **`e2e-collapse-beautify.mjs` 会杀掉预览版** [实测]：该脚本 `:64`/`:156` 用 `taskkill /IM electron.exe /T /F` 按镜像名全杀，跑完回归后我起的预览版也一起没了，要重跑 `npm start` 才能继续看界面。这是既有脚本行为（上一轮验收 C5 已记录），本轮不改。
 3. **跑任何用 CDP 9321 的脚本前必须确认端口空闲** [实测]：上一轮踩过——遗留的 electron 占着 9321 时，脚本的 `connect()` 会连到旧实例、读到旧数据，表现为「改什么都没生效」。本轮跑前已确认 `Get-NetTCPConnection -LocalPort 9321` 为空。（第二轮验收 C23 建议：更严谨的判据是加 `-State Listen`，因为刚 disconnect 的连接可能还挂在 `TimeWait` 状态；本轮沿用旧写法，记在这里备查。）
 
+### 第三批自检（2026-11-09 22:50 之后）：颜色改由电源事件当场翻转
+
+**改动动机**：上一版 1–3 秒仍不够。链路是「事件到 → 600 ms 去抖 → `readStatus()` 起 PowerShell 约 1 秒 → 广播」，颜色实际跟在那次取数后面。用户要的是「跟任务栏图标一样实时」。
+
+**改法**（`src/main/statusStore.ts`，本次只改这一个源码文件）：
+
+- `WATCH_MS` `2_000`→`1_000`；`EVENT_SETTLE_MS` `600`→`300`。
+- 新增 `const EVENT_TRUST_MS = 3_000`（事件优先窗口）。
+- 新增 `function applyPowerEvent(chargingFromEvent: boolean)`（`:154`）：把事件给的方向**当场**写进 `cache` 并 `broadcast()`，再 `scheduleRefresh()` 去补百分比。on-ac → `applyPowerEvent(true)`，on-battery → `applyPowerEvent(false)`（`:204`/`:205`），看门狗翻转也走同一条路（`:182`）。
+- `refreshAndBroadcast()`（`:132`）里加事件优先窗口：`const inTrust = trustedCharging !== null && Date.now() - trustedAt < EVENT_TRUST_MS`，窗口内 `cache = { ...next, charging: trustedCharging }`，避免「变色 300 ms 后被旧读数打回原色」。
+
+**过程中发现并修掉的一处真缺陷** [实测]：本轮先在 `refreshAndBroadcast()` 里保留了旧代码 `lastOnBattery = !cache.charging`。本机传感器 `powerMonitor.isOnBatteryPower()` 恒返回 `false`（[实测] 探针 `.tmp/probe-sensor.js` 连测 20 次全部 `isOnBatteryPower=false`），而读数可能是 `charging:false`；1 秒一次的回写让看门狗每秒都判定「翻转了」，把界面强行掰成绿——`e2e-battery-states` 的 S4（15% 没插电，应红）当场跑出 `cls="head-battery-ring  charging"`、`stroke` 绿、`title=充电中 · 电量 15%`，`21 过 / 10 败`。修法：`refreshAndBroadcast()` 与 `status:snapshot` 的缓存回填里**都不再写 `lastOnBattery`**，让它只由看门狗采样和电源事件维护；修后 S4 恢复 `cls="head-battery-ring low "`、`stroke=rgba(255, 107, 107, 0.9)`、`title=电量偏低 · 15%`，`31 过 / 0 败`。教训：**「上一份读数」与「上一份传感器采样」是两个不同的事实，不能互相回写**。
+
+**P1 typecheck — ✅ 通过**
+
+```
+> lingdong-island@0.1.0 typecheck
+> npm run typecheck:node && npm run typecheck:web
+
+> lingdong-island@0.1.0 typecheck:node
+> tsc --noEmit -p tsconfig.node.json
+
+> lingdong-island@0.1.0 typecheck:web
+> tsc --noEmit -p tsconfig.web.json
+
+TYPECHECK EXIT=0
+```
+
+**P2 build — ✅ 通过**
+
+```
+out/main/index.js  76.09 kB
+out/preload/index.js  8.85 kB
+out/renderer/index.html                   0.49 kB
+out/renderer/assets/index-CsgyUWqi.css   45.93 kB
+out/renderer/assets/index--d5mQQdE.js   664.29 kB
+BUILD EXIT=0
+```
+
+（`out/main/index.js` 从上一版的 74.67 kB 涨到 76.09 kB，是 `applyPowerEvent` / `broadcast` / 事件优先窗口三段新逻辑；preload 与 renderer 哈希未变，说明本轮没碰渲染层。）
+
+**P3 广播通路 e2e — ✅ `22 过 / 0 败`**
+
+脚本已重写为「三方自洽的假世界」，证明的是**颜色不等取数**这件事：
+
+- 把电量行换成 `$(Start-Sleep -Milliseconds 2000; Get-Content -Raw '<值文件>').Trim()`（制造 2 秒慢取数）；
+- 把两处 `powerMonitor.isOnBatteryPower()` 换成读假传感器文件 `__e2eFakeOnBattery()`；
+- 把 `on-ac` 注册行换成两个定时器，在 12 秒 / 22 秒时分别写「99|True + AC」并 `applyPowerEvent(true)`、写「15|False + BAT」并 `applyPowerEvent(false)`——走的就是生产代码同一条 `applyPowerEvent` 路径。
+
+原始输出的关键四行：
+
+```
+[初始] {"has":true,...,"cls":"head-battery-ring  ","num":"80","title":"电量 80%","stroke":"rgba(255, 255, 255, 0.85)"} 距 spawn 4949 ms
+[插电事件后] {"cls":"head-battery-ring  charging","num":"80","title":"充电中 · 电量 80%","stroke":"rgba(75, 214, 130, 0.9)"} 距 spawn 12172 ms
+[拔电事件后] {"cls":"head-battery-ring  ","num":"99","title":"电量 99%","stroke":"rgba(255, 255, 255, 0.85)"} 距 spawn 22187 ms
+[取数返回后] {"cls":"head-battery-ring low ","num":"15","title":"电量偏低 · 15%","stroke":"rgba(255, 107, 107, 0.9)"} 距启动 25387 ms
+== 结果：22 过 / 0 败 ==
+```
+
+铁证是那两行：**变绿时百分比还是旧的 80、变白时百分比还是旧的 99**——颜色早于取数 3.2 秒就变了（P3-13 / P3-20 分别断言「数比绿晚 1 秒以上」「红比白晚 1 秒以上」）。事件在 12 000 ms 触发，界面 12 172 ms 变绿，贴着事件；若仍走「等取数」，最早也要 14 秒多。
+
+**P4 四场景 — ✅ `31 过 / 0 败`**（S1 8 + S2 8 + S3 7 + S4 7 + R1 1，字节还原一致）
+
+**P5 回归三件套 — ✅ 全过**
+
+- `e2e-m3`：`[1] statusSnapshot: {"battery":99,"charging":true,"wifi":{...}}` → `E2E PASS`（EXIT=0）
+- `e2e-wifi`：`E2E WIFI PASS`（EXIT=0），A3 顺序仍 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`
+- `e2e-collapse-beautify`：`7 过 / 0 败`（EXIT=0）
+
+**P6 提交范围 — ⬜ 待提交后回填**
+
+**P7 真机插拔 — ❌ [未验证]**（同前：本机电池恒 99% 插电，注入测的是通路时延）
+
+**第三批踩坑** [实测]：
+
+1. **PowerShell 里不能用 `(...; ...)` 当子表达式**：第一版把电量行换成 `(Start-Sleep -Milliseconds 2000; Get-Content -Raw '<path>').Trim()`，PowerShell 报 `Missing closing ')' in expression`、`Unexpected token ')' in expression or statement`，整条取数失败 → 电量 `null` → 环根本不渲染 → 20 条断言全败。必须写成 `$(Start-Sleep -Milliseconds 2000; Get-Content -Raw '<path>').Trim()`（`$( )` 才是子表达式）。
+2. **假事件时刻要从「进程启动」算**：bundle 里的定时器基准是进程启动，而脚本的 `tStart` 在 CDP 连上之后才取（晚 1–2 秒）。第一版 7 秒/14 秒时初始态来不及观测，P3-2/P3-3 假失败。改为 `tStart` 前置到 `spawn` 之前 + 事件推后到 12 秒/22 秒。
+3. **`waitFor` 的截止时间要给足**：红色要等事件②（22 秒）之后再一次 2 秒取数，原来写死 25 秒导致超时，改为 `EVENT_UNPLUG_MS + 12_000`。
+
 ### 本轮未验证清单（不要读成通过）
 
 - [未验证] 真机插拔电源的实际观感与真实时延（P7，需用户亲手做）。
@@ -250,6 +330,8 @@ $ git show --stat --oneline 1006314
 ## 八、验收记录
 
 > 独立验收：由未参与实现的会话（teammate `verifier-push`，fresh context）针对固定提交逐条重跑 P1–P7 后回填。本节与第七节分开记，不合并。
+
+> **第三轮（本轮「事件当场翻转」改动）：`[未做]`**。用户 2026-11-09 21:52 在「38 分钟（含独立验收）/ 23 分钟（不含）」之间明确选了 **23 分钟档**，原话「23」。因此本轮改动没有另起会话复核，第七节「第三批自检」是唯一记录。**这不算验收通过**：P1–P5 是我自己跑的，P6 待提交后回填，P7 仍未验证。若日后要并入 `main`，建议补一次独立验收。
 
 ### 第一轮（针对提交 `36f6dc3`，2026-11-09 20:36）
 

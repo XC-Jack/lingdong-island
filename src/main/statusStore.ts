@@ -25,12 +25,17 @@ export interface StatusSnapshot {
 /** 缓存时长：只在没有事件驱动时才靠它兜底（插拔电源会主动作废缓存） */
 const CACHE_MS = 30_000
 /** 看门狗周期：只读 powerMonitor，不起子进程，所以可以比取数频繁得多 */
-const WATCH_MS = 2_000
-/** 事件到达后补读的延迟：经验值 600ms（系统状态机切换通常比事件晚几十到几百毫秒）。
- *  注：这个数字**没有实测依据**（本机电池恒 99% 插电，造不出真插拔的时序来量），
- *  独立验收 C4 已指出上一版注释误称「实测口径见 SPEC 第七节」。取 600ms 是在
- *  「等太久用户觉得慢」和「等太短读到旧值」之间的折中；真要定标需一次真机插拔配合打点。 */
-const EVENT_SETTLE_MS = 600
+const WATCH_MS = 1_000
+/** 事件到达后补读电量/网络的延迟。颜色已由事件当场翻转（不等这一步），
+ *  这里只是为了把百分比和 Wi-Fi 一起刷新，所以可以比上一版的 600ms 更早。
+ *  取 300ms 仍留有「系统状态机追上事件」的余量；该数值无真机插拔实测依据。 */
+const EVENT_SETTLE_MS = 300
+/** 事件优先窗口：这段时间内若补读到的充电态与事件方向冲突，以事件为准。
+ *  原因：Windows 的 Win32_Battery 更新常常比 on-ac / on-battery 慢，甚至出现
+ *  「已经拔线但系统仍报接交流电」（2026-11-09 实测过一次）。不设这段窗口，
+ *  界面会在变色后 300ms 被旧读数打回原色，肉眼看是「闪一下又弹回去」。
+ *  取 3 秒：短到不会拿错误方向盖住真实状态，长到能跨过系统的延迟。 */
+const EVENT_TRUST_MS = 3_000
 
 let cache: StatusSnapshot = { battery: null, charging: false, wifi: null }
 let cacheAt = 0
@@ -109,23 +114,56 @@ function readStatus(): StatusSnapshot {
   }
 }
 
-/** 重读状态、更新缓存，并主动推给渲染层（插拔电源时不等轮询） */
-function refreshAndBroadcast(): StatusSnapshot {
-  cache = readStatus()
-  cacheAt = Date.now()
+/** 最近一次电源事件给出的方向与时间；用于 EVENT_TRUST_MS 窗口内压住与事件冲突的读数 */
+let trustedCharging: boolean | null = null
+let trustedAt = 0
+
+/** 把一份状态推给所有还活着的窗口（缺它时插拔电源只能等 60 秒轮询） */
+function broadcast(s: StatusSnapshot): void {
   for (const win of BrowserWindow.getAllWindows()) {
     // 独立验收 C8：getAllWindows 里可能有已销毁的窗口（如全屏感应用的 4px 边缘窗），
     // 向已销毁的 webContents send 会抛异常，必须先判。
     if (win.isDestroyed() || win.webContents.isDestroyed()) continue
-    win.webContents.send('island:status-changed', cache)
+    win.webContents.send('island:status-changed', s)
   }
+}
+
+/** 重读状态、更新缓存，并主动推给渲染层（插拔电源时不等轮询） */
+function refreshAndBroadcast(): StatusSnapshot {
+  const next = readStatus()
+  // 事件刚发生时，系统读数可能还没跟上（甚至反过来），这段时间以事件方向为准，
+  // 否则界面会「闪一下绿又弹回白」。百分比、Wi-Fi 仍按真实读数更新。
+  const inTrust = trustedCharging !== null && Date.now() - trustedAt < EVENT_TRUST_MS
+  cache = inTrust ? { ...next, charging: trustedCharging as boolean } : next
+  cacheAt = Date.now()
+  // 注意：这里不要动 lastOnBattery。它表示「上一次观察到的传感器状态」，
+  // 只有看门狗自己的采样和电源事件才能改它。若拿读数的 charging 回写，
+  // 一旦传感器的方向与读数矛盾（有的机器传感器恒报「插着电」），
+  // 看门狗就会每 1 秒认定「翻转了」并把界面强行掰成充电态，界面反而不准。
+  broadcast(cache)
   return cache
 }
 
 /**
- * 事件到达后延迟补读一次：Windows 的电源状态机切换（Win32_Battery 的
- * BatteryStatus / EstimatedChargeRemaining）比 on-ac / on-battery 事件晚几十到几百毫秒，
- * 事件一到立刻读会读到旧值，所以要等一小会儿再读。
+ * 插拔电源：「变绿/变白」这件事不等子进程，先用事件给的方向当场翻转并广播。
+ * 剩下的百分比、Wi-Fi 交给 EVENT_SETTLE_MS 后的 refreshAndBroadcast 补齐。
+ * 这样用户从插上电源到看见颜色变化只有几十毫秒，而不是等一次约 1 秒的 PowerShell。
+ *
+ * @param chargingFromEvent on-ac → true（插着电）；on-battery → false（在用电池）
+ */
+function applyPowerEvent(chargingFromEvent: boolean): void {
+  lastOnBattery = !chargingFromEvent
+  trustedCharging = chargingFromEvent
+  trustedAt = Date.now()
+  if (cache.charging !== chargingFromEvent) {
+    cache = { ...cache, charging: chargingFromEvent }
+    broadcast(cache)
+  }
+  scheduleRefresh()
+}
+
+/**
+ * 事件到达后延迟补读一次：百分比与 Wi-Fi 仍要重新取。
  * 用 setTimeout 而不是 sleep，避免阻塞主进程。
  */
 function scheduleRefresh(): void {
@@ -145,10 +183,9 @@ function startWatch(): void {
   if (watchTimer !== null) return
   lastOnBattery = powerMonitor.isOnBatteryPower()
   watchTimer = setInterval(() => {
-    const now = powerMonitor.isOnBatteryPower()
-    if (now === lastOnBattery) return
-    lastOnBattery = now
-    scheduleRefresh()
+    const onBattery = powerMonitor.isOnBatteryPower()
+    if (onBattery === lastOnBattery) return
+    applyPowerEvent(!onBattery)
   }, WATCH_MS)
 }
 
@@ -158,13 +195,14 @@ export function setupStatus(): void {
     if (Date.now() - cacheAt > CACHE_MS) {
       cache = readStatus()
       cacheAt = Date.now()
+      // 同上：不拿读数回写 lastOnBattery，它只跟传感器走
     }
     return cache
   })
 
-  // 插拔电源：立即作废缓存并广播（延迟 EVENT_SETTLE_MS 补读，见 scheduleRefresh）
-  powerMonitor.on('on-ac', scheduleRefresh)
-  powerMonitor.on('on-battery', scheduleRefresh)
+  // 插拔电源：先用事件方向当场翻转颜色并广播，再延迟补读百分比与 Wi-Fi
+  powerMonitor.on('on-ac', () => applyPowerEvent(true))
+  powerMonitor.on('on-battery', () => applyPowerEvent(false))
   // 休眠恢复：合盖期间的电量变化事件可能丢，醒来补读一次
   powerMonitor.on('resume', scheduleRefresh)
   startWatch()
@@ -181,4 +219,6 @@ export function stopStatus(): void {
     settleTimer = null
   }
   lastOnBattery = null
+  trustedCharging = null
+  trustedAt = 0
 }
