@@ -120,9 +120,14 @@ const api = {
   /**
    * 主进程主动推送的状态快照（插拔电源、休眠恢复时推，不等 60 秒轮询）。
    * 与 statusSnapshot 同一份结构，渲染层收到直接覆盖即可。
+   * 返回取消订阅函数：渲染层在 useEffect cleanup 里调用，避免重复挂载时叠加监听。
    */
-  onStatusChanged(cb: (s: StatusSnapshot) => void): void {
-    ipcRenderer.on('island:status-changed', (_e, s: StatusSnapshot) => cb(s))
+  onStatusChanged(cb: (s: StatusSnapshot) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, s: StatusSnapshot): void => cb(s)
+    ipcRenderer.on('island:status-changed', h)
+    return () => {
+      ipcRenderer.removeListener('island:status-changed', h)
+    }
   },
   /** 开机自启：读状态 / 开关 */
   autostartGet(): Promise<boolean> {

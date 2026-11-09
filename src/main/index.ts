@@ -48,6 +48,7 @@ let manualHide = false
  * 不先停的话，退出瞬间可能正好轮询到一条到点提醒，弹出一个「点不回去」的通知。
  */
 function quitApp(): void {
+  stopStatus()
   stopNotifyStore()
   stopScheduleStore()
   stopFullscreenWatch()

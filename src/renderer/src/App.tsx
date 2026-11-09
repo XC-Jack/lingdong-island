@@ -2107,7 +2107,8 @@ export default function App(): React.JSX.Element {
       })
     }
     // 主进程在插拔电源 / 休眠恢复时主动推一份（判定口径与 statusSnapshot 完全一致）
-    window.island.onStatusChanged((s) => {
+    // onStatusChanged 返回取消订阅函数，cleanup 里必须调，否则重复挂载会叠加监听
+    const offStatus = window.island.onStatusChanged((s) => {
       if (alive) apply(s)
     })
     pull()
@@ -2115,6 +2116,7 @@ export default function App(): React.JSX.Element {
     return () => {
       alive = false
       window.clearInterval(id)
+      offStatus()
     }
   }, [])
 

@@ -26,7 +26,10 @@ export interface StatusSnapshot {
 const CACHE_MS = 30_000
 /** 看门狗周期：只读 powerMonitor，不起子进程，所以可以比取数频繁得多 */
 const WATCH_MS = 2_000
-/** 事件到达后补读的延迟：系统状态机切换要比事件晚几十到几百毫秒（实测口径见 SPEC 第七节） */
+/** 事件到达后补读的延迟：经验值 600ms（系统状态机切换通常比事件晚几十到几百毫秒）。
+ *  注：这个数字**没有实测依据**（本机电池恒 99% 插电，造不出真插拔的时序来量），
+ *  独立验收 C4 已指出上一版注释误称「实测口径见 SPEC 第七节」。取 600ms 是在
+ *  「等太久用户觉得慢」和「等太短读到旧值」之间的折中；真要定标需一次真机插拔配合打点。 */
 const EVENT_SETTLE_MS = 600
 
 let cache: StatusSnapshot = { battery: null, charging: false, wifi: null }
@@ -111,6 +114,9 @@ function refreshAndBroadcast(): StatusSnapshot {
   cache = readStatus()
   cacheAt = Date.now()
   for (const win of BrowserWindow.getAllWindows()) {
+    // 独立验收 C8：getAllWindows 里可能有已销毁的窗口（如全屏感应用的 4px 边缘窗），
+    // 向已销毁的 webContents send 会抛异常，必须先判。
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
     win.webContents.send('island:status-changed', cache)
   }
   return cache

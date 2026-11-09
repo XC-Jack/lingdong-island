@@ -21,10 +21,10 @@
 | `src/renderer/src/App.tsx` | 电量/Wi-Fi 那个 `useEffect` 里加订阅 `window.island.onStatusChanged(...)`，收到即 `setBattery/setCharging/setWifi`；60 秒轮询**保留**作为兜底 | ✅ |
 | `scripts/e2e-battery-push.mjs` | 新增：证明「主进程广播 → 渲染层更新」真的通路（不靠 60 秒轮询） | ✅ |
 | `docs/Spec/SPEC-battery-status-push.md` | 本文件 | ✅ |
-| `docs/Spec/SPEC-battery-charging-accuracy.md` | 补一句「90 秒延迟已在下一轮修掉」 | ⬜ 实际未改（该文件第三节已写明「本轮不处理」并指向本轮 SPEC，改它与不改都不影响事实；为避免额外改动留在此表备查） |
+| `docs/Spec/SPEC-battery-charging-accuracy.md` | 补一句「90 秒延迟已在下一轮修掉」 | ✅ 在收口提交 `921ec57` 里改（第六节「不做什么」:94/:97 与第八节 :133 各加了一句指向本 SPEC；`36f6dc3` 本身不含此文件） |
 | `docs/状态.md` | 一句话状态 | ✅ |
 | `docs/facts/功能清单.md` | 第 5 节「刷新延迟」描述更新 | ✅ |
-| `docs/facts/本机约束与踩坑.md` | 「系统能力」节补一条：`powerMonitor` 可用、Web 电池 API 在 Electron 45 已移除 | ✅ |
+| `docs/facts/本机约束与踩坑.md` | 「系统能力」节补三条：`powerMonitor` 可用但事件不保证、Web 电池 API 在 Electron 45 已移除、别高频 spawn PowerShell（并把「90 秒」那条改写为「已修」） | ✅ |
 
 **明确不改**：`statusStore.ts` 的 PowerShell 判据行（`scripts/e2e-battery-states.mjs` 的 `OLD` 常量因此**不需要改**）；`styles.css`；阈值 20%；三态视觉；`App.tsx` 其它任何逻辑；布局；`package.json`；`out/`。
 
@@ -48,7 +48,7 @@
 |---|---|---|
 | P1 | `npm run typecheck` 通过 | 原样贴输出，退出码 0 |
 | P2 | `npm run build` 通过 | 贴产物文件名与大小 |
-| P3 | 主进程广播通路真的活着（不是靠轮询） | `node scripts/e2e-battery-push.mjs`：把主进程取数改成从测试控件文件读值、把 AC 状态探针改成「第 3 次调用翻转」，于是启动后约 4 秒会有一次「看门狗发现变化 → 重读 → 广播」；脚本在 **10 秒内**（远小于 60 秒轮询）观察 DOM 从注入值 A 变成注入值 B 即算通过；跑完字节还原 `out/main/index.js` |
+| P3 | 主进程广播通路真的活着（不是靠轮询） | `node scripts/e2e-battery-push.mjs`：把主进程取数行换成「从测试控件文件读值」，并把 `electron.powerMonitor.on("on-ac", scheduleRefresh);` 这一行换成 `setTimeout(scheduleRefresh, 6000);`——即人为制造一次「插电事件」，走的是与真实插拔**完全相同**的 `scheduleRefresh → refreshAndBroadcast → webContents.send` 路径；脚本在 **12 秒内**（远小于 60 秒轮询）观察 DOM 从注入值 A 变成注入值 B 即算通过；跑完字节还原 `out/main/index.js`。**注意：本测试只覆盖「事件驱动」这条路径，2 秒看门狗与 `resume` 路径零覆盖**（见第七节未验证清单、第八节 C12） |
 | P4 | 三态视觉没被改坏 | `node scripts/e2e-battery-states.mjs` 仍 31 过 0 败（四场景：普通白 / 充电绿 / 充电且低电绿 / 低电红） |
 | P5 | 回归三件套 | `scripts/e2e-m3.mjs`、`scripts/e2e-wifi.mjs`、`scripts/e2e-collapse-beautify.mjs` 全过 |
 | P6 | 提交范围不越界 | `git show --stat <固定提交>` 只含第二节"✅ 本次"列出的文件；工作区干净 |
@@ -86,19 +86,21 @@ EXIT=0
 ### P2 build — ✅ 通过
 
 ```
-out/main/index.js  74.24 kB
-out/preload/index.js  8.63 kB
+out/main/index.js  74.67 kB
+out/preload/index.js  8.85 kB
 out/renderer/index.html                   0.49 kB
 out/renderer/assets/index-CsgyUWqi.css   45.93 kB
-out/renderer/assets/index-mJzeIS02.js    664.26 kB
+out/renderer/assets/index--d5mQQdE.js   664.29 kB
 EXIT=0
 ```
 
 （`out/` 在 `.gitignore:3`，不进提交；跑完 e2e 后已核对字节还原。）
 
+> 上表是**采纳独立验收建议做了四处小修正之后**的构建产物。修正前的数字是 `out/main/index.js 74.67 kB`、`out/preload/index.js 8.63 kB`、`out/renderer/assets/index-mJzeIS02.js 664.26 kB`（`index.js` 在两次构建里都报 74.67 kB，因为注释改动被压缩后长度恰好相同）。
+
 ### P3 广播通路 e2e — ✅ 通过（`11 过 / 0 败`）
 
-`node scripts/e2e-battery-push.mjs` 原始输出节选：
+`node scripts/e2e-battery-push.mjs` 原始输出（节选，只删了首尾的进度行，断言行逐字未改）：
 
 ```
 [初始] snapshot: {"has":true,"api":"function","cls":"head-battery-ring  ","num":"80","title":"电量 80%","aria":"电量 80%","stroke":"rgba(255, 255, 255, 0.85)"}
@@ -116,10 +118,15 @@ EXIT=0
   ✓ P3-9 耗时明显小于 60 秒轮询间隔 — 4528ms
   ✓ P3-R1 out/main/index.js 还原字节一致
 == 结果：11 过 / 0 败 ==
-EXIT=0
 ```
 
-**这条测试为什么能证明是真推送** [实测]：脚本把生产代码里 `electron.powerMonitor.on("on-ac", scheduleRefresh);` 换成 `setTimeout(scheduleRefresh, 6000);`，走的是**与真实插电事件完全相同**的 `scheduleRefresh → refreshAndBroadcast → webContents.send('island:status-changed')` 路径；渲染层 60 秒轮询在 12 秒窗口内根本还没到点（启动约 1.2 秒后开始计时）。4528 ms 的更新只能来自广播。（4528 ms = 6000 ms 定时器附近的一次采样点 + 200 ms 轮询 DOM 的粒度，与 `EVENT_SETTLE_MS=600` 叠加，见下一节实测。）
+`EXIT=0` 由我执行的 shell 补记（脚本自身不打印这一行，它靠 `process.exit(failed > 0 ? 1 : 0)` 表达结果；同理 P4/P5 各处的 `EXIT=0` 都是 shell 侧读到的退出码，不是脚本输出）。
+
+**采纳验收意见后又跑了两次**，均 `11 过 / 0 败`、耗时可复现：修正注释与前馈守卫后 `4408 ms`、加取消订阅后 `4225 ms`（`P3-R1` 两次都一致）。三次实测 `4528 / 4408 / 4225 ms` 同量级，说明结果不靠偶然时序。
+
+**这条测试为什么能证明是真推送** [实测]：脚本把生产代码里 `electron.powerMonitor.on("on-ac", scheduleRefresh);` 换成 `setTimeout(scheduleRefresh, 6000);`，走的是**与真实插电事件完全相同**的 `scheduleRefresh → refreshAndBroadcast → webContents.send('island:status-changed')` 路径；渲染层 60 秒轮询在 12 秒窗口内根本还没到点（启动约 1.2 秒后开始计时）。4528 ms 的更新只能来自广播。
+
+**为什么耗时 4528 ms 小于 6000 ms**（独立验收 C3 指出这里原先解释错了，已订正）：`setTimeout(scheduleRefresh, 6000)` 在**主进程启动时**就注册了，而脚本的 `t0` 是在 `boot()` 里 `await sleep(1200)`、CDP 连上并完成初始采样**之后**才开始计时的——t0 比进程启动晚约 1.2–1.5 秒，所以相对 t0 只剩约 4.5 秒；再叠加 `EVENT_SETTLE_MS=600` 的去抖，与实测 4528 ms 量级吻合。原稿把「6000 ms 从进程启动算」误写成了「从 t0 算」，导致数字与解释自相矛盾，这里改正。
 
 ### P4 四场景视觉 e2e — ✅ 通过（`31 过 / 0 败`）
 
