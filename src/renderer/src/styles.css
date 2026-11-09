@@ -449,7 +449,7 @@ body {
   width: 20px;
   height: 20px;
 }
-.head-info .head-battery-ring svg {
+.head-info .head-battery-ring svg:not(.ring-bolt) {
   width: 20px;
   height: 20px;
 }
@@ -504,12 +504,17 @@ body {
 }
 .head-battery-ring .ring-bolt {
   position: absolute;
+  /* 钉在环的 1-2 点位置，比环线略小：不加深色圆底（圆底会在绿环上切出一个缺口），
+     只用一圈很淡的投影把闪电和环线分开，7px 不压中间的数字。
+     注意：宽高会被 .head-info .head-battery-ring svg 的更高优先级覆盖，
+     那边已限定为 svg:not(.ring-bolt)；改这里必须保证那条选择器带 :not()。 */
   top: -3px;
   right: -4px;
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
+  box-sizing: content-box;
   fill: rgba(75, 214, 130, 0.95);
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
 }
 .head-battery-ring .ring-num {
   position: absolute;
