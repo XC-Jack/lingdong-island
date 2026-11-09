@@ -1,6 +1,6 @@
 # SPEC：电量显示状态——新增充电态与低电量态
 
-> 任务分支：`battery-charge-low-indicator`，基线 `main`（`7d4089b`，2026-11-09 文档收口）。
+> 任务分支：`battery-charge-low-indicator`，基线 `main`（`7d4089b`，2026-11-09 文档收口）。固定提交：`2c71cca39f9d2cf809e5d202b8f1b693ab5eef7f`（短哈希 `2c71cca`）。
 > 设计已由用户确认（本轮开工提示词原文），不再访谈。实现已在本分支完成，SPEC 按要求在提交前补齐；本文件如实写明「实现先于 SPEC 文档落盘」这一时序，自检以最终固定提交为准。
 > 时序说明：工程规则要求「先写 SPEC 再开工」，本轮实际是先把改动做完、再补 SPEC——原因是注入验证链路（CDP 无法改 contextBridge 数据，改用 patch out/main bundle 的 PowerShell 电量行）需要反复探索，SPEC 的验收条件依赖探索结论（见第七节「时序与合规说明」）。
 
