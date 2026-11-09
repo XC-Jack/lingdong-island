@@ -14,7 +14,7 @@
 2. **修「拔了电还显示绿色」**：充电判定用错了字段语义，导致「插着电但没在充电」也被当成「正在充电」。
 
 第二件的根因 [实测]（命令与输出见第七节）：
-`src/main/statusStore.ts:40` 原文
+`src/main/statusStore.ts` 改动前 `:40` 原文（改动后位置为 `:44`）
 
 ```
 '$b=Get-CimInstance -ClassName Win32_Battery; if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, ($b.BatteryStatus -eq 2)}else{"null|false"}',
@@ -31,13 +31,15 @@
 
 | 文件 | 改什么 |
 |---|---|
-| `src/main/statusStore.ts` | `:40` PowerShell 电量行的充电判定：`($b.BatteryStatus -eq 2)` → `(($b.BatteryStatus -in 6,7,8,9) -or [bool]$w.Charging)`，并在一行内先取 `root\wmi` 的 `Charging` 兜底；`:80` 的 `charging = chg === 'True'` 不变（协议约定不变） |
-| `src/renderer/src/App.tsx` | 删掉 case 'battery' 里的 `.ring-bolt` 闪电 SVG（原 `:2403-2408`）与相关注释；`charging` state、`setCharging`、三态 className/title/aria 全部保留 |
-| `src/renderer/src/styles.css` | 删掉 `.head-battery-ring .ring-bolt` 规则块（原 `:505-518`）；`.head-info .head-battery-ring svg:not(.ring-bolt)`（`:452`）还原成 `.head-info .head-battery-ring svg`（闪电不存在了，`:not()` 失去意义） |
+| `src/main/statusStore.ts` | 电量行（改动后 `:44`）的充电判定：`($b.BatteryStatus -eq 2)` → `(($b.BatteryStatus -in 6,7,8,9) -or [bool]$w.Charging)`，并在一行内先取 `root\wmi` 的 `Charging` 兜底；`:84` 的 `charging = chg === 'True'` 不变（协议约定不变） |
+| `src/renderer/src/App.tsx` | 删掉 case 'battery' 里的 `.ring-bolt` 闪电 SVG（改动前的 `:2404-2409`）与相关注释；`charging` state（`:1915`）、`setCharging`（`:2103`）、`low` 判定（`:2382`）、三态 className/title/aria（`:2386-2389`）全部保留 |
+| `src/renderer/src/styles.css` | 删掉 `.head-battery-ring .ring-bolt` 规则块（改动前的 `:505-518`）；`.head-info .head-battery-ring svg:not(.ring-bolt)`（`:452`）还原成 `.head-info .head-battery-ring svg`（闪电不存在了，`:not()` 失去意义） |
 | `scripts/e2e-battery-states.mjs` | ①patch 目标串 OLD 换成新的 PS 电量行；②断言改为「四场景一律无 `.ring-bolt`」，其余（类名/数字/title/aria/弧色/数字色）不变 |
 | `docs/Spec/SPEC-battery-charging-accuracy.md` | 本文件 |
 | `docs/Spec/SPEC-battery-charge-low-indicator.md` | 第一节与第二节补一句「闪电已按用户要求移除」，避免两份文档互相矛盾 |
 | `docs/状态.md` | 一句话状态追加本轮修正 |
+| `docs/facts/功能清单.md` | 第 5 节电量环描述从「`≤20%` 变红」升级为三态（充电绿 / 低电红 / 普通白）+ 充电判据与刷新延迟说明 |
+| `docs/facts/本机约束与踩坑.md` | 「系统能力」节新增「充电判定别用 `BatteryStatus -eq 2`」踩坑条目（含四种判据对比）；「验证边界」节补注真实充电 WMI 仍未验证 |
 
 **明确不改**：`src/preload/index.ts`（`charging: boolean` 协议不变）、`src/main/` 其它模块、阈值 20%、轮询频率（主进程缓存 30s / 渲染层 60s）、布局与组件结构、`package.json`、`out/`（构建产物，跑完 e2e 会字节还原）。
 
@@ -86,7 +88,7 @@
 | 编号 | 命令 / 做法 | 实际输出 | 结论 |
 |---|---|---|---|
 | B1 | `npm run typecheck` | `typecheck:node`（`tsc --noEmit -p tsconfig.node.json`）与 `typecheck:web`（`-p tsconfig.web.json`）均只有命令行、无错误输出，退出码 0 | ✅ 通过 |
-| B2 | 直接内联跑 `src/main/statusStore.ts:43` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | `96\|False`（旧判定 `-eq 2` 在同机是 `96\|True`） | ✅ 通过 |
+| B2 | 直接内联跑 `src/main/statusStore.ts:44` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | `96\|False`（旧判定 `-eq 2` 在同机是 `96\|True`） | ✅ 通过 |
 | B3 | `node scripts/e2e-battery-states.mjs` | `== 结果：31 过 / 0 败 ==`；四个场景 DOM 快照见下 | ✅ 通过 |
 | B4 | 同上（脚本内 R1） | `✓ R1 out/main/index.js 还原字节一致` | ✅ 通过 |
 | B5 | `node scripts/e2e-m3.mjs` / `node scripts/e2e-wifi.mjs` / `node scripts/e2e-collapse-beautify.mjs` | m3：`[1] statusSnapshot: {"battery":96,"charging":false,...}`、`E2E PASS`；wifi：A1–A5 全通过、`E2E WIFI PASS`（A3 DOM 顺序 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`）；collapse-beautify：`7 过 / 0 败`（B3 电量环在岛仔之前） | ✅ 通过 |
@@ -112,6 +114,34 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 
 ## 八、验收记录
 
-角色：独立验收（未参与实现的会话或人），针对固定提交逐条重跑 B1–B6。
+角色：独立验收（未参与实现的会话，独立上下文、未读实现过程）。验收对象：固定提交 `0dfcc8f`（实际跑在 `HEAD` = `4e0e194` 上，两者 `src/` 完全一致，`git diff 0dfcc8f 4e0e194` 只差本文件回填固定提交的那一行）。时间：2026-11-09 17:19–17:27。原始报告：`.tmp/独立验收-0dfcc8f.md`（24.9 KB，`.tmp/` 被 git 忽略，不进仓库）。
 
-（待做，不由实现者填写。）
+**结论：有条件通过，无阻断项。**
+
+| 编号 | 独立复跑结果 |
+|---|---|
+| B1 | ✅ 通过。`npm run typecheck`，node/web 两条 `tsc` 均无输出，EXIT 0 |
+| B2 | ✅ 通过。内联跑 `statusStore.ts:44` 电量行实测 `96\|False`；同时实测旧判据 `-eq 2` 在同机输出 `96\|True`（误报实锤）；patch 后 bundle 内同一串也 `96\|False` |
+| B3 | ✅ 通过。`31 过 / 0 败`，四场景 DOM 快照与第七节逐字符一致 |
+| B4 | ✅ 通过。`✓ R1 out/main/index.js 还原字节一致`；`git ls-files out` 为空 |
+| B5 | ✅ 通过。m3 `charging:false` + `E2E PASS`；wifi `E2E WIFI PASS` + A3 顺序正确；collapse-beautify `7 过 / 0 败` |
+| B6 | ⚠️ 有条件通过。工作区干净、无缺失文件；但提交含 9 个文件 vs 第二节表列 7 个（见 C1，已在本轮补齐表格） |
+
+**验收方挑刺发现（C1–C5，均非阻断）**：
+
+- **C1 范围表不全**：提交多出 `docs/facts/功能清单.md`、`docs/facts/本机约束与踩坑.md`，第二节表未列。→ 本轮已补进第二节表。
+- **C2 行号漂移**：正文写 `statusStore.ts:80`（实际 `:84`）、B2 写 `:43`（实际 `:44`）、App.tsx 闪电写 `:2403-2408`（实际删除 `:2404-2409`）。→ 本轮已订正。
+- **C3** `scripts/e2e-collapse-beautify.mjs:64` / `:156` 用 `taskkill /IM electron.exe /T /F` 按镜像名全杀，会误伤并发运行的 electron 实例。它不写用户数据，属脚本侧既有风险，本轮不改（不在本 SPEC 范围）。
+- **C4** 验收期间发现有 1 个未带 `--user-data-dir` 的 electron（PID 11624，17:17:41 启动）在 17:19:25 向真实 `%APPDATA%\lingdong-island\collapse-log.txt` 写过一次诊断日志。那是**用户授权的开发版预览**（`npm start`，用户 m00203 授权「做完就直接执行预览版」），不是 e2e 脚本；真实目录仍 114 个文件，`todos` / `prefs` / `shelf` / `schedule` 均未变。严格讲与第六节「不碰真实运行数据」有出入——预览版就是真跑真写，如实记录。
+- **C5 脚本瑕疵（既有，不属本轮）**：`e2e-m3.mjs:39` 的 `[2] 收起态电量 DOM: (无)` 是空转断言；`e2e-wifi.mjs:125` 对 SVG 取 `String(el.className)` 输出 `[object SVGAnimatedString]`，使 A3 行出现 `[object`（不影响判定）。
+
+**验收方复核通过的项（专门查过）**：
+
+- `.ring-bolt` 在 `src/` 彻底消失：`git grep -n "ring-bolt" -- src/` 为空（exit 1），`0dfcc8f` 版本的 `src/` 同样为空。
+- **charging 三态未被误删**：`App.tsx:1915` state、`:2103` setCharging、`:2382` low 判定、`:2386-2389` 三态 className/title/aria；`styles.css:452`、`:495`、`:499`、`:502` 四条规则全在。
+- e2e 隔离真的生效：`isolate-userdata.mjs` 改写 `APPDATA` + 追加 `--user-data-dir`，隔离目录有实时写入；bundle 注入是真还原（从 `.bak` 起步 + `finally` 还原 + `Buffer.compare` 逐字节校验）。
+- 第七节「未验证」四条确实仍是未验证，验收方也无法把它们变成通过。
+
+**验收方明确未能验证（不得读成已通过）**：真实充电时 `BatteryStatus ∈ 6,7,8,9` 是否命中 / `root\wmi` `Charging=True` 是否真出现；拔插电源 90 秒真实时延（只核对了 `App.tsx:2109` 的 `setInterval(pull, 60_000)` 与 `statusStore.ts:97` 的 `30_000` 常量）；人眼观感；打包与装机；无电池台式机的 `null|false` 分支。
+
+验收期间验收方未改任何 `src/`、`docs/` 文件，未提交、未合并。
