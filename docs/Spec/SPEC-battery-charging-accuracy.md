@@ -53,7 +53,7 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 | `docs/facts/功能清单.md` | 第 5 节电量环描述从「`≤20%` 变红」升级为三态（充电绿 / 低电红 / 普通白）+ 充电判据与刷新延迟说明 | `0dfcc8f` |
 | `docs/facts/本机约束与踩坑.md` | 「系统能力」节新增「充电判定别用 `BatteryStatus -eq 2`」踩坑条目（含四种判据对比）；「验证边界」节补注真实充电 WMI 仍未验证 | `0dfcc8f` |
 
-> **范围口径说明（独立验收 C1）**：上表是「本轮累积范围」（相对上一轮交付 `2aaa9c0` 共 9 个文件）。单个提交只含其中一部分：`f42464e` 是 6 个文件，V3 这次只动 `src/main/statusStore.ts`、`scripts/e2e-battery-states.mjs`、本 SPEC 与 `docs/状态.md`。B6 里「只含第二节列出的文件」按累积口径核对。
+> **范围口径说明（独立验收 C1、第三轮 C2）**：上表是「本轮累积范围」（相对上一轮交付 `2aaa9c0` 共 9 个文件）。单个提交只含其中一部分：`f42464e` 是 6 个文件；V3 提交 `8d59cf5` 也是 6 个文件——`src/main/statusStore.ts`、`scripts/e2e-battery-states.mjs`、本 SPEC、`docs/状态.md`、`docs/facts/功能清单.md`、`docs/facts/本机约束与踩坑.md`。B6 里「只含第二节列出的文件」按累积口径核对。
 
 **明确不改**：`src/preload/index.ts`（`charging: boolean` 协议不变）、`src/main/` 其它模块、阈值 20%、轮询频率（主进程缓存 30s / 渲染层 60s）、布局与组件结构、`package.json`、`out/`（构建产物，跑完 e2e 会字节还原）。
 
@@ -62,7 +62,7 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 > **2026-11-09 17:37 订正**：用户原话「我现在冲着电，他是白的；我要的就是充电时是绿色，低于20变红色，正常就是白色」。原第 1 条只认 `6/7/8/9`（「正在充电」的严格语义），但电池到 96% 后系统停止充电仍在供电，`BatteryStatus` 是 `2`（接交流电）或 `3`（已充满），于是显示白弧——用户看到的是「插着电却是白的」，判定为错。判据改为第 1a 条，下面 1–5 条按新判据重写。
 > **2026-11-09 17:56 再订正（V3）**：独立验收 C3 指出，上一版判据把 `4/5`（低电/临界）排除在充电态之外，于是「插着电 + 15%」会被判成没充电、走红态，与第 4 条「接着电源且 ≤20% → 绿」自相矛盾。判据再放宽为「只有 `BatteryStatus=1`（放电中）或 WMI 明确 `Discharging=True` 才算没接电」，`4/5` 归入充电态。
 >
-> 模拟对象实测（`EstimatedChargeRemaining=15`）：`1 → 15|False`；`2/3/4/5/6/7/8/9/10/11 → 15|True`；`2 且 Discharging=True → 15|False`。本机现况仍是 `96|True`。
+> 模拟对象实测（`EstimatedChargeRemaining=15`）：`1 → 15|False`；`2/3/4/5/6/7/8/9/10/11 → 15|True`；`2 且 Discharging=True → 15|False`。本机现况是 `95|True`（电池已从 96% 自然掉到 95%，判据结论不变）。
 
 1. **接着电源**（`BatteryStatus` 不是 `1`，且 WMI 没报 `Discharging=True`）：弧绿 `rgba(75, 214, 130, 0.9)`，无闪电，title/aria = `充电中 · 电量 X%`。包含 `2`（接 AC 未充）、`3`（已充满）、`4/5`（低电/临界但插着电）、`6/7/8/9`（正在充）、`11`（部分充电）。
 2. **没接电源且 >20%**：普通态——弧白 `rgba(255, 255, 255, 0.85)`、数字白、title/aria = `电量 X%`。
@@ -81,7 +81,7 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 | 编号 | 可亲手核对的结果 |
 |---|---|
 | B1 | `npm run typecheck` 退出码 0（node + web 两个子命令均无错误输出），原始输出贴进第七节 |
-| B2 | 直接跑主进程取数命令（V3 判据），本机当前（插电、95%、系统已停充）输出 `96\|True`；第七节附命令原文与输出。同时附反证：`-in 6,7,8,9`（V1）在同机输出 `96\|False`，说明 V1 会漏判 |
+| B2 | 直接跑主进程取数命令（V3 判据），本机当前（插电、95%、系统已停充）输出 `95\|True`；第七节附命令原文与输出。同时附反证：`-in 6,7,8,9`（V1）在同机输出 `96\|False`，说明 V1 会漏判 |
 | B3 | 四场景 e2e 全过：S1 普通 `80\|false`、S2 充电 `99\|True`、S3 充电且低电 `15\|True`、S4 低电 `15\|false`；且**四个场景一律断言无 `.ring-bolt`**（证明闪电已移除） |
 | B4 | e2e 结束后 `out/main/index.js` 字节级还原（脚本内 R1 断言 `Buffer.compare === 0`） |
 | B5 | 回归：`scripts/e2e-m3.mjs`、`scripts/e2e-wifi.mjs`（`:66` 断言 charging 是 boolean）、`scripts/e2e-collapse-beautify.mjs`（收起态组件顺序与显隐）全部 PASS |
@@ -108,7 +108,7 @@ V1 的错误不是写错代码，是**判据口径错了**：它按 Microsoft �
 | 编号 | 命令 / 做法 | 实际输出 | 结论 |
 |---|---|---|---|
 | B1 | `npm run typecheck` | `typecheck:node`（`tsc --noEmit -p tsconfig.node.json`）与 `typecheck:web`（`-p tsconfig.web.json`）均只有命令行、无错误输出，退出码 0 | ✅ 通过 |
-| B2 | 直接内联跑 `src/main/statusStore.ts:48` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | **V3 判据：`96\|True`**（本机插电 96% 已停充，符合用户口径「插电即绿」）。反证：V1 判据 `-in 6,7,8,9` 同机输出 `96\|False`（白弧，用户 17:37 驳回）；V0 判据 `-eq 2` 输出 `96\|True`（数值对但语义错，拔电仍绿）。逐状态模拟见第九节 | ✅ 通过 |
+| B2 | 直接内联跑 `src/main/statusStore.ts:48` 那条 PS 电量行（`powershell -NoProfile -Command '...'`，与代码逐字符一致） | **V3 判据：`95\|True`**（本机插电 95% 已停充，符合用户口径「插电即绿」）。反证：V1 判据 `-in 6,7,8,9` 同机输出 `96\|False`（白弧，用户 17:37 驳回）；V0 判据 `-eq 2` 输出 `96\|True`（数值对但语义错，拔电仍绿）。逐状态模拟见第九节 | ✅ 通过 |
 | B3 | `node scripts/e2e-battery-states.mjs` | `== 结果：31 过 / 0 败 ==`；四个场景 DOM 快照见下 | ✅ 通过 |
 | B4 | 同上（脚本内 R1） | `✓ R1 out/main/index.js 还原字节一致` | ✅ 通过 |
 | B5 | `node scripts/e2e-m3.mjs` / `node scripts/e2e-wifi.mjs` / `node scripts/e2e-collapse-beautify.mjs` | m3：`[1] statusSnapshot: {"battery":95,"charging":true,...}`（V3 判据下本机插电 → `charging:true`，与 V1 时的 `false` 相反，符合用户口径）、`E2E PASS`；wifi：A1–A5 全通过、`E2E WIFI PASS`（A3 DOM 顺序 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`）；collapse-beautify：`7 过 / 0 败`（B3 电量环在岛仔之前） | ✅ 通过 |
@@ -129,7 +129,7 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 
 **本轮未验证 / 已知边界（如实记录）**：
 
-1. **真实硬件「正在充电」现场未复现**：本机电池 96%→95%、`ChargeRate=0`，`BatteryStatus` 恒为 `2`、WMI `Charging=False`。V3 判据对本机的结论是 `96|True`（绿弧，与用户口径一致，已真机 CDP 核对两态：收起 ring 22x22、展开 ring 20x20，均 `cls="head-battery-ring  charging"`、`title/aria="充电中 · 电量 95%"`、`bolt=null`），但「`BatteryStatus ∈ 6,7,8,9` 的真充电」只能靠注入 `99|True` 覆盖渲染层，**不是**真实充电现场。
+1. **真实硬件「正在充电」现场未复现**：本机电池 96%→95%、`ChargeRate=0`，`BatteryStatus` 恒为 `2`、WMI `Charging=False`。V3 判据对本机的结论是 `95|True`（绿弧，与用户口径一致，已真机 CDP 核对两态：收起 ring 22x22、展开 ring 20x20，均 `cls="head-battery-ring  charging"`、`title/aria="充电中 · 电量 95%"`、`bolt=null`），但「`BatteryStatus ∈ 6,7,8,9` 的真充电」只能靠注入 `99|True` 覆盖渲染层，**不是**真实充电现场。
 2. **拔插电源后界面不立刻变**：主进程缓存 30s + 渲染层轮询 60s，最坏约 90 秒。用户报「拔了还绿」的直接原因是 V0 判据错，但拔电后要等一会儿才变色这个体验问题**本轮没处理**，另行提出。V3 判据本身依赖系统 `ACLineStatus`，本机之前出现过「用户拔了电、系统仍报 AC=1」的情况（`powercfg /batteryreport` 末条仍记 AC），这类情况 V3 也无法分辨——**这是已知残留风险**。
 3. **低电量真机未验证**：本机电池长期 95% 以上，红色低电态只在 e2e 注入 `15|false` 时验过 DOM 与 computed style，真机自然掉电到 ≤20% 未验证。
 4. **视觉观感待用户确认**：绿弧已在真机界面看到（收起态与展开态头部，CDP 截元素 10 倍图），红色数字与「电量偏低 · X%」提示只在注入下验过，未人眼确认。
@@ -197,7 +197,47 @@ S4 低电不充电（15% 没插电） cls="head-battery-ring low "  num=15  titl
 
 ### 第三轮（V3 判据，固定提交 `8d59cf5`）
 
-**尚未做独立验收**。V3 只改了 `src/main/statusStore.ts` 一行判据表达式与 e2e 的 `OLD` 常量，其余全部沿用 `f42464e`；等 V3 固定提交落定后，需由未参与实现的会话针对该提交重跑 B1–B6（B2 预期仍为 `96|True`，并追加 `4/5` 两个模拟状态必须得 `15|True`）。**在此之前，本 SPEC 的独立验收结论只覆盖到 V2，V3 只有研发自检，不得当成已验收。**
+角色：独立验收（teammate `verifier`，独立上下文，未参与实现；与前两轮同一验收方）。验收对象：固定提交 `8d59cf5`。时间：2026-11-09 18:05–18:16。原始报告：`.tmp/独立验收-8d59cf5.md`（33.2 KB，`.tmp/` 被 git 忽略，不进仓库）。
+
+**前置核对**：HEAD=`67b4bce`（`8d59cf5` 的子提交），`git merge-base --is-ancestor 8d59cf5 HEAD` exit=0，`git diff 8d59cf5 HEAD -- src scripts` 为空 → 验收的代码与 `8d59cf5` 完全一致，结论对该提交有效。
+
+**结论：通过，无阻断项。**
+
+| 编号 | 独立复跑结果 |
+|---|---|
+| B1 | ✅ `npm run typecheck` EXIT 0，node/web 均无错误输出 |
+| B2 | ✅ 得 **`95\|True`**（本机电量已从 96% 自然掉到 95%）。反证：V2 判据同机 `95\|True`、V1 判据同机 `95\|False`。同刻 WMI：`BatteryStatus=2`、`EstimatedRemaining=95`、`Charging=False`、`Discharging=False` |
+| B3 | ✅ `31 过 / 0 败`，四场景 DOM 与第七节逐字符一致，`hasBolt` 全 false |
+| B4 | ✅ `✓ R1 out/main/index.js 还原字节一致`；验收方另做独立复核：`len=71701` / `mtime=18:08:30` 跑前跑后不变，三个注入串（`'99\|True'` / `'80\|false'` / `'15\|True'`）在 bundle 里全部消失，`.bak` 已删，`git ls-files out` 空 |
+| B5 | ✅ m3 `statusSnapshot {"battery":95,"charging":true,...}` + `E2E PASS`（真读 WMI，与 B2 互证）；wifi `E2E WIFI PASS` + A3 顺序正确；collapse-beautify `7 过 / 0 败` |
+| B6 | ✅ 工作区干净；`8d59cf5` 共 6 个文件，全部落在第二节累积范围表内，无越界 |
+
+**C3 缺口已确认消除（追加验证）**：验收方不手抄判据，而是从 `src/main/statusStore.ts:48` 的 PS 串里正则抽出判据表达式对 mock 求值：
+
+```
+EstimatedChargeRemaining=15：
+  1 → 15|False
+  2/3/4/5/6/7/8/9/10/11 → 15|True    ← 4 和 5 在 V2 时是 15|False，现已翻转
+Discharging=True 时：
+  1/2/4/5/6 → 15|False               ← 排除项仍生效，没放松过头
+```
+
+配合 `App.tsx:2382` 的 `low = battery !== null && !charging && battery <= 20`（`charging=true` 时为 false），「插着电 + 15%」走绿弧 + `充电中 · 电量 15%`，与第三节第 4 条一致。
+
+**验收方挑刺 C1–C8（全部非阻断，均为文档层面）**：
+
+- **C1 电量数字未同步**：本 SPEC `:84` 曾同句写「（插电、95%…）输出 `96|True`」自相矛盾，`:111` 与 `docs/状态.md:9` 也写 `96|True`。判据结论没错，只是本机电量从 96% 自然掉到 95%。→ 已全部订正为 `95|True`。
+- **C2 第二节口径漏列**：`:56` 曾写「V3 这次只动 4 个文件」，实际 6 个（还动了两份 facts 文档，都在第二节表内、非越界）。→ 已改为逐个列出 6 个文件。
+- **C3 表述过时**：本节原写「尚未做独立验收」、`docs/状态.md:9` 未验证列仍写「V3 的独立验收（只覆盖到 V2）」。→ 本节即回填，状态页同步更新。
+- **C4** `docs/facts/本机约束与踩坑.md:75` 标题仍写「两次实测踩坑」，正文已是三个坑。→ 已改为「三次实测踩坑」。
+- **C5–C7** 三个既有脚本瑕疵（`e2e-collapse-beautify.mjs:64`/`:156` 按镜像名全杀、`e2e-wifi.mjs:125` `[object SVGAnimatedString]`、`e2e-m3.mjs:39` 空转断言），本 SPEC 范围外，沿用前两轮记录。
+- **C8（查过没问题的项）**：`.ring-bolt` 在 `src/` 彻底消失（`git grep` exit 1）；charging 四件套（`:1915` state / `:2103` setCharging / `:2382` low / `:2386-2389` 三态）全在；`styles.css:452`/`:495`/`:499`/`:502` 全在且无 `ring-bolt`；SPEC 声称的 `:48`/`:88`/`2404-2408`/`505-518` 行号全部吻合；`8d59cf5` 未动 renderer；bundle 与源码同步；四个脚本都 import `isolate-userdata.mjs`。
+
+**CDP 端口抢占复核**：验收方跑前查到 4 个 electron（PID 14912，18:09:36 启动、命令行带 `. --remote-debugging-port=9321`，即实现者启动的预览版），`taskkill /IM electron.exe /T /F` 四条 SUCCESS → `electron: 0`、9321 仅 TimeWait；B3/B5 每次跑前都复查 `electron: 0` + 9321 无监听，一次得 `31 过 / 0 败`，未再出现假失败。
+
+**数据隔离复核**：真实 `%APPDATA%\lingdong-island` 114 个文件全程不变；18:10:00 后唯一写入是 `18:10:37.994 \Local Storage\leveldb\000003.log`，早于第一次 e2e（来自被杀掉的预览版）；`todos/prefs/shelf/schedule/notif-read` 的 mtime 全未变。隔离目录 65 文件、18:10 后 8 个变化 → 隔离真生效。
+
+**验收方明确列出「不得读成通过」的 7 项**：①真实充电现场（`BatteryStatus ∈ 6,7,8,9` / `Charging=True`）未复现；②真机自然低电红态未验证；③拔插电源 90 秒刷新延迟只读代码未实测；④拔线后系统仍报 `ACLineStatus=1` 的残留风险无法复现；⑤人眼观感（验收方只看实现者抓的 10 倍放大图，不是自己的观感判断）；⑥未打包装机；⑦`BatteryStatus=10` 被算充电态（已核实为真实行为，第七节第 6 条已记录，本轮不改）。
 
 ## 九、判据实测对比记录（2026-11-09，本机）
 
