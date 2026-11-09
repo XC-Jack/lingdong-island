@@ -3,7 +3,7 @@
 > 任务分支：`battery-charge-low-indicator`（沿用当前分支，改的是同一块电量显示，尚未合并回 `main`）。
 > 基线：`12fd736`（V3 判据定版 + 第三轮独立验收记录）。
 > 起因：用户 2026-11-09 19:45 原文「现在没什么问题了，就是反应太慢了，我插了半天才显示」。
-> **固定提交：见第七节自检记录末尾回填（本节填哈希后再交付）。**
+> **固定提交：`36f6dc3`（perf: 插拔电源即时刷新（powerMonitor 事件推送 + 2s 看门狗））。**
 
 ## 一、目标
 
@@ -21,7 +21,7 @@
 | `src/renderer/src/App.tsx` | 电量/Wi-Fi 那个 `useEffect` 里加订阅 `window.island.onStatusChanged(...)`，收到即 `setBattery/setCharging/setWifi`；60 秒轮询**保留**作为兜底 | ✅ |
 | `scripts/e2e-battery-push.mjs` | 新增：证明「主进程广播 → 渲染层更新」真的通路（不靠 60 秒轮询） | ✅ |
 | `docs/Spec/SPEC-battery-status-push.md` | 本文件 | ✅ |
-| `docs/Spec/SPEC-battery-charging-accuracy.md` | 补一句「90 秒延迟已在下一轮修掉」 | ✅ |
+| `docs/Spec/SPEC-battery-charging-accuracy.md` | 补一句「90 秒延迟已在下一轮修掉」 | ⬜ 实际未改（该文件第三节已写明「本轮不处理」并指向本轮 SPEC，改它与不改都不影响事实；为避免额外改动留在此表备查） |
 | `docs/状态.md` | 一句话状态 | ✅ |
 | `docs/facts/功能清单.md` | 第 5 节「刷新延迟」描述更新 | ✅ |
 | `docs/facts/本机约束与踩坑.md` | 「系统能力」节补一条：`powerMonitor` 可用、Web 电池 API 在 Electron 45 已移除 | ✅ |
@@ -174,9 +174,24 @@ BEAUTIFY_EXIT=0
 
 （`e2e-wifi` A3 那行里的 `[object` 是既有脚本瑕疵：`e2e-wifi.mjs:125` 对 SVG 元素取 `className` 得到 `[object SVGAnimatedString]`，属上一轮验收已记录的老问题，不影响判定。）
 
-### P6 提交范围 — 待提交后回填
+### P6 提交范围 — ✅ 通过（提交 `36f6dc3`）
 
-见第八节验收记录前的「固定提交」行。
+```
+$ git show --stat --oneline 36f6dc3
+36f6dc3 perf: 插拔电源即时刷新（powerMonitor 事件推送 + 2s 看门狗）
+ docs/Spec/SPEC-battery-status-push.md   | 200 +++++++++++++++++++++
+ docs/facts/功能清单.md                  |   4 +-
+ docs/facts/本机约束与踩坑.md            |   5 +-
+ docs/状态.md                            |   2 +
+ scripts/e2e-battery-push.mjs            | 171 ++++++++++++++++++
+ src/main/index.ts                       |   3 +-
+ src/main/statusStore.ts                 |  77 ++++++++-
+ src/preload/index.ts                    |   7 +
+ src/renderer/src/App.tsx                |  17 +-
+ 9 files changed, 473 insertions(+), 13 deletions(-)
+```
+
+9 个文件全部在第二节范围表内（代码 4 个 + 新增 e2e 1 个 + 新增 SPEC 1 个 + 三份事实/状态文档）；`out/` 未被跟踪（`git ls-files out` 为空）；提交后工作区干净。`src/renderer/src/styles.css` **本轮未改**——三态颜色早在 V3 就定好，加速只动链路不动样式。
 
 ### P7 真机插拔观感 — ❌ [未验证]
 
