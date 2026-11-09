@@ -46,7 +46,7 @@ function cdp(wsUrl, expression, awaitPromise = false) {
 
 // patch bundle：把电量行换成固定输出。psLine 是 PS 字面量（带 PS 单引号）。
 // OLD 与 out/main/index.js 的字符串字面量逐字符对应（TS 里的 \\wmi、\" 在 bundle 里是 \\\\\\\\wmi、\\\\\"）。
-const OLD = '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){\\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -in 6,7,8,9) -or [bool]($w|Where-Object {$_.Charging}))}else{\\"null|false\\"}'
+const OLD = '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){\\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1,4,5) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{\\"null|false\\"}'
 function patchBundle(psLine) {
   // 每次都从备份（原版）出发替换，避免上一场景的 patch 残留导致 OLD 找不到
   let src = readFileSync(BACKUP, 'utf8')
