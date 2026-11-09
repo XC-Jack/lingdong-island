@@ -1,6 +1,6 @@
 // M2 e2e：岛仔情绪系统（CDP 驱动真实窗口）
 // 验证：1) idle 态有呼吸动画类；2) 勾掉一条待办 → 岛仔切 happy（弯眼 SVG + 弹跳类），1.8s 后回 idle
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')

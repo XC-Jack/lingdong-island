@@ -5,7 +5,7 @@
 // 为了让对话框不弹出来，本脚本通过 CDP 临时替换 dialog 不可行（主进程模块不可从渲染层改）。
 // 折中：E1 走真实 IPC（会弹一次对话框，脚本自动在 2 秒后按 Esc 关掉），
 // E2 断言的落盘文件由 E1 的对话框写出。若自动 Esc 失败则 E1 返回 canceled，脚本降级为跳过 E2 并提示。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, existsSync, rmSync } from 'node:fs'
 

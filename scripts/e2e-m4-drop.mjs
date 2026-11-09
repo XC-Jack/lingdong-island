@@ -1,6 +1,6 @@
 // e2e-m4-drop.mjs：复现用户场景——拖文件入岛（走真实 drop 广播链路），验证 UI 即时刷新且不白屏
 // 用法：node scripts/e2e-m4-drop.mjs  （自动启动 electron，CDP 端口 9225；Node 22+ 自带全局 WebSocket）
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -10,14 +10,12 @@
  *
  * 运行方式：node scripts/e2e-notify-clear.mjs（自带启动与清理，CDP 端口 9321）
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync, USER_DATA } from './isolate-userdata.mjs'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, platform } from 'node:os'
+import { platform } from 'node:os'
 
 const CDP_PORT = 9321
-const USER_DATA =
-  platform() === 'win32' ? join(homedir(), 'AppData', 'Roaming', 'lingdong-island') : '/tmp/lingdong-e2e'
 const MARK_FILE = join(USER_DATA, 'notif-read.json')
 
 const electronExe = join(process.cwd(), 'node_modules', 'electron', 'dist', 'electron.exe')

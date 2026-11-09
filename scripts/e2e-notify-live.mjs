@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { platform } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const electronExe = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')

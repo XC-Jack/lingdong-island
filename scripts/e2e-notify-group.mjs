@@ -10,7 +10,7 @@
 //  G6 只有一条通知的 app 无数字徽标
 //  G7 未读总数不受堆叠影响（工具栏「n 条通知」= 全部条目数）
 //  G8 展开状态在新通知到达重拉后保留（触发 notifyRefresh 前后 openApps 不丢）
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFileSync } from './isolate-userdata.mjs'
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 

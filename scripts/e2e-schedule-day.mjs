@@ -3,7 +3,7 @@
 //      → 蓝点数量 → 待办只在今天混排 → 逾期徽标 → 数据层面每条都有合法 day
 // 用法：node scripts/e2e-schedule-day.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
 // 注意：会临时改写用户的 schedule.json / todos.json，结束时原样恢复。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { writeFileSync, readFileSync, existsSync, unlinkSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'

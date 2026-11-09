@@ -1,6 +1,6 @@
 // US-036 日程条目编辑 e2e：双击改名 → UI 与磁盘一致；Escape 取消；空文本不覆盖。
 // 约定：先备份 schedule.json，结束时还原；CDP 9321。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'

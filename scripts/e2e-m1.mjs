@@ -1,6 +1,6 @@
 // M1 e2e：通过 CDP 驱动真实窗口，验证待办的增/勾/删与持久化。
 // 用法：node scripts/e2e-m1.mjs（自动启动 electron --remote-debugging-port=9222）
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

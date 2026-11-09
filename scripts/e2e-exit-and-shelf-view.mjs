@@ -5,7 +5,7 @@
 // 用法：node scripts/e2e-exit-and-shelf-view.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
 // 注意：只动 userData/prefs.json 的 shelfView 字段（跑完还原），不碰 shelf.json / todos.json / schedule.json 任何用户数据。
 //      视图记忆的完整断言（含 pagesCustom 互不干扰）在 e2e-shelf-view-pref.mjs。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 

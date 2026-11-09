@@ -31,7 +31,7 @@ Windows 桌面顶部居中的悬浮胶囊：收起时是一条窄条，点开展
 │   ├── preload/             中间人：前台要做事必须经它转达给幕后
 │   └── shared/              公用字典：两边共用的数据格式
 │
-├── scripts/               ※ 自动测试脚本（33 个 e2e-*.mjs + 2 个辅助 .mjs = 35 个，2026-11-08 核对），AI 用，用户不用管
+├── scripts/               ※ 自动测试脚本（33 个 e2e-*.mjs + 3 个辅助 .mjs = 36 个，含数据隔离 helper isolate-userdata.mjs，2026-11-09 核对），AI 用，用户不用管
 ├── build/                 图标等打包资源（icon.ico / icon.png）
 │
 ├── node_modules/          （自动）第三方工具包，几万个文件，不要手动改

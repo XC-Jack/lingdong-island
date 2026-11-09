@@ -10,7 +10,7 @@
  *
  * 运行方式：node scripts/e2e-notify-icon.mjs（自带启动与清理，CDP 端口 9322）
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:os'

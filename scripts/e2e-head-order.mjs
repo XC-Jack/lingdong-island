@@ -13,7 +13,7 @@
  * 跑前先清 electron 进程；spawn 时 delete ELECTRON_RUN_AS_NODE；改 UI 后必须先 npm run build。
  * 会临时改写 prefs.json 与 notif-read.json，结束原样恢复。
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 

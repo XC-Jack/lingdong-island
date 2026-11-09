@@ -1,6 +1,6 @@
 // e2e 通知页：切到第三页 → DOM 面板标题「通知」→ 列表可读（防御式：空也显示提示）→ 已读按钮 → 收起态红点逻辑
 // 自带启动+清理（与 e2e-m4 同模式）；9230 被 DSH 宿主占用，默认用 9321
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

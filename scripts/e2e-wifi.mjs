@@ -1,7 +1,7 @@
 // e2e-wifi.mjs：US-005 收起态 Wi-Fi/网线状态 e2e（走 CDP 连 dev 或打包后的渲染层）
 // A1 快照结构 / A2 图标+文案+类 / A3 DOM 顺序与无重叠 / A4 展开态无图标 / A5 null 分支说明
 // kind='wifi' → IcoWifi 弧线；kind='ethernet' → IcoEthernet 水晶头（svg path 数量区分）
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')

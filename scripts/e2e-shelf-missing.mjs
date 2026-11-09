@@ -3,7 +3,7 @@
 //      → 点击失效条目出中文提示条 → 一键「从架子上移除」→ 失效条目定位按钮禁用
 // 用法：node scripts/e2e-shelf-missing.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
 // 注意：会临时改写用户的 shelf.json，结束时原样恢复。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { writeFileSync, mkdtempSync, readFileSync, existsSync, unlinkSync, rmSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'

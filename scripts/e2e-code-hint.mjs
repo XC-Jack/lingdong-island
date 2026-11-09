@@ -6,7 +6,7 @@
 //   C5 横幅 8s 自动消失、窗口高度还原
 //   C3 同码 30s 抑制 → 用快路径验证：弹过 482913 消失后（>8s）立即再写 482913 → 不弹
 //   C6 短文本带关键词 '验证码 7731' → 弹且内容 7731
-import { spawn, execFileSync } from 'node:child_process'
+import { spawn, execFileSync } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 
 const ROOT = 'D:/Users/honor/Documents/Project/灵动岛'

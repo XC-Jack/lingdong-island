@@ -1,6 +1,6 @@
 // e2e-reorder 的启动包装：先拉起带 CDP 9225 的 electron，再跑 e2e-reorder.mjs，最后清理进程树。
 // e2e-reorder.mjs 设计上只连 CDP（端口 9225，与 m4-drop 相同但错开运行），不自己启动实例。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

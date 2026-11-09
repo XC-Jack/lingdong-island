@@ -6,7 +6,7 @@
 // 为什么不用运行中 CDP 调 prefsSet 再 reload：实测 CDP resolve 与主进程 save 和
 // mount 回填存在竞态（save 时间戳晚于 reload 后的 load），离线写零竞态。
 // 注意：e2e 前必须先 npm run build（dev 加载 out/ 旧产物）。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { writeFileSync } from 'node:fs'
 

@@ -4,7 +4,7 @@
 //        落到今天的日程、不写进 todos.json → 收起态数字按同一口径 → 全部完成后收起标记消失
 // 用法：node scripts/e2e-todo-today.mjs（自动启动 electron，CDP 端口 9321；Node 22+ 自带全局 WebSocket）
 // 注意：会临时清空并改写用户的 todos.json / schedule.json，结束时原样恢复。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'

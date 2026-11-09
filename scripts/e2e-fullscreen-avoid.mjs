@@ -8,9 +8,8 @@
  * 踩坑：①ps() 只收 stdout——stderr 的 CLIXML 进度流会污染输出；②Add-Type 单行双引号版最稳
  * （多行 here-string 嵌套必炸）；③透明无边框窗口有 MainWindowHandle（非 0）。
  */
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { spawn } from './isolate-userdata.mjs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -123,14 +122,15 @@ async function cdpEval(cdp, expr) {
 }
 
 // ---- start dev electron ----
-const userDir = mkdtempSync(join(tmpdir(), 'island-avoid-'))
+// 数据目录隔离由 ./isolate-userdata.mjs 的 spawn 包装统一加 --user-data-dir。
+// 早期这里设过一个自以为能改路径的环境变量，实测它不改变 app.getPath('userData')，已删除。
 const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${PORT}`,
   // e2e 稳定性：GPU/disk cache 在 DSH 环境偶发「拒绝访问」刷屏并伴随 renderer/CDP 卡死
   // （diag 实录：A2 apply(true) 已执行但 v2 的 Runtime.evaluate 永不返回）。绕开这两个子系统。
   '--disable-gpu', '--disk-cache-size=1'
 ], {
   cwd: ROOT,
-  env: { ...process.env, ELECTRON_USER_DATA: userDir, ELECTRON_RUN_AS_NODE: undefined },
+  env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
   stdio: ['ignore', 'inherit', 'inherit']
 })
 

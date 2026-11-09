@@ -1,5 +1,5 @@
 // e2e 日程页：自带启动+清理（与 e2e-m4 同模式）。切到第四页 → 加日程(带时间) → 列表出现 → 勾选 → 删除 → 空态
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

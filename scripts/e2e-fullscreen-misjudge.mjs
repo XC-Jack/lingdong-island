@@ -18,9 +18,8 @@
  *   + IsWindowVisible，`MainWindowHandle` 与 CDP visibilityState 都不可靠；
  * ③spawn 的 electron 必须删 ELECTRON_RUN_AS_NODE，否则会退化成 node 跑不起来。
  */
-import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { spawn } from './isolate-userdata.mjs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -207,8 +206,9 @@ function forceShellForeground(kind) {
   return ps(script)
 }
 
-// ---- 起 dev electron（干净 userData）----
-const userDir = mkdtempSync(join(tmpdir(), 'island-fsmis-'))
+// ---- 起 dev electron（隔离 userData）----
+// 数据目录隔离由 ./isolate-userdata.mjs 的 spawn 包装统一加 --user-data-dir。
+// 早期这里设过一个自以为能改路径的环境变量，实测它不改变 app.getPath('userData')，已删除。
 const child = spawn(
   ELECTRON,
   ['.', `--remote-debugging-port=${PORT}`,
@@ -217,7 +217,7 @@ const child = spawn(
   ],
   {
     cwd: ROOT,
-    env: { ...process.env, ELECTRON_USER_DATA: userDir, ELECTRON_RUN_AS_NODE: undefined },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
     stdio: ['ignore', 'inherit', 'inherit']
   }
 )

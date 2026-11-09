@@ -7,7 +7,7 @@
 //      ⑥写 shelfView 不破坏 pagesCustom（页面管理偏好互不干扰）
 // 用法：node scripts/e2e-shelf-view-pref.mjs（自动启动 electron，CDP 端口 9331；Node 22+ 自带全局 WebSocket）
 // 注意：只动 userData/prefs.json 的 shelfView 字段（测试值跑完还原），不碰 shelf.json / todos.json / schedule.json。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join as pathJoin } from 'node:path'

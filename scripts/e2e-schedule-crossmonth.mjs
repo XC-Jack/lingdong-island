@@ -1,7 +1,7 @@
 // e2e-schedule-crossmonth.mjs —— 补验证：跨月翻页的日历蓝点 + 跨月选日期（状态页未验证项）
 // 流程：备份用户 schedule.json → 注入上月/下月/本月日程 → 启动 dev → 展开切日程页
 // → 断言本月蓝点 → 翻下月断言蓝点+选日期显示对应日程 → 翻上月同理 → 还原数据。
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 

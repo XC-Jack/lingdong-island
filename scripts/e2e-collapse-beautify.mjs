@@ -7,7 +7,7 @@
  * B4 旧红点 .collapsed-dot 不再出现
  * B5 时钟/网络/待办数仍正常（顺序调整不误伤）
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -2,7 +2,7 @@
 // 流程：备份 schedule.json/todos.json → 注入 20 条今日日程 + 8 条待办 → 启动 dev → 展开切待办页
 // → 断言：列表容器可滚动（scrollHeight > clientHeight）、全部条目渲染（20 日程 + 8 待办）、
 //   日程带 sched-badge 且排在待办上方（时间早的在前）→ 还原数据。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 

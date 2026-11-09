@@ -14,7 +14,7 @@
  * 主进程 Runtime.evaluate 必须带 includeCommandLineAPI:true，否则 require 不可见。
  * 注意：跑前先清 electron 进程；启动 env 必须 delete ELECTRON_RUN_AS_NODE。
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 

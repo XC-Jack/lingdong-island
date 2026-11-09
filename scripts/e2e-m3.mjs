@@ -1,5 +1,5 @@
 // M3 e2e：验证 statusSnapshot IPC 返回电量数据（CDP 驱动真实窗口）。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')

@@ -1,5 +1,5 @@
 // M4 e2e：验证置物架 IPC 链路（加/列/删/清）+ 第二页切换。
-import { spawn } from 'node:child_process'
+import { spawn } from './isolate-userdata.mjs'
 import { writeFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
