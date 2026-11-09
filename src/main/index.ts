@@ -3,7 +3,7 @@ import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
-import { setupStatus } from './statusStore'
+import { setupStatus, stopStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
@@ -267,6 +267,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  stopStatus()
   stopNotifyStore()
   stopScheduleStore()
   app.quit()

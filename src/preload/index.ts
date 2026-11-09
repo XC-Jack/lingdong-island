@@ -117,6 +117,13 @@ const api = {
   statusSnapshot(): Promise<StatusSnapshot> {
     return ipcRenderer.invoke('status:snapshot')
   },
+  /**
+   * 主进程主动推送的状态快照（插拔电源、休眠恢复时推，不等 60 秒轮询）。
+   * 与 statusSnapshot 同一份结构，渲染层收到直接覆盖即可。
+   */
+  onStatusChanged(cb: (s: StatusSnapshot) => void): void {
+    ipcRenderer.on('island:status-changed', (_e, s: StatusSnapshot) => cb(s))
+  },
   /** 开机自启：读状态 / 开关 */
   autostartGet(): Promise<boolean> {
     return ipcRenderer.invoke('autostart:get')

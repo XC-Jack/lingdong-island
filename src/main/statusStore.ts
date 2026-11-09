@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, powerMonitor } from 'electron'
 
 /** Wi-Fi / 网线状态（收起态 US-005）；读不到时 wifi 为 null，UI 不显示 */
 export interface WifiSnapshot {
@@ -22,8 +22,19 @@ export interface StatusSnapshot {
   wifi: WifiSnapshot | null
 }
 
+/** 缓存时长：只在没有事件驱动时才靠它兜底（插拔电源会主动作废缓存） */
+const CACHE_MS = 30_000
+/** 看门狗周期：只读 powerMonitor，不起子进程，所以可以比取数频繁得多 */
+const WATCH_MS = 2_000
+/** 事件到达后补读的延迟：系统状态机切换要比事件晚几十到几百毫秒（实测口径见 SPEC 第七节） */
+const EVENT_SETTLE_MS = 600
+
 let cache: StatusSnapshot = { battery: null, charging: false, wifi: null }
 let cacheAt = 0
+/** 上一次通过 powerMonitor 看到的「是否在用电池供电」，看门狗拿它比对 */
+let lastOnBattery: boolean | null = null
+let watchTimer: ReturnType<typeof setInterval> | null = null
+let settleTimer: NodeJS.Timeout | null = null
 
 /**
  * 读系统电量与网络状态（US-005 起在同一次子进程里取回，不新开进程）。
@@ -95,13 +106,73 @@ function readStatus(): StatusSnapshot {
   }
 }
 
+/** 重读状态、更新缓存，并主动推给渲染层（插拔电源时不等轮询） */
+function refreshAndBroadcast(): StatusSnapshot {
+  cache = readStatus()
+  cacheAt = Date.now()
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('island:status-changed', cache)
+  }
+  return cache
+}
+
+/**
+ * 事件到达后延迟补读一次：Windows 的电源状态机切换（Win32_Battery 的
+ * BatteryStatus / EstimatedChargeRemaining）比 on-ac / on-battery 事件晚几十到几百毫秒，
+ * 事件一到立刻读会读到旧值，所以要等一小会儿再读。
+ * 用 setTimeout 而不是 sleep，避免阻塞主进程。
+ */
+function scheduleRefresh(): void {
+  if (settleTimer !== null) clearTimeout(settleTimer)
+  settleTimer = setTimeout(() => {
+    settleTimer = null
+    refreshAndBroadcast()
+  }, EVENT_SETTLE_MS)
+}
+
+/**
+ * 看门狗：只调 powerMonitor.isOnBatteryPower()，不 spawn 子进程（实测连续 2 秒一次地起
+ * PowerShell 会让 CLR 内存不足，见 SPEC 第七节），发现「在用电池」与上次不同才真正重读。
+ * 作用是兜住「系统不发 on-ac / on-battery 事件」的机器（部分扩展坞 / 驱动）。
+ */
+function startWatch(): void {
+  if (watchTimer !== null) return
+  lastOnBattery = powerMonitor.isOnBatteryPower()
+  watchTimer = setInterval(() => {
+    const now = powerMonitor.isOnBatteryPower()
+    if (now === lastOnBattery) return
+    lastOnBattery = now
+    scheduleRefresh()
+  }, WATCH_MS)
+}
+
 export function setupStatus(): void {
   ipcMain.handle('status:snapshot', (): StatusSnapshot => {
-    // 缓存 30 秒，电量/Wi-Fi 变化都慢，没必要每次都起子进程
-    if (Date.now() - cacheAt > 30_000) {
+    // 缓存 30 秒兜底；插拔电源、休眠恢复都会主动作废缓存并广播
+    if (Date.now() - cacheAt > CACHE_MS) {
       cache = readStatus()
       cacheAt = Date.now()
     }
     return cache
   })
+
+  // 插拔电源：立即作废缓存并广播（延迟 EVENT_SETTLE_MS 补读，见 scheduleRefresh）
+  powerMonitor.on('on-ac', scheduleRefresh)
+  powerMonitor.on('on-battery', scheduleRefresh)
+  // 休眠恢复：合盖期间的电量变化事件可能丢，醒来补读一次
+  powerMonitor.on('resume', scheduleRefresh)
+  startWatch()
+}
+
+/** 退出时清掉定时器（与 notifyStore / scheduleStore 的 stop 同型） */
+export function stopStatus(): void {
+  if (watchTimer !== null) {
+    clearInterval(watchTimer)
+    watchTimer = null
+  }
+  if (settleTimer !== null) {
+    clearTimeout(settleTimer)
+    settleTimer = null
+  }
+  lastOnBattery = null
 }

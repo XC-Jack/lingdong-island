@@ -2093,18 +2093,23 @@ export default function App(): React.JSX.Element {
     announceBannerHold(false)
   }
 
-  // 电量与 Wi-Fi：首取 + 每 60 秒刷新（主进程另有 30s 缓存）
+  // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 60 秒兜底刷新
   useEffect(() => {
     let alive = true
+    const apply = (s: { battery: number | null; charging: boolean; wifi: WifiSnapshot | null }): void => {
+      setBattery(s.battery)
+      setCharging(s.charging)
+      setWifi(s.wifi)
+    }
     const pull = (): void => {
       void window.island.statusSnapshot().then((s) => {
-        if (alive) {
-          setBattery(s.battery)
-          setCharging(s.charging)
-          setWifi(s.wifi)
-        }
+        if (alive) apply(s)
       })
     }
+    // 主进程在插拔电源 / 休眠恢复时主动推一份（判定口径与 statusSnapshot 完全一致）
+    window.island.onStatusChanged((s) => {
+      if (alive) apply(s)
+    })
     pull()
     const id = window.setInterval(pull, 60_000)
     return () => {
