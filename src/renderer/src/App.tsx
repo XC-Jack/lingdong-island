@@ -1911,6 +1911,8 @@ export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
+  // 充电中（status:snapshot 一直带着 charging，UI 从未用过——电量态轮次开始消费）
+  const [charging, setCharging] = useState<boolean>(false)
   // Wi-Fi 快照（收起态 US-005）；null = 读不到，不显示图标
   const [wifi, setWifi] = useState<WifiSnapshot | null>(null)
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
@@ -2098,6 +2100,7 @@ export default function App(): React.JSX.Element {
       void window.island.statusSnapshot().then((s) => {
         if (alive) {
           setBattery(s.battery)
+          setCharging(s.charging)
           setWifi(s.wifi)
         }
       })
@@ -2371,15 +2374,18 @@ export default function App(): React.JSX.Element {
   const renderStatusItem = (k: CollapsedKey): React.JSX.Element | null => {
     if (!pagesCustom.collapsed[k]) return null
     switch (k) {
-      case 'battery':
-        // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染
+      case 'battery': {
+        // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染。
+        // 电量态轮次（2026-11-09）：充电态优先——charging 时弧变绿 + 右上角小闪电，
+        // 低电量红（含数字）只在「没充电且 ≤20%」出现，两者占时以充电为准。
+        const low = battery !== null && !charging && battery <= 20
         return battery !== null ? (
           <span
             key="battery"
-            className={`head-battery-ring ${battery <= 20 ? 'low' : ''}`}
+            className={`head-battery-ring ${low ? 'low' : ''} ${charging ? 'charging' : ''}`}
             role="img"
-            aria-label={`电量 ${battery}%`}
-            title={`电量 ${battery}%`}
+            aria-label={charging ? `充电中 · 电量 ${battery}%` : low ? `电量偏低 · ${battery}%` : `电量 ${battery}%`}
+            title={charging ? `充电中 · 电量 ${battery}%` : low ? `电量偏低 · ${battery}%` : `电量 ${battery}%`}
           >
             <svg viewBox="0 0 36 36" aria-hidden="true">
               {/* 底环 + 进度环：stroke-dasharray 按 battery% 画弧（r=15.5 周长≈97.4） */}
@@ -2394,8 +2400,15 @@ export default function App(): React.JSX.Element {
               />
             </svg>
             <span className="ring-num">{battery}</span>
+            {/* 充电小闪电：环右上角，charging 时才渲染 */}
+            {charging ? (
+              <svg className="ring-bolt" viewBox="0 0 10 10" aria-hidden="true">
+                <path d="M5.8 0.6 2.2 5.6h2.1L4.2 9.4 7.8 4.4H5.7Z" />
+              </svg>
+            ) : null}
           </span>
         ) : null
+      }
       case 'pet':
         return <Pet key="pet" mood={mood} />
       case 'clock':

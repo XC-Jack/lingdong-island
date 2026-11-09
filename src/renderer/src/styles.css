@@ -495,6 +495,22 @@ body {
 .head-battery-ring.low .ring-fg {
   stroke: rgba(255, 107, 107, 0.9);
 }
+/* 电量态轮次：充电中弧变绿；低电量数字也变红；小闪电钉在右上角 */
+.head-battery-ring.charging .ring-fg {
+  stroke: rgba(75, 214, 130, 0.9);
+}
+.head-battery-ring.low .ring-num {
+  color: rgba(255, 107, 107, 0.95);
+}
+.head-battery-ring .ring-bolt {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  fill: rgba(75, 214, 130, 0.95);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+}
 .head-battery-ring .ring-num {
   position: absolute;
   inset: 0;
