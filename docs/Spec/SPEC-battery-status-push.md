@@ -310,7 +310,18 @@ BUILD EXIT=0
 - `e2e-wifi`：`E2E WIFI PASS`（EXIT=0），A3 顺序仍 `head-battery-ring → collapsed-clock → collapsed-wifi → collapsed-bell`
 - `e2e-collapse-beautify`：`7 过 / 0 败`（EXIT=0）
 
-**P6 提交范围 — ⬜ 待提交后回填**
+**P6 提交范围 — ✅ 通过（固定提交 `4775d4b`）**
+
+```
+ docs/Spec/SPEC-battery-status-push.md              |  90 ++++++++++-
+ docs/facts/功能清单.md                             |   2 +-
+ docs/状态.md                                       |   2 +
+ scripts/e2e-battery-push.mjs                       | 169 +++++++++++++++------
+ src/main/statusStore.ts                            |  82 +++++++---
+ 5 files changed, 270 insertions(+), 75 deletions(-)
+```
+
+5 个文件全在第二节范围表内；`out/` 未进提交（`.gitignore:3`）；工作区干净。**本轮固定提交 = `4775d4b1c66adacd49ff79309ca39655bea99fad`。**
 
 **P7 真机插拔 — ❌ [未验证]**（同前：本机电池恒 99% 插电，注入测的是通路时延）
 
