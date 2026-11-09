@@ -2376,8 +2376,9 @@ export default function App(): React.JSX.Element {
     switch (k) {
       case 'battery': {
         // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染。
-        // 电量态轮次（2026-11-09）：充电态优先——charging 时弧变绿 + 右上角小闪电，
+        // 电量态轮次（2026-11-09）：充电态优先——charging 时弧变绿，
         // 低电量红（含数字）只在「没充电且 ≤20%」出现，两者占时以充电为准。
+        // 小闪电按用户 2026-11-09 要求移除，充电只靠绿色弧表达。
         const low = battery !== null && !charging && battery <= 20
         return battery !== null ? (
           <span
@@ -2400,12 +2401,6 @@ export default function App(): React.JSX.Element {
               />
             </svg>
             <span className="ring-num">{battery}</span>
-            {/* 充电小闪电：环右上角，charging 时才渲染 */}
-            {charging ? (
-              <svg className="ring-bolt" viewBox="0 0 10 10" aria-hidden="true">
-                <path d="M5.8 0.6 2.2 5.6h2.1L4.2 9.4 7.8 4.4H5.7Z" />
-              </svg>
-            ) : null}
           </span>
         ) : null
       }

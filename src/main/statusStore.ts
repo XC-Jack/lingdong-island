@@ -36,8 +36,12 @@ function readStatus(): StatusSnapshot {
   try {
     const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
     const script = [
-      // 电量行（与 US-005 之前格式一致）：电量|是否充电
-      '$b=Get-CimInstance -ClassName Win32_Battery; if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, ($b.BatteryStatus -eq 2)}else{"null|false"}',
+      // 电量行（与 US-005 之前格式一致）：电量|是否正在充电
+      // 注意：Win32_Battery.BatteryStatus 的 2 是「接着交流电但没在充电」，3 是「已充满」，
+      // 只有 6/7/8/9 才是「正在充电」。原先用 -eq 2 判充电，等于把「插着电」当「在充电」，
+      // 插电但未达充电门槛时会误报充电态（实测踩坑，见 SPEC-battery-charging-accuracy）。
+      // root\wmi 的 Charging 作兜底，两处任一为真即算充电。
+      '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){"{0}|{1}" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -in 6,7,8,9) -or [bool]($w|Where-Object {$_.Charging}))}else{"null|false"}',
       // 网络行：net|IPv4类别|IPv6类别|接口名|介质类型|是否虚拟
       // 按 InterfaceIndex 关联连接配置与网卡：MediaType 802.11=无线 / 802.3=有线，
       // Virtual=True 是 VPN 等虚拟网卡（如 Radmin VPN），不算真网线（实测踩坑）

@@ -2,8 +2,9 @@
 // 验证四种组合：普通 / 充电 / 充电且低电 / 低电（不充电）。
 // 注入方式 [实测]：改 out/main/index.js 的 PowerShell 电量行（渲染层 60s 轮询的最终数据源），
 // out/ 在 .gitignore（.gitignore:3），src/ 一字不动；跑前备份、finally 还原 + 校验字节一致。
-// 每次注入重启 electron（主进程 30s 缓存），CDP 断言渲染层 DOM：类名 / 数字 / title / aria / 闪电。
+// 每次注入重启 electron（主进程 30s 缓存），CDP 断言渲染层 DOM：类名 / 数字 / title / aria。
 // 断言「弧颜色」走 computed style stroke（charging 绿 / low 红 / 普通 0.85 白）。
+// 充电小闪电已按用户要求移除（SPEC-battery-charging-accuracy），四个场景一律断言不存在 .ring-bolt。
 // 注意：低电注入用 15|false（PS 单引号），charging 注入用 15|True 与 99|True 两种都测。
 import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
@@ -44,7 +45,8 @@ function cdp(wsUrl, expression, awaitPromise = false) {
 }
 
 // patch bundle：把电量行换成固定输出。psLine 是 PS 字面量（带 PS 单引号）。
-const OLD = '$b=Get-CimInstance -ClassName Win32_Battery; if($b){\\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, ($b.BatteryStatus -eq 2)}else{\\"null|false\\"}'
+// OLD 与 out/main/index.js 的字符串字面量逐字符对应（TS 里的 \\wmi、\" 在 bundle 里是 \\\\\\\\wmi、\\\\\"）。
+const OLD = '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){\\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -in 6,7,8,9) -or [bool]($w|Where-Object {$_.Charging}))}else{\\"null|false\\"}'
 function patchBundle(psLine) {
   // 每次都从备份（原版）出发替换，避免上一场景的 patch 残留导致 OLD 找不到
   let src = readFileSync(BACKUP, 'utf8')
@@ -113,7 +115,7 @@ const scenarios = [
       ok('S2 数字 99', d.num === '99', d.num)
       ok('S2 title 充电中', d.title === '充电中 · 电量 99%', d.title)
       ok('S2 aria 充电中', d.aria === '充电中 · 电量 99%', d.aria)
-      ok('S2 有闪电', d.hasBolt)
+      ok('S2 无闪电', !d.hasBolt)
       ok('S2 弧绿色', d.stroke === GREEN, d.stroke)
     } },
   { name: 'S3 充电且低电（15% 充电中）', line: '15|True', patch: true,
@@ -122,7 +124,7 @@ const scenarios = [
       ok('S3 无 low 类（充电优先）', !d.cls.includes('low'), d.cls)
       ok('S3 title 充电中 15%', d.title === '充电中 · 电量 15%', d.title)
       ok('S3 aria 充电中 15%', d.aria === '充电中 · 电量 15%', d.aria)
-      ok('S3 有闪电', d.hasBolt)
+      ok('S3 无闪电', !d.hasBolt)
       ok('S3 弧绿（不是红）', d.stroke === GREEN, d.stroke)
       ok('S3 数字非红', d.numColor !== REDNUM, d.numColor)
     } },
