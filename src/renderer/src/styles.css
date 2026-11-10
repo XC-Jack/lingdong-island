@@ -274,12 +274,22 @@ body {
   white-space: nowrap;
 }
 
-/* 通知铃铛（收起态，美化-01）：白色实心铃铛 + 右上红点徽标（替代原纯红点） */
+/* 通知铃铛（收起态，美化-01）：白色实心铃铛 + 右上红点徽标（替代原纯红点）。
+   2026-11-10 起可点（点它直达通知页），所以给手型光标 + 键盘焦点可见。 */
 .collapsed-bell {
   position: relative;
   display: inline-flex;
   align-items: center;
   color: rgba(242, 243, 245, 0.92);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.collapsed-bell:hover {
+  color: #fff;
+}
+.collapsed-bell:focus-visible {
+  outline: 2px solid rgba(159, 139, 255, 0.9);
+  outline-offset: 2px;
 }
 
 .collapsed-bell .bell-badge {

@@ -2348,6 +2348,23 @@ export default function App(): React.JSX.Element {
     setPageAnim((n) => n + 1)
   }, [])
 
+  // 通知铃铛被点击 → 展开岛并直接落在通知页（page 2）。
+  // 用户 2026-11-10 要求：点铃铛不必先展开到第一页再自己翻两下。
+  // 与菜单「页面管理…」（见上方 useEffect）同一套路：先同步主进程窗口尺寸，再切页；
+  // 已经在通知页时不再重放淡入动画（重放 = 页面重挂 = 用户看到的频闪）。
+  const openNotifyPage = useCallback(() => {
+    clearCollapseTimer()
+    if (!expandedRef.current) {
+      window.island.setExpanded(true)
+      expandedRef.current = true
+      setExpanded(true)
+    }
+    if (page !== 2) {
+      setPage(2)
+      setPageAnim((n) => n + 1)
+    }
+  }, [clearCollapseTimer, page])
+
   const onDragOverRoot = (e: React.DragEvent): void => {
     e.preventDefault()
     // 悬停期间不断续命，防止拖着拖着岛收走
@@ -2460,14 +2477,28 @@ export default function App(): React.JSX.Element {
           </span>
         ) : null
       case 'bell':
-        // 通知铃铛（美化-01）：有未读时白铃铛 + 右上红点；无未读不渲染
+        // 通知铃铛（美化-01）：有未读时白铃铛 + 右上红点；无未读不渲染。
+        // 2026-11-10 起可点：点它 = 展开岛并直接跳到通知页（用户要求，不必再自己翻页）。
+        // 必须 stopPropagation——岛根节点 onClick 在收起态是 toggle()，冒泡上去会刚展开又被收起。
         return notifyUnread > 0 ? (
           <span
             key="bell"
             className="collapsed-bell"
-            title={`${notifyUnread} 条未读通知`}
-            role="img"
-            aria-label={`${notifyUnread} 条未读通知`}
+            title={`${notifyUnread} 条未读通知，点击查看`}
+            role="button"
+            tabIndex={0}
+            aria-label={`${notifyUnread} 条未读通知，点击查看`}
+            onClick={(e) => {
+              e.stopPropagation()
+              openNotifyPage()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                e.stopPropagation()
+                openNotifyPage()
+              }
+            }}
           >
             <IcoBellSolid />
             <i className="bell-badge" aria-hidden="true" />
