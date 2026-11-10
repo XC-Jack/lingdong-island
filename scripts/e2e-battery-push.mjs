@@ -4,15 +4,18 @@
 // 做法（不动 src/，只改构建产物 out/main/index.js，跑完字节还原）：
 //   1) 把电量行换成一个「故意很慢」的取数：先 Start-Sleep 2 秒再读测试文本文件。
 //      这样取数耗时被拉大到 2 秒，事件与取数的时间差就肉眼可测。
-//   2) 把 `powerMonitor.on("on-ac", () => applyPowerEvent(true))` 换成两个定时器，
-//      在第 5 秒、第 12 秒各执行一次「改测试文件 + 调用同一个 applyPowerEvent」，
+//   2) 把 `powerMonitor.on("on-ac", ...)` 与 `powerMonitor.on("on-battery", ...)` 两条注册行
+//      分别换成两个定时器：第 12 秒、第 22 秒各执行一次「改测试文件 + 调用同一个 applyPowerEvent」，
 //      等价于系统分别送来一次插电、一次拔电事件。
+//      ——两条都要换：独立验收 C2 指出早期版本只换了 `on-ac`，拔电方向的
+//        `applyPowerEvent(false)` 是定时器直接调的，绕过了真实的事件注册，等于零覆盖。
 //   3) 把两处 `powerMonitor.isOnBatteryPower()`（看门狗读电源）换成一个从测试文件旁路读的
 //      假传感器，保证「假世界」自洽：事件、取数、看门狗三方说的是同一件事。
 //      ——为什么要这一步：本机电池长期插着电，真实传感器永远说「接着交流电」，
 //        拔电方向造不出来；不旁路的话看门狗会在 1 秒内把拔电状态改回插电。
 //   4) 断言的核心不是「最终变了」，而是「颜色先变、百分比后到」：
-//      变绿那一刻百分比还是旧的 80，约 2 秒后百分比才变成 99。
+//      变绿那一刻百分比还是旧的 80、变白那一刻百分比还是旧的 99（两侧都真断言），
+//      约 2 秒后百分比才变成 99 / 15。
 import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, copyFileSync, unlinkSync, existsSync } from 'node:fs'
@@ -65,8 +68,11 @@ function cdp(wsUrl, expression) {
 
 // 电量行的原始串（与 e2e-battery-states.mjs 的 OLD 一致；要改判据时两处都要跟）
 const OLD_BATTERY = '$b=Get-CimInstance -ClassName Win32_Battery; $w=@(Get-CimInstance -Namespace root\\\\wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue); if($b){\\"{0}|{1}\\" -f $b.EstimatedChargeRemaining, (($b.BatteryStatus -notin 1) -and -not [bool]($w|Where-Object {$_.Discharging}))}else{\\"null|false\\"}'
-// 事件注册行：换成两个定时器，等价于「第 5 秒插电、第 12 秒拔电」
+// 事件注册行：两条分别换成定时器，等价于「第 12 秒插电、第 22 秒拔电」。
+// 两条都必须换：只换 on-ac 时，拔电走的是定时器直接调 applyPowerEvent(false)，
+// 真实的事件注册行原样留在 bundle 里却从未触发，等于拔电方向零覆盖（独立验收 C2）。
 const OLD_ONAC = 'electron.powerMonitor.on("on-ac", () => applyPowerEvent(true));'
+const OLD_ONBATTERY = 'electron.powerMonitor.on("on-battery", () => applyPowerEvent(false));'
 // 看门狗读电源的两处（startWatch 里的初始化与每秒比对）
 const OLD_SENSOR = 'electron.powerMonitor.isOnBatteryPower()'
 // 事件时刻是从「进程启动」算的，而脚本的 tStart 在 CDP 连上后才开始（约晚 1–2 秒），
@@ -79,6 +85,7 @@ function patchBundle() {
   let src = readFileSync(BACKUP, 'utf8')
   if (!src.includes(OLD_BATTERY)) throw new Error('电量行 patch 目标没找到（out/ 与 src 不同步？先 npm run build）')
   if (!src.includes(OLD_ONAC)) throw new Error('on-ac 注册行 patch 目标没找到（startWatch/setupStatus 变了？）')
+  if (!src.includes(OLD_ONBATTERY)) throw new Error('on-battery 注册行 patch 目标没找到（setupStatus 变了？）')
   if (!src.includes(OLD_SENSOR)) throw new Error('isOnBatteryPower 调用没找到（看门狗改写法了？）')
 
   const psValuePath = VALUE_FILE.replace(/\\/g, '/')
@@ -103,12 +110,12 @@ function patchBundle() {
   const helper = `\nfunction __e2eFakeOnBattery(){ try { const t = require("node:fs").readFileSync(${JSON.stringify(jsPowerPath)}, "utf8").trim(); return t === "BAT" } catch { return false } }`
   src = src.replace(anchor, anchor + helper)
 
-  // 事件：先改测试文件，再调用生产代码里的同一个 applyPowerEvent
-  const eventCode = [
-    `setTimeout(() => { try { require("node:fs").writeFileSync(${JSON.stringify(jsValuePath)}, "99|True"); require("node:fs").writeFileSync(${JSON.stringify(jsPowerPath)}, "AC") } catch {} ; applyPowerEvent(true) }, ${EVENT_PLUG_MS});`,
-    `setTimeout(() => { try { require("node:fs").writeFileSync(${JSON.stringify(jsValuePath)}, "15|False"); require("node:fs").writeFileSync(${JSON.stringify(jsPowerPath)}, "BAT") } catch {} ; applyPowerEvent(false) }, ${EVENT_UNPLUG_MS});`
-  ].join(' ')
-  src = src.replace(OLD_ONAC, eventCode)
+  // 事件：先改测试文件，再调用生产代码里的同一个 applyPowerEvent。
+  // 两条注册行分别被「插电定时器」和「拔电定时器」顶替（bundle 里只剩空注释占位）。
+  const plugCode = `setTimeout(() => { try { require("node:fs").writeFileSync(${JSON.stringify(jsValuePath)}, "99|True"); require("node:fs").writeFileSync(${JSON.stringify(jsPowerPath)}, "AC") } catch {} ; applyPowerEvent(true) }, ${EVENT_PLUG_MS});`
+  const unplugCode = `setTimeout(() => { try { require("node:fs").writeFileSync(${JSON.stringify(jsValuePath)}, "15|False"); require("node:fs").writeFileSync(${JSON.stringify(jsPowerPath)}, "BAT") } catch {} ; applyPowerEvent(false) }, ${EVENT_UNPLUG_MS});`
+  src = src.replace(OLD_ONAC, plugCode)
+  src = src.replace(OLD_ONBATTERY, unplugCode)
 
   writeFileSync(BUNDLE, src, 'utf8')
 }
@@ -203,9 +210,14 @@ const main = async () => {
     // === 事件②：第 12 秒拔电，取数会读到 15|False（低电、没充电）===
     const white = await waitFor(wsUrl, (v) => v.has && v.stroke === WHITE, EVENT_UNPLUG_MS + 6_000)
     console.log('[拔电事件后]', JSON.stringify(white.v), '距 spawn', white.at, 'ms')
-    ok('P3-14 拔电事件后弧变白（仍未低电，因为百分比还是 99）', !!white.v, `${white.at}ms`)
+    ok('P3-14 拔电事件后弧变白', !!white.v, `${white.at}ms`)
+    // 白态也要断言百分比还没跟上（独立验收 C3：早期版本白态只断言弧变白，
+    // 「变白时数字还是 99」只是日志里的观察值，不是断言）。
+    ok('P3-14b 变白时百分比还是旧的 99（颜色不等取数）', !!white.v && white.v.num === '99', String(white.v?.num))
     ok('P3-15 变白时 charging 类已撤', !!white.v && !white.v.cls.includes('charging'), String(white.v?.cls))
-    ok('P3-16 变白时刻贴着事件（拔电后 600ms 内）', white.at > 0 && white.at < EVENT_UNPLUG_MS + 600, `${white.at}ms`)
+    // 窗口 1500ms：既给足 CDP 采样抖动（实测最大 885ms），又明显小于 SLOW_READ_MS=2000，
+    // 所以「变白早于取数落地」依然成立。原先 600ms 裕量太薄（独立验收 C3 实测 12 次里 1 次假失败）。
+    ok('P3-16 变白时刻贴着事件（拔电后 1.5 秒内）', white.at > 0 && white.at < EVENT_UNPLUG_MS + 1_500, `${white.at}ms`)
 
     // 红色要等事件②（22s）之后那次 2 秒的取数落地，截止时间按秒级余量给足
     const red = await waitFor(wsUrl, (v) => v.has && v.stroke === RED, EVENT_UNPLUG_MS + 12_000)
