@@ -164,6 +164,17 @@ const api = {
   autostartSet(on: boolean): Promise<boolean> {
     return ipcRenderer.invoke('autostart:set', on)
   },
+  /**
+   * 自启状态被任何窗口改动后广播（SPEC-settings-shell 阻断项 B2）：
+   * 岛头部胶囊和设置窗口的开关是两处独立渲染，不订阅的话改完另一边不动。
+   */
+  onAutostartChanged(cb: (on: boolean) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
+    ipcRenderer.on('autostart:changed', h)
+    return () => {
+      ipcRenderer.removeListener('autostart:changed', h)
+    }
+  },
   /** 置物架：列 / 加（拖入路径数组）/ 删 / 清空 / 打开 / 显示所在文件夹 */
   shelfList(): Promise<ShelfItem[]> {
     return ipcRenderer.invoke('shelf:list')

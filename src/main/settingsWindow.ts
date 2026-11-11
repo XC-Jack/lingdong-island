@@ -96,9 +96,11 @@ export function openSettings(section: SettingsSection): void {
     sendSection(settingsWindow, section)
     return
   }
-  settingsWindow = createSettingsWindow()
-  // 新建窗口时先记下分区，等页面加载完再发
+  // 先记分区、再建窗口：createSettingsWindow() 里会 loadURL/loadFile，页面可能极快
+  // 触发 did-finish-load，反过来写的话那一次补发就丢（靠「加载是异步的」这种时序运气
+  // 不算保证，独立验收 B 项点名过）。
   pendingSection = section
+  settingsWindow = createSettingsWindow()
 }
 
 /** 设置窗口是否开着（e2e 与主进程内部判断用） */

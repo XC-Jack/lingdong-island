@@ -1950,6 +1950,13 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
+  // 开机自启：设置窗口改了开关要同步到这里（SPEC-settings-shell 阻断项 B2）。
+  // 头部那枚胶囊和设置窗口「常规」分区是两处独立渲染，靠主进程 autostart:changed 广播对齐。
+  useEffect(() => {
+    const off = window.island.onAutostartChanged((on) => setAutoStart(on))
+    return off
+  }, [])
+
   const flipAutoStart = useCallback((): void => {
     const next = !(autoStart === true)
     setAutoStart(next) // 乐观更新，主进程会回真实值

@@ -27,7 +27,7 @@
 | `src/renderer/src/settings/main.tsx` | 设置窗口渲染入口：`createRoot(...).render(<SettingsApp />)`，`import './settings.css'` |
 | `src/renderer/src/settings/SettingsApp.tsx` | 左导航 + 右侧内容区；三个分区 `general` / `pages` / `focus` |
 | `src/renderer/src/settings/settings.css` | 设置窗口独立样式基线（整窗不透明深色卡片，不复用岛的透明基线） |
-| `src/renderer/src/settings/PageManagerSection.tsx` | 从 `App.tsx` 原样搬出的页面管理逻辑（页面显隐/排序 + 收起态组件显隐/排序），**类名与 `data-*` 保持不变** |
+| `src/renderer/src/settings/PageManagerSection.tsx` | 从 `App.tsx` 原样搬出的页面管理逻辑（页面显隐/排序 + 收起态组件显隐/排序），**类名与 `data-*` 保持不变**（四个关键函数 `togglePage`/`toggleCollapsed`/`reorderTo`/`reorderCollapsed` 与 `dropEdge` 判据与基线字符级相同；界面细节有两处不同：行首多一枚 `.pm-dot` 状态圆点、`PAGE_META` 不带 icon 字段） |
 | `src/main/settingsWindow.ts` | 设置窗口的创建/唤出/关闭 + `settings:*` IPC |
 | `scripts/e2e-settings-shell.mjs` | 新建：设置窗口 e2e（见第五节） |
 
@@ -92,7 +92,7 @@
 - [ ] 左导航 3 项（常规/页面管理/专注·喝水），点击切换右侧内容，当前项有高亮态。
 - [ ] 「常规」里开机自启开关能真的改系统自启（与岛头部胶囊状态一致），版本号显示 `package.json` 的 version，点「打开数据文件夹」会打开 `%APPDATA%\lingdong-island\`。
 - [ ] 「页面管理」里页面区 4 行、收起态组件区 6 行，勾选立即写进 `prefs.json`。
-- [ ] 页面区最后一个页面不能取消（勾选框禁用 + 显示「至少保留一个」）。
+- [ ] 页面区最后一个页面不能取消（勾选框显示锁定态并显示「至少保留一个」；实现上靠 `togglePage` 早退拦截，**不加 `disabled` 属性**——与基线 `PageManagerPanel` 一致，避免改了既有交互）
 - [ ] 收起态组件拖动是**插入**语义：落在目标行上半插到它前面、下半插到它后面，整条 order 数组随之顺移。
 - [ ] 在设置窗口取消勾选「通知铃铛」→ 岛收起态铃铛立刻消失；勾回 → 立刻回来。
 - [ ] 岛里不再有「页面管理」页：翻页圆点只有 4 个。
@@ -120,7 +120,18 @@
 | 2026-11-11 | 回归 `node scripts/e2e-collapse-order.mjs`（面板从第 5 页搬到设置窗口后改造） | **PASS（22 过 / 0 败）** | — |
 | 2026-11-11 | 回归 `node scripts/e2e-head-order.mjs`（同步改造） | **PASS（14 过 / 0 败）** | — |
 | 2026-11-11 | 回归 `node scripts/e2e-pages-custom.mjs`（验证岛本身页数/顺序未被搬移破坏） | **PASS（6 项通过）** | — |
-| 2026-11-11 | `git grep` 全仓库复核 `onManagePages` 残留 | 零命中 | — |
+| 2026-11-11 | `git grep` 复核 `onManagePages` 残留（限 `src` 与 `scripts`，文档里的历史记录不算） | 代码侧零命中 | — |
+| 2026-11-11 | **独立验收第一轮（`2472e95`）不通过，修 2 条阻断后重跑** | 见下「阻断项订正」 | 见第八节 |
+| 2026-11-11 | 订正后 `npm run typecheck` / `npm run build` | **均 EXIT=0**；产物 `settings-2BSFDnCE.js 20.55 kB`、`index-CHAvylTO.js 92.71 kB`（均含自启广播代码） | — |
+| 2026-11-11 | 订正后 `node scripts/e2e-settings-shell.mjs`（新增 S9a–S9e 五条自启同步断言） | **PASS（28 过 / 0 败）** | 真实开机自启是否生效仍未测（见下） |
+| 2026-11-11 | 订正后三条回归重跑 | `e2e-collapse-order` **22 过 / 0 败**、`e2e-head-order` **14 过 / 0 败**、`e2e-pages-custom` **6 项通过** | — |
+
+**独立验收第一轮阻断项订正（针对 `2472e95`，报告 `.tmp/独立验收-2472e95.md`）**：
+
+- **B1 `docs/状态.md` 不在固定提交里** → 已连同本轮所有订正一起提交，后续以订正后的新哈希为固定提交。
+- **B2 自启状态在岛与设置窗口之间无同步通道**（SPEC 三.2 与验收条件 #5 要求「两边状态一致」，实际两边都只在挂载时读一次）→ 已修：`src/main/index.ts` 的 `autostart:set` 落盘后取**真实值**广播 `autostart:changed` 给所有窗口（用真实值而非入参，系统拒绝写入时两边都看到实际结果）；`src/preload/index.ts` 新增 `onAutostartChanged(cb): () => void`（沿用返回取消订阅的既有写法）；`src/renderer/src/App.tsx` 与 `src/renderer/src/settings/SettingsApp.tsx` 各加一处订阅。**新增 e2e S9a–S9e 覆盖双向同步**（含反向：从岛侧改，设置窗口的开关跟着变），并记录/恢复注册表原值，避免测试污染用户自启设置。
+- **顺带修掉验收方指出的时序运气问题**：`src/main/settingsWindow.ts` 的 `openSettings()` 原来是「先建窗、后赋 `pendingSection`」，靠 loadFile 异步才不出错；改为「先赋 `pendingSection`、再建窗」。
+- **不阻断项已订正的两处文档偏差**：SPEC 第五节实际是 12 条 checkbox（此前写成「13 条」）；自检表原写「`git grep` 全仓库零命中 `onManagePages`」不可复现（文档里有 5 处历史记录），已改为限定 `src` 与 `scripts` 的准确表述。
 
 **未验证（自检阶段明确的空白）**：
 - 真机人眼观感：设置窗口的深色层次、圆角裁切、滚动条样式、标题栏拖动是否顺手，全程只看 DOM 与类名，没有截图比对。

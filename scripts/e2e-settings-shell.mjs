@@ -220,6 +220,46 @@ try {
     await sleep(700)
   }
 
+  // ========== S9 自启状态双向同步（独立验收阻断项 B2 的回归） ==========
+  {
+    // 自启会真的改注册表，先记原值，无论成败都恢复
+    const orig = await islandEval(`window.island.autostartGet()`)
+    // 展开岛，头部那枚胶囊才在 DOM 里
+    await islandEval(`(() => { const el = document.querySelector('.island'); if (el && !el.className.includes('expanded')) el.click(); return 'ok' })()`)
+    await sleep(900)
+    const islandAuto = () => islandEval(`(() => { const e = document.querySelector('.autostart-toggle'); return e ? (e.className.includes('on') ? 1 : 0) : -1 })()`)
+    ok('S9a 展开态头部有自启胶囊且状态与主进程一致',
+      (await islandAuto()) === (orig ? 1 : 0),
+      `主进程 ${orig}，胶囊 ${await islandAuto()}`)
+
+    // 在设置窗口「常规」点开关
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('常规')); if (b) b.click(); return 'ok' })()`)
+    await sleep(600)
+    await settingsEval(`(() => { const s = document.querySelector('.set-switch'); if (!s) return 'no-switch'; s.click(); return 'ok' })()`)
+    await sleep(1200)
+
+    const flipped = await islandEval(`window.island.autostartGet()`)
+    ok('S9b 设置窗口改自启后主进程状态已翻转', flipped === !orig, `原 ${orig}，现 ${flipped}`)
+    const islandAfter = await islandAuto()
+    ok('S9c 岛头部胶囊当场跟着变（autostart:changed 广播生效，未重启）',
+      islandAfter === (flipped ? 1 : 0),
+      `主进程 ${flipped}，胶囊 ${islandAfter}`)
+
+    // 反向：设置窗口的开关也要跟随岛那边的改动
+    await islandEval(`(() => { const e = document.querySelector('.autostart-toggle'); if (e) e.click(); return 'ok' })()`)
+    await sleep(1200)
+    const backAgain = await islandEval(`window.island.autostartGet()`)
+    ok('S9d 从岛侧改回后主进程恢复原值', backAgain === orig, `原 ${orig}，现 ${backAgain}`)
+    const switchState = await settingsEval(`(() => { const s = document.querySelector('.set-switch'); return s ? (s.getAttribute('aria-checked') === 'true' ? 1 : 0) : -1 })()`)
+    ok('S9e 设置窗口开关反向跟随岛侧改动', switchState === (orig ? 1 : 0), `主进程 ${orig}，开关 ${switchState}`)
+
+    // 兜底：无论如何恢复原状态
+    await islandEval(`window.island.autostartSet(${orig})`)
+    await sleep(500)
+    await islandEval(`(() => { const el = document.querySelector('.island'); if (el && el.className.includes('expanded')) el.click(); return 'ok' })()`)
+    await sleep(700)
+  }
+
   // ========== S6 关闭设置窗口不影响岛 ==========
   {
     await closeSettings()

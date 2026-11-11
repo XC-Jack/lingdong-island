@@ -413,5 +413,12 @@ ipcMain.handle('autostart:set', (_e, on: unknown) => {
     // 自启时以隐藏方式拉起（窗口逻辑自己 ready-to-show showInactive）
     args: AUTOSTART_ARGS
   })
-  return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
+  const real = app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
+  // 广播真实状态（SPEC-settings-shell 阻断项 B2）：岛头部胶囊与设置窗口的开关是两处
+  // 独立渲染进程，不广播的话改完只有当前窗口变，另一处要等到重启才同步。
+  // 用真实值而非入参——系统拒绝写入时两边都得看到实际结果。
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('autostart:changed', real)
+  }
+  return real
 })

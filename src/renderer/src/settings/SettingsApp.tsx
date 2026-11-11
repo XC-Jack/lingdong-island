@@ -160,6 +160,9 @@ export default function SettingsApp(): ReactElement {
     }
   }, [])
 
+  // 自启状态被另一处改了（岛头部那枚胶囊）也要跟上（SPEC-settings-shell 阻断项 B2）
+  useEffect(() => window.island.onAutostartChanged((on) => setAutoStart(on)), [])
+
   /** 页面管理改动：立即生效 + 写主进程，不等「保存」 */
   const changePages = (v: PagesCustom): void => {
     pagesCustomDirty.current = true
