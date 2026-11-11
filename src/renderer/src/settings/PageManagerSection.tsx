@@ -158,10 +158,12 @@ export default function PageManagerSection({
     return clientY < r.top + r.height / 2
   }
   const reorderCollapsed = (targetKey: CollapsedKey, before: boolean): void => {
-    const from = dragFrom.current as CollapsedKey | null
+    const from = dragFrom.current
     dragFrom.current = null
     setDropHint(null)
-    if (from === null || from === targetKey) return
+    // dragFrom 是「页面区 / 组件区」共用的 ref，页面区拖拽时装的是 number。
+    // 必须按类型挡住，否则跨区落下来会把一个数字 splice 进 order，渲染时多出一行（独立验收 5.1）。
+    if (typeof from !== 'string' || from === targetKey) return
     // 先把被拖项抽掉再插：这样「前/后」直接以抽掉后的列表为准，不用为 fi<ti 单独减一
     const rest = pagesCustom.order.filter((k) => k !== from)
     const ti = rest.indexOf(targetKey)
@@ -247,8 +249,9 @@ export default function PageManagerSection({
           }}
           onDragOver={(e) => {
             e.preventDefault()
-            // 光标在上半 → 插到本行前面，下半 → 插到本行后面；拖自己身上不显示提示
-            if (dragFrom.current !== null && dragFrom.current !== k) {
+            // 光标在上半 → 插到本行前面，下半 → 插到本行后面；拖自己身上不显示提示。
+            // 只认字符串来源（组件区自己拖出来的），页面区拖过来时不能亮错位提示线。
+            if (typeof dragFrom.current === 'string' && dragFrom.current !== k) {
               setDropHint({ key: k, before: dropEdge(e.currentTarget, e.clientY) })
             }
           }}

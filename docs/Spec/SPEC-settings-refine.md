@@ -29,7 +29,7 @@
   - 菜单里删掉 `{ label: '导出数据…', ... }` 一项。
   - 删掉只服务于该菜单项的 `exportData()` 函数（以及因此变成未使用的 import，如有）。
 - `src/main/exportStore.ts`
-  - `app:export-data` 的 handler 改为接收 `event`，用 `BrowserWindow.fromWebContents(event.sender)` 取「发起调用的那个窗口」挂模态；取不到再退回第一个窗口。原因：从设置窗口点导出时，原来固定用 `getAllWindows()[0]` 会挂到岛窗口上，模态对话框出现在一个不相关的窗口前面。
+  - `app:export-data` 的 handler 改为接收 `event`，用 `BrowserWindow.fromWebContents(event.sender)` 取「发起调用的那个窗口」挂模态（取不到时 `?? undefined`，对话框表现为无父窗口的独立对话框；独立验收实测 `owner_title=灵动岛设置`，退化分支在本项目里走不到）。原因：从设置窗口点导出时，原来固定用 `getAllWindows()[0]` 会挂到岛窗口上，模态对话框出现在一个不相关的窗口前面。
 - `scripts/e2e-settings-shell.mjs`
   - 新增 S10 一组断言：页面区拖动是**插入**不是互换（落上半插前、落下半插后，断言整条 `pages` 数组，并反证结果不等于互换结果）。
   - 新增 S11 一组断言：常规分区有「导出数据」行与按钮，点击后 `app:export-data` 通道存活（用取消结果判定，不落盘）。
@@ -50,20 +50,20 @@
 
 ## 五、验收条件
 
-- [ ] 页面区拖到目标行上半 → 被拖页插到目标行前面，其余顺移（断言整条 `pages`）
-- [ ] 页面区拖到目标行下半 → 被拖页插到目标行后面，其余顺移
-- [ ] 页面区插入结果与「互换」结果不同（反证，防止实现退化成互换仍假通过）
-- [ ] 拖动过程中目标行带 `.pm-drop-before` / `.pm-drop-after` 类
-- [ ] 页面区「至少保留一个」锁定逻辑未被破坏（最后一页取消不掉）
-- [ ] 未勾选的页仍不参与排序
-- [ ] 常规分区出现「导出数据」行与「导出…」按钮
-- [ ] 点「导出…」能走到 `app:export-data`（用返回值判定通道存活）
-- [ ] 右键/托盘菜单不再有「导出数据…」
-- [ ] `npm run typecheck` 通过
-- [ ] `npm run build` 通过
-- [ ] `scripts/e2e-settings-shell.mjs` 全过（含新增 S10/S11）
-- [ ] 三条回归 `e2e-collapse-order.mjs`、`e2e-head-order.mjs`、`e2e-pages-custom.mjs` 不退步
-- [ ] 装机后实测：安装版能拖动插入、能从设置里导出
+- [x] 页面区拖到目标行上半 → 被拖页插到目标行前面，其余顺移（断言整条 `pages`）
+- [x] 页面区拖到目标行下半 → 被拖页插到目标行后面，其余顺移
+- [x] 页面区插入结果与「互换」结果不同（反证，防止实现退化成互换仍假通过）——**注：判别力只在非相邻调换成立**（相邻调换时插入与互换结果恰好相同），见第八节 ⚠️
+- [x] 拖动过程中目标行带 `.pm-drop-before` / `.pm-drop-after` 类
+- [x] 页面区「至少保留一个」锁定逻辑未被破坏（最后一页取消不掉）
+- [x] 未勾选的页仍不参与排序
+- [x] 常规分区出现「导出数据」行与「导出…」按钮
+- [x] 点「导出…」能走到 `app:export-data`（用返回值判定通道存活）
+- [x] 右键/托盘菜单不再有「导出数据…」
+- [x] `npm run typecheck` 通过
+- [x] `npm run build` 通过
+- [x] `scripts/e2e-settings-shell.mjs` 全过（含新增 S10/S11；独立验收 5.1 修复后追加 S12，现为 49 条）
+- [x] 三条回归 `e2e-collapse-order.mjs`、`e2e-head-order.mjs`、`e2e-pages-custom.mjs` 不退步
+- [x] 装机后实测：安装版能拖动插入、能从设置里导出
 
 ## 六、不做什么
 
@@ -87,9 +87,13 @@
 | 2026-11-11 | 回归 `node scripts/e2e-pages-custom.mjs` | PASS（6 项通过）——跨重启顺序持久化仍正常 | — |
 | 2026-11-11 | 回归 `node scripts/e2e-export.mjs` | PASS（E1 取消分支 / E2 通道 / E3 说明）——导出 IPC 未因入口搬迁而坏 | — |
 | 2026-11-11 | 装机：`npx electron-builder --win --config.electronDist=node_modules/electron/dist` + 静默安装 + CDP 探针 | 安装版 asar 已含新产物，设置窗口能拖动插入、常规分区有「导出数据」行 | 未验证：真实鼠标拖拽手感（e2e 用合成 DragEvent）、另存为对话框在真人点击下的模态归属观感、弹出对话框时岛是否被遮挡 |
+| 2026-11-11 | 独立验收（`.tmp/独立验收-21a254e.md`）指出跨区拖拽瑕疵：页面行拖到组件行会亮错位提示线，drop 后瞬态出现第 7 行（约 3ms，主进程 normalizeOrder 兜住，磁盘数据无损） | 已修：`reorderCollapsed` 的守卫从 `from === null` 改为 `typeof from !== 'string'`（dragFrom 是页面区/组件区共用 ref，页面区装的是 number）；组件区 `onDragOver` 从 `dragFrom.current !== null` 改为 `typeof dragFrom.current === 'string'`，跨区不再亮提示线 | — |
+| 2026-11-11 | 修完后重跑 `npm run typecheck` / `npm run build` / `node scripts/e2e-settings-shell.mjs` | typecheck EXIT=0、build EXIT=0（`settings-D4Wwvu3X.js 22.93 kB`）、e2e **PASS（49 过 / 0 败）**，其中新增 S12a–S12f 六条跨区护栏断言 | — |
+| 2026-11-11 | 修完后重跑回归 `e2e-collapse-order` / `e2e-head-order` / `e2e-pages-custom` / `e2e-export` | 22 过 / 14 过 / 6 项 / PASS，全部 0 败 | — |
 
 ## 八、验收记录
 
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
 |---|---|---|---|---|
-| — | 待独立验收 | — | — | — |
+| 2026-11-11 | 独立验收会话 `verifier-refine`（未参与实现，报告 `.tmp/独立验收-21a254e.md` 33189 B） | `21a254e` | 14 条中 ✅13 / ⚠️1 / ❌0。⚠️ 是第 3 条反证：断言实测成立、非恒真，但穷举 24 组发现 12 组（全部相邻调换）插入与互换结果恰好相同，S10 选的两组是非相邻的（2→0、3→1）所以有判别力 —— 即「防退化护栏」只在非相邻场景有效。实跑复现：typecheck EXIT=0、build EXIT=0、`e2e-settings-shell` 43/0、`e2e-collapse-order` 22/0、`e2e-pages-custom` 6 项、`e2e-export` PASS；`e2e-head-order` 第 1 次 9 过 1 败（`Error: no settings target` @ :50）、第 2 次 14/0 —— 该脚本本提交未改，属 `docs/状态.md` 遗留④已登记的偶发时序问题。验收方另做两项超出自检的实证：①物理鼠标点击原生「保存(S)」按钮，开发版与装机版都拿到 `ok:true` + 128 字节五键齐全文件，默认名 `灵动岛备份-YYYYMMDD-HHmmss.json` 格式正确，模态 `owner_title=灵动岛设置`；②抽出装机版 asar 的 `out/main/index.js`（79863 B）核实菜单编译产物只有 5 项（设置/页面管理/sep/显示或隐藏/sep/退出），`导出数据` 全文 2 次命中且都在注释里。 | 有条件通过，阻断项 0 条 |
+| 2026-11-11 | 验收方提出的 9 条不阻断项（编号见报告第五节）对本轮的处理：**5.1 已修**（跨区拖拽：守卫改 `typeof from !== 'string'`，组件区 `onDragOver` 只认字符串来源，新增 S12a–S12f 六条回归断言，49/0）；**5.2 已改文档**（SPEC 第二节原写「取不到再退回第一个窗口」与实现不符，改为「取不到时 `?? undefined`，表现为无父窗口的独立对话框，实测退化分支走不到」）；**5.3 已补三处事实文档**（`docs/facts/数据规则.md:51` 的「入口在 `buildAppMenu()`」、`数据规则.md:58`、`docs/facts/用户角色与用户故事.md:216`）；**5.4 已补**（`docs/状态.md` 由后续提交补入，见下方哈希更正）；**5.5/5.7/5.8 记录在案不改**（e2e 对锁定/未勾选页零覆盖已由验收方探针补证；`e2e-head-order` 偶发为既有遗留；S11d 是「或」断言，落盘证据由验收方物理点击补上）；**5.6 记录在案**（S10 反证只在非相邻场景有判别力，属 e2e 覆盖度问题，不影响实现正确性）；**5.9 已核对**（`.tmp/` 临时文件均未进提交，测试落盘的导出文件已删除）。 | `21a254e` + 本轮修复后续提交 | 上述处理逐条落地 | 已处理完毕 |

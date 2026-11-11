@@ -13,6 +13,7 @@
  * S9 自启状态双向同步（设置窗口 ↔ 岛，不重启）
  * S10 页面区拖拽是「插入」不是「互换」（2026-11-11 用户修正）
  * S11 导出数据入口在设置窗口「常规」分区，IPC 通道存活
+ * S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
  */
@@ -425,6 +426,52 @@ try {
       try { rmSync(res.path, { force: true }) } catch { /* ignore */ }
       console.log('  ! 注意：另存为对话框被误确认，已删除测试文件 ' + res.path)
     }
+  }
+
+  // ========== S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）==========
+  {
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('页面管理')); if (b) b.click(); return 'ok' })()`)
+    await sleep(600)
+    await settingsEval(`(() => { const r = document.querySelector('.pm-reset'); if (r) r.click(); return 'ok' })()`)
+    await sleep(700)
+    const before = readPrefs()
+    const cmpBefore = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
+    ok('S12a 前置：组件行 6 行、order 6 个键',
+      cmpBefore === 6 && Array.isArray(before?.pagesCustom?.order) && before.pagesCustom.order.length === 6,
+      `行 ${cmpBefore} / order ${JSON.stringify(before?.pagesCustom?.order)}`)
+
+    // 抓页面区第 0 行，拖到组件区第 0 行上松手（真实用户手滑会这么干）
+    await settingsEval(`(() => {
+      const pageRows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
+      const compRows = Array.from(document.querySelectorAll('.pm-row[data-comp]'))
+      const from = pageRows[0]
+      const to = compRows[0]
+      if (!from || !to) return 'missing-row'
+      window.__e2eDt3 = new DataTransfer()
+      from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3 }))
+      const b = to.getBoundingClientRect()
+      to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: b.top + b.height * 0.25 }))
+      to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: b.top + b.height * 0.25 }))
+      from.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3 }))
+      return 'ok'
+    })()`)
+    await sleep(900)
+
+    const after = readPrefs()
+    const cmpAfter = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
+    const totalRows = await settingsEval(`document.querySelectorAll('.pm-row').length`)
+    ok('S12b 落下后组件行仍是 6 行（不冒出第 7 行）', cmpAfter === 6, `实际 ${cmpAfter}`)
+    ok('S12c 页面上总行数仍是 10 行（4 页 + 6 组件）', totalRows === 10, `实际 ${totalRows}`)
+    ok('S12d order 仍是 6 个合法键，没有混进数字',
+      Array.isArray(after?.pagesCustom?.order) &&
+        after.pagesCustom.order.length === 6 &&
+        after.pagesCustom.order.every((k) => typeof k === 'string'),
+      JSON.stringify(after?.pagesCustom?.order))
+    ok('S12e 页面顺序未被跨区拖拽改动',
+      JSON.stringify(after?.pagesCustom?.pages) === JSON.stringify(before?.pagesCustom?.pages),
+      `前 ${JSON.stringify(before?.pagesCustom?.pages)} → 后 ${JSON.stringify(after?.pagesCustom?.pages)}`)
+    ok('S12f 不亮落点提示线（跨区不该提示）',
+      (await settingsEval(`document.querySelectorAll('.pm-drop-before,.pm-drop-after').length`)) === 0)
   }
 
   // ========== S6 关闭设置窗口不影响岛 ==========
