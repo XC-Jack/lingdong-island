@@ -25,3 +25,4 @@ desktop.ini
 # 凭据
 .env
 .env.*
+.dsh-vision-router/
