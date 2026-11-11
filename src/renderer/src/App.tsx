@@ -1726,187 +1726,6 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string 
   { icon: IcoCal, label: '日程', accent: '#64b5f6' },
 ]
 
-/** 收起态组件在页面管理面板里的显示名（US-032 / 美化-02） */
-const COLLAPSED_LABELS: Record<CollapsedKey, string> = {
-  pet: '岛仔',
-  clock: '时钟',
-  battery: '电量圈',
-  net: '网络图标',
-  todo: '待办数字',
-  bell: '通知铃铛'
-}
-
-/**
- * 页面管理面板（US-032）：勾选显示哪些页面、收起态显示哪些组件、拖拽调整页面顺序。
- * 不是轮播页（PAGE_COUNT 只有 4），只能从右键/托盘菜单「页面管理…」进入（page 4）。
- * 改动立即生效并写主进程 prefs.json；至少保留 1 个页面；「完成并收起」收岛退出面板。
- */
-function PageManagerPanel({
-  pagesCustom,
-  onChange,
-  onClose
-}: {
-  pagesCustom: PagesCustom
-  onChange: (v: PagesCustom) => void
-  onClose: () => void
-}): React.JSX.Element {
-  const togglePage = (i: number): void => {
-    const has = pagesCustom.pages.includes(i)
-    // 最后一个页面不允许取消（至少保留 1 页）
-    if (has && pagesCustom.pages.length <= 1) return
-    // 重新勾上时排到列表末尾（用户当前顺序的自然延伸），不强制按页号排序
-    const pages = has ? pagesCustom.pages.filter((n) => n !== i) : [...pagesCustom.pages, i]
-    onChange({ ...pagesCustom, pages })
-  }
-  const toggleCollapsed = (k: CollapsedKey): void => {
-    onChange({ ...pagesCustom, collapsed: { ...pagesCustom.collapsed, [k]: !pagesCustom.collapsed[k] } })
-  }
-  const reset = (): void => onChange(defaultPagesCustom())
-  // 拖拽排序（US-032 反馈）：只在「显示的页面」列表里拖换位；HTML5 dataTransfer 必须带数据
-  // 才稳定触发 dragover/drop（项目踩坑记录）；语义与置物架一致用「互换」。
-  const dragFrom = useRef<number | CollapsedKey | null>(null)
-  const reorderTo = (targetPageId: number): void => {
-    const from = dragFrom.current
-    dragFrom.current = null
-    if (typeof from !== 'number' || from === targetPageId) return
-    const pages = pagesCustom.pages.includes(from) ? [...pagesCustom.pages] : null
-    if (!pages) return
-    const fi = pages.indexOf(from)
-    const ti = pages.indexOf(targetPageId)
-    if (ti === -1) return // 目标未勾选：不参与排序
-    pages[fi] = targetPageId
-    pages[ti] = from
-    onChange({ ...pagesCustom, pages })
-  }
-  // 收起态组件排序（美化-02）：**插入**语义，不是互换——用户 2026-11-08 验收反馈
-  // 「拖动组件插空放」，即把被拖项抽出来插到目标行的前/后空隙，其余组件顺移。
-  // 这里没有勾选门槛——6 个组件恒在 order 里，关掉的只是显隐，位置照样能调
-  // （用户常先摆好位置再逐个关，位置信息不该因为关掉就丢）。
-  const [dropHint, setDropHint] = useState<{ key: CollapsedKey; before: boolean } | null>(null)
-  /** 光标落在目标行的上半还是下半：决定插到它前面还是后面 */
-  const dropEdge = (el: HTMLElement, clientY: number): boolean => {
-    const r = el.getBoundingClientRect()
-    return clientY < r.top + r.height / 2
-  }
-  const reorderCollapsed = (targetKey: CollapsedKey, before: boolean): void => {
-    const from = dragFrom.current as CollapsedKey | null
-    dragFrom.current = null
-    setDropHint(null)
-    if (from === null || from === targetKey) return
-    // 先把被拖项抽掉再插：这样「前/后」直接以抽掉后的列表为准，不用为 fi<ti 单独减一
-    const rest = pagesCustom.order.filter((k) => k !== from)
-    const ti = rest.indexOf(targetKey)
-    if (ti === -1) return
-    const insertAt = before ? ti : ti + 1
-    rest.splice(insertAt, 0, from)
-    onChange({ ...pagesCustom, order: rest })
-  }
-  return (
-    <div className="pm-panel">
-      <div className="pm-section">页面（勾选显示，按住拖动换顺序）</div>
-      {(() => {
-        // 按用户自定义顺序渲染：已勾选页按 pages 排在前（可拖），未勾选页按固定号排在后
-        const shown = pagesCustom.pages.map((p) => ({ m: PAGE_META[p], i: p, on: true }))
-        const hidden = PAGE_META.map((m, i) => ({ m, i, on: false })).filter(
-          (h) => !pagesCustom.pages.includes(h.i)
-        )
-        const rows = [...shown, ...hidden]
-        return rows.map(({ m, i, on }) => {
-          const locked = on && pagesCustom.pages.length <= 1
-          return (
-            <div
-              key={i}
-              className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
-              draggable={on}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/plain', String(i))
-                e.dataTransfer.effectAllowed = 'move'
-                dragFrom.current = i
-              }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault()
-                reorderTo(i)
-              }}
-              onDragEnd={() => {
-                dragFrom.current = null
-              }}
-            >
-              <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
-              <span className="pm-name">{m.label}</span>
-              {locked ? (
-                <span className="pm-lock-hint">至少保留一个</span>
-              ) : on ? (
-                <span className="pm-grip" title="按住拖到另一行换位置">⋮⋮</span>
-              ) : null}
-            </div>
-          )
-        })
-      })()}
-      <div className="pm-section">收起态组件（勾选显示，按住拖到目标行插入）</div>
-      {pagesCustom.order.map((k) => (
-        <div
-          key={k}
-          className={`pm-row ${pagesCustom.collapsed[k] ? '' : 'pm-row-off'} ${
-            dropHint?.key === k ? (dropHint.before ? 'pm-drop-before' : 'pm-drop-after') : ''
-          }`}
-          data-comp={k}
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData('text/plain', k)
-            e.dataTransfer.effectAllowed = 'move'
-            dragFrom.current = k
-          }}
-          onDragOver={(e) => {
-            e.preventDefault()
-            // 光标在上半 → 插到本行前面，下半 → 插到本行后面；拖自己身上不显示提示
-            if (dragFrom.current !== null && dragFrom.current !== k) {
-              setDropHint({ key: k, before: dropEdge(e.currentTarget, e.clientY) })
-            }
-          }}
-          onDragLeave={(e) => {
-            // 只在真正离开本行时清提示（子元素间移动不算离开）
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
-              setDropHint((h) => (h?.key === k ? null : h))
-            }
-          }}
-          onDrop={(e) => {
-            e.preventDefault()
-            reorderCollapsed(k, dropEdge(e.currentTarget, e.clientY))
-          }}
-          onDragEnd={() => {
-            dragFrom.current = null
-            setDropHint(null)
-          }}
-        >
-          {/* 复选框自己处理点击并阻止冒泡：否则点勾选框时会先触发下一行拖拽逻辑 */}
-          <input
-            type="checkbox"
-            checked={pagesCustom.collapsed[k]}
-            onChange={(e) => {
-              e.stopPropagation()
-              toggleCollapsed(k)
-            }}
-            onClick={(e) => e.stopPropagation()}
-          />
-          <span className="pm-name">{COLLAPSED_LABELS[k]}</span>
-          <span className="pm-grip" title="按住拖到目标行：落在上半插到它前面，落在下半插到它后面">
-            ⋮⋮
-          </span>
-        </div>
-      ))}
-      <div className="pm-actions">
-        <button type="button" className="pm-reset" onClick={reset}>
-          重置为默认
-        </button>
-        <button type="button" className="pm-close" onClick={onClose}>
-          完成并收起
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [now, setNow] = useState(() => new Date())
@@ -2131,6 +1950,13 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
+  // 开机自启：设置窗口改了开关要同步到这里（SPEC-settings-shell 阻断项 B2）。
+  // 头部那枚胶囊和设置窗口「常规」分区是两处独立渲染，靠主进程 autostart:changed 广播对齐。
+  useEffect(() => {
+    const off = window.island.onAutostartChanged((on) => setAutoStart(on))
+    return off
+  }, [])
+
   const flipAutoStart = useCallback((): void => {
     const next = !(autoStart === true)
     setAutoStart(next) // 乐观更新，主进程会回真实值
@@ -2331,14 +2157,18 @@ export default function App(): React.JSX.Element {
     })
   }, [enabledPages])
 
-  // 菜单「页面管理…」→ 展开岛并切到页面管理面板（US-032）
+  // 设置窗口改了偏好（SPEC-settings-shell）→ 岛上立刻跟上。
+  // 原来这里是「菜单点页面管理… → 展开岛切到第 5 页」，该页已搬进独立设置窗口；
+  // 现在岛只负责接收偏好广播，把勾选/顺序的变化同步过来（不用重启，也不用重新打开面板）。
   useEffect(() => {
-    window.island.onManagePages(() => {
-      if (!expandedRef.current) window.island.setExpanded(true)
-      expandedRef.current = true
-      setExpanded(true)
-      setPage(4)
+    const off = window.island.onPrefsChanged((prefs) => {
+      const v = normalizePagesCustom(prefs.pagesCustom)
+      if (!v) return
+      // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
+      pagesCustomDirty.current = true
+      setPagesCustom(v)
     })
+    return off
   }, [])
 
   // 切页淡入：换页时给面板体一个短动画类
@@ -2547,7 +2377,7 @@ export default function App(): React.JSX.Element {
         }}
         role="button"
         tabIndex={0}
-        aria-label={expanded ? `${page === 4 ? '页面管理' : PAGE_META[page]?.label ?? '页面'}面板` : '灵动岛，回车展开'}
+        aria-label={expanded ? `${PAGE_META[page]?.label ?? '页面'}面板` : '灵动岛，回车展开'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
@@ -2561,10 +2391,10 @@ export default function App(): React.JSX.Element {
         )}        {expanded ? (
           <>
             <div className="panel-head">
-              <span className={`panel-badge ${page === 4 ? 'accent' : ''}`} style={{ ['--accent' as never]: '#9aa0a6' }}>
-                <span className="panel-badge-icon">{page === 4 ? <IcoCheck /> : PAGE_META[page].icon()}</span>
+              <span className="panel-badge" style={{ ['--accent' as never]: '#9aa0a6' }}>
+                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
               </span>
-              <span className="panel-title">{page === 4 ? '页面管理' : PAGE_META[page].label}</span>
+              <span className="panel-title">{PAGE_META[page].label}</span>
               {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）。
                   美化-03：与收起态共用同一套 pagesCustom（显隐 + 顺序）——
                   岛仔不参与排序，单独占上面一层；其余组件按 order 排在下面一行。 */}
@@ -2606,7 +2436,7 @@ export default function App(): React.JSX.Element {
               <div
                 key={pageAnim}
                 onClick={(e) => e.stopPropagation()}
-                className={`page-fade ${page === 1 || page === 2 || page === 4 ? 'wide' : ''}`}
+                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''}`}
               >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
@@ -2614,22 +2444,6 @@ export default function App(): React.JSX.Element {
                   <ShelfPanel />
                 ) : page === 2 ? (
                   <NotifyPanel onUnread={onNotifyUnread} refreshTick={notifyRefreshTick} />
-                ) : page === 4 ? (
-                  <PageManagerPanel
-                    pagesCustom={pagesCustom}
-                    onClose={() => {
-                      setPage(enabledPagesRef.current[0] ?? 0)
-                      setExpanded(false)
-                      expandedRef.current = false
-                    }}
-                    onChange={(v) => {
-                      pagesCustomDirty.current = true
-                      setPagesCustom(v)
-                      window.island.prefsSet({ pagesCustom: v }).catch(() => {
-                        /* 写失败下次还是全开，不打扰用户 */
-                      })
-                    }}
-                  />
                 ) : (
                   <SchedulePanel />
                 )}

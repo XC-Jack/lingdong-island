@@ -9,9 +9,10 @@
  * R5 面板拖动**插入**（不是互换）：落在目标行上半 → 插到它前面，下半 → 插到它后面；
  *    断言整条 order 数组（插入会让中间项顺移，互换不会），并反证结果不等于互换结果
  *
- * 面板打开方式：主进程 --inspect=9229 里执行 BrowserWindow.webContents.send('island:manage-pages')，
- * 这是唯一不经过真实右键菜单的入口（菜单是原生 popup，CDP 点不到）。
- * 主进程 Runtime.evaluate 必须带 includeCommandLineAPI:true，否则 require 不可见。
+ * 面板打开方式（SPEC-settings-shell 起改版）：页面管理搬进了独立设置窗口，
+ * 打开 = 岛渲染层调 window.island.openSettings('pages')（等价右键菜单「页面管理…」），
+ * 之后所有 `.pm-*` 选择器要在**设置窗口那个 CDP target** 上查（url 含 settings.html），
+ * 不是岛那个 target。关闭 = 设置窗口里调 window.island.closeSettings()。
  * 注意：跑前先清 electron 进程；启动 env 必须 delete ELECTRON_RUN_AS_NODE。
  */
 import { spawn, execSync } from './isolate-userdata.mjs'
@@ -37,12 +38,18 @@ const ok = (name, cond, extra = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ---------- CDP（渲染层） ----------
-async function cdpEval(expr) {
+/**
+ * 设置窗口也是 CDP 里的一个 page target（SPEC-settings-shell 起岛之外多了这个窗口），
+ * 所以按 URL 区分：岛走 index.html，设置页走 settings.html。
+ */
+const IS_SETTINGS = (t) => (t.url ?? '').includes('settings.html')
+
+async function evalOnTarget(expr, wantSettings) {
   for (let i = 0; i < 40; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
-      const page = list.find((t) => t.type === 'page')
-      if (!page) throw new Error('no page target')
+      const page = list.find((t) => t.type === 'page' && IS_SETTINGS(t) === wantSettings)
+      if (!page) throw new Error(wantSettings ? 'no settings target' : 'no page target')
       const ws = new WebSocket(page.webSocketDebuggerUrl)
       const r = await new Promise((res, rej) => {
         const timer = setTimeout(() => rej(new Error('cdp timeout')), 15000)
@@ -58,6 +65,11 @@ async function cdpEval(expr) {
     await sleep(500)
   }
 }
+
+/** 岛窗口（收起态/展开态都在这里） */
+const cdpEval = (expr) => evalOnTarget(expr, false)
+/** 设置窗口（页面管理面板现在住在这里，`.pm-*` 全部要在这个 target 上查） */
+const settingsEval = (expr) => evalOnTarget(expr, true)
 
 // ---------- Inspector（主进程） ----------
 async function mainEval(expr) {
@@ -134,16 +146,19 @@ const READ_ORDER = `(() => {
   return found.map((f) => f.k)
 })()`
 
-/** 打开「页面管理」面板（主进程发 IPC，等价于右键菜单点「页面管理…」） */
+/**
+ * 打开「页面管理」（SPEC-settings-shell 起它住在独立设置窗口里）。
+ * 走渲染层公开的 window.island.openSettings('pages')，等价于右键菜单点「页面管理…」。
+ */
 async function openPanel() {
-  await mainEval(`(require('electron').BrowserWindow.getAllWindows()[0].webContents.send('island:manage-pages'), 'ok')`)
-  await sleep(1000)
+  await cdpEval(`(window.island.openSettings('pages'), 'ok')`)
+  await sleep(1500) // 等设置窗口创建 + 加载 + prefs 回填
 }
 
-/** 点面板底部「完成并收起」：收岛退出面板，回到收起态 */
+/** 关闭设置窗口，回到岛（岛本身没被打开，设置窗口是独立窗口） */
 async function closePanel() {
-  await cdpEval(`(() => { const b = document.querySelector('.pm-close'); if (!b) return 'no-button'; b.click(); return 'ok' })()`)
-  await sleep(1200)
+  await settingsEval(`(window.island.closeSettings(), 'ok')`)
+  await sleep(1000)
 }
 
 let child = null
@@ -208,15 +223,15 @@ try {
     await openPanel()
 
     // ---- R4 面板结构 ----
-    const rows = await cdpEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
+    const rows = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
     ok('R4a 「收起态组件」区 6 行（原 5 行，铃铛新增）', rows === 6, `实际 ${rows}`)
-    const labels = await cdpEval(`Array.from(document.querySelectorAll('.pm-row[data-comp] .pm-name')).map(e => e.textContent).join(',')`)
+    const labels = await settingsEval(`Array.from(document.querySelectorAll('.pm-row[data-comp] .pm-name')).map(e => e.textContent).join(',')`)
     ok('R4b 面板含「通知铃铛」一项', labels.includes('通知铃铛'), labels)
-    const domOrder = await cdpEval(`Array.from(document.querySelectorAll('.pm-row[data-comp]')).map(e => e.dataset.comp)`)
+    const domOrder = await settingsEval(`Array.from(document.querySelectorAll('.pm-row[data-comp]')).map(e => e.dataset.comp)`)
     ok('R4c 面板行顺序与 order 一致', JSON.stringify(domOrder) === JSON.stringify(DEFAULT_ORDER), JSON.stringify(domOrder))
 
     // ---- R3b 取消勾选铃铛 ----
-    await cdpEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
     await sleep(700)
     ok('R3b 取消勾选铃铛写进 prefs.json', readPrefs()?.pagesCustom?.collapsed?.bell === false,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
@@ -228,7 +243,7 @@ try {
 
     // ---- R3d 再勾回，铃铛恢复（正反对照，排除「铃铛本来就不显示」的假通过） ----
     await openPanel()
-    await cdpEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
     await sleep(700)
     ok('R3d 重新勾选写回 true', readPrefs()?.pagesCustom?.collapsed?.bell === true,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
@@ -241,7 +256,7 @@ try {
       JSON.stringify(readPrefs()?.pagesCustom?.order))
 
     // 拖到上半 → 出现「插到我前面」的提示线
-    const hint = await cdpEval(`(() => {
+    const hint = await settingsEval(`(() => {
       const from = document.querySelector('.pm-row[data-comp="todo"]')
       const to = document.querySelector('.pm-row[data-comp="clock"]')
       if (!from || !to) return 'missing-row'
@@ -259,7 +274,7 @@ try {
      *  拆成三步：dragover → 等 React 提交一次 → 读 className → drop。
      *  dragover 是连续事件，React 18 对它的 setState 不一定同步落地，同一段 eval 里读 className 会读到旧值。 */
     const dragRow = async (fromKey, targetKey, half) => {
-      const start = await cdpEval(`(() => {
+      const start = await settingsEval(`(() => {
         const from = document.querySelector('.pm-row[data-comp="${fromKey}"]')
         const to = document.querySelector('.pm-row[data-comp="${targetKey}"]')
         if (!from || !to) return 'missing-row'
@@ -272,10 +287,10 @@ try {
       })()`)
       if (start !== 'ok') return start
       await sleep(300)
-      const hintCls = await cdpEval(
+      const hintCls = await settingsEval(
         `(document.querySelector('.pm-row[data-comp="${targetKey}"]')?.className ?? 'missing-row')`
       )
-      await cdpEval(`(() => {
+      await settingsEval(`(() => {
         const from = document.querySelector('.pm-row[data-comp="${fromKey}"]')
         const to = document.querySelector('.pm-row[data-comp="${targetKey}"]')
         if (!from || !to) return 'missing-row'

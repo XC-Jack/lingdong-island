@@ -9,6 +9,7 @@ import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
+import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
@@ -55,13 +56,16 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 页面管理（US-032）+ 手动隐藏（US-041）+ 退出 */
+/**
+ * 岛内右键 / 托盘右键共用的菜单。设置（SPEC-settings-shell）+ 手动隐藏（US-041）+ 退出。
+ * 导出数据（US-029）2026-11-11 起搬到设置窗口「常规 → 导出数据」，这里不再提供入口。
+ */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
   const hiddenByUser = manualHide
   return Menu.buildFromTemplate([
-    { label: '页面管理…', click: () => openPageManager() },
-    { label: '导出数据…', click: () => void exportData() },
+    { label: '设置…', click: () => openSettings('general') },
+    { label: '页面管理…', click: () => openSettings('pages') },
     { type: 'separator' },
     hiddenByUser
       ? { label: '显示灵动岛', click: () => mainWindow?.webContents.send('noop') /* 占位 */ }
@@ -69,18 +73,6 @@ function buildAppMenu(): Menu {
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
-}
-
-/** 右键/托盘菜单的页面管理入口（US-032）：让渲染层展开岛并切到页面管理面板 */
-function openPageManager(): void {
-  mainWindow?.webContents.send('island:manage-pages')
-}
-
-/** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
-function exportData(): void {
-  void mainWindow?.webContents.executeJavaScript('window.island && window.island.exportData()').catch(() => {
-    /* 渲染层不在时退化为无操作；导出入口仍可从托盘菜单重试 */
-  })
 }
 
 /**
@@ -245,6 +237,7 @@ app.whenReady().then(() => {
   setupScheduleStore()
   setupExportStore()
   setupPrefsStore()
+  setupSettingsWindow()
   initClipboardWatch()
   createWindow()
   createTray()
@@ -268,6 +261,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  // 设置窗口是独立窗口（SPEC-settings-shell）：关掉它不能等于退出应用。
+  // 岛上窗口（mainWindow）还在时不算「全部窗口关闭」；这里额外兜一层，
+  // 用户手动关掉设置窗后岛仍然活着的正常路径不会走到这。
   stopStatus()
   stopNotifyStore()
   stopScheduleStore()
@@ -412,5 +408,12 @@ ipcMain.handle('autostart:set', (_e, on: unknown) => {
     // 自启时以隐藏方式拉起（窗口逻辑自己 ready-to-show showInactive）
     args: AUTOSTART_ARGS
   })
-  return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
+  const real = app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin === true
+  // 广播真实状态（SPEC-settings-shell 阻断项 B2）：岛头部胶囊与设置窗口的开关是两处
+  // 独立渲染进程，不广播的话改完只有当前窗口变，另一处要等到重启才同步。
+  // 用真实值而非入参——系统拒绝写入时两边都得看到实际结果。
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('autostart:changed', real)
+  }
+  return real
 })

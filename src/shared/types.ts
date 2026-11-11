@@ -40,3 +40,17 @@ export interface ShelfRevealResult {
   ok: boolean
   reason: 'ok' | 'missing' | 'empty'
 }
+
+/**
+ * 设置窗口的左导航分区（SPEC-settings-shell）。
+ * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、focus=专注·喝水（占位）
+ */
+export type SettingsSection = 'general' | 'pages' | 'focus'
+
+/** 设置窗口「常规」页要显示的本机信息 */
+export interface AppInfo {
+  /** package.json 的 version（打包版显示安装版本，dev 下是工程版本） */
+  version: string
+  /** 用户数据目录绝对路径（%APPDATA%\lingdong-island） */
+  userData: string
+}

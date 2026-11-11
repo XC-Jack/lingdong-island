@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -63,9 +63,37 @@ const api = {
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)
   },
-  /** 菜单点了「页面管理…」（US-032）——渲染层展开岛并切到页面管理面板 */
-  onManagePages(cb: () => void): void {
-    ipcRenderer.on('island:manage-pages', cb)
+  /** 打开设置窗口并落在指定分区（'general' | 'pages' | 'focus'） */
+  openSettings(section: SettingsSection = 'general'): void {
+    void ipcRenderer.invoke('settings:open', section)
+  },
+  /** 关闭设置窗口（设置窗口标题栏的 × 调它，而不是 window.close()） */
+  closeSettings(): void {
+    ipcRenderer.send('settings:close')
+  },
+  /** 设置窗口：主进程要求切分区（菜单「设置…」/「页面管理…」直达）。返回取消订阅函数 */
+  onSettingsSection(cb: (s: SettingsSection) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, s: SettingsSection): void => cb(s)
+    ipcRenderer.on('settings:section', h)
+    return () => {
+      ipcRenderer.removeListener('settings:section', h)
+    }
+  },
+  /** 偏好被任何窗口改动后广播（SPEC-settings-shell）：岛与设置窗口互相同步 */
+  onPrefsChanged(cb: (p: PrefsShape) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, p: PrefsShape): void => cb(p)
+    ipcRenderer.on('prefs:changed', h)
+    return () => {
+      ipcRenderer.removeListener('prefs:changed', h)
+    }
+  },
+  /** 设置窗口「常规」页：版本号 + 用户数据目录 */
+  appInfo(): Promise<AppInfo> {
+    return ipcRenderer.invoke('settings:app-info')
+  },
+  /** 用资源管理器打开用户数据目录（%APPDATA%\lingdong-island） */
+  openUserData(): Promise<boolean> {
+    return ipcRenderer.invoke('settings:open-user-data')
   },
   /** 诊断日志（US-036 探针）：渲染层把收起判定写进 userData/collapse-log.txt */
   logDiag(line: string): void {
@@ -84,8 +112,8 @@ const api = {
   },
   /**
    * 数据导出（US-029）：弹主进程原生「另存为」，把待办+日程写成 JSON。
-   * 右键/托盘菜单点「导出数据…」时由主进程经 executeJavaScript 触发这里；
-   * 渲染层自身不提供按钮。返回结果供 e2e 断言与将来扩展用。
+   * 入口在设置窗口「常规 → 导出数据」（2026-11-11 起；原右键/托盘菜单项已删）。
+   * 返回结果供渲染层显示与 e2e 断言用。
    */
   exportData(): Promise<ExportResult> {
     return ipcRenderer.invoke('app:export-data')
@@ -135,6 +163,17 @@ const api = {
   },
   autostartSet(on: boolean): Promise<boolean> {
     return ipcRenderer.invoke('autostart:set', on)
+  },
+  /**
+   * 自启状态被任何窗口改动后广播（SPEC-settings-shell 阻断项 B2）：
+   * 岛头部胶囊和设置窗口的开关是两处独立渲染，不订阅的话改完另一边不动。
+   */
+  onAutostartChanged(cb: (on: boolean) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
+    ipcRenderer.on('autostart:changed', h)
+    return () => {
+      ipcRenderer.removeListener('autostart:changed', h)
+    }
   },
   /** 置物架：列 / 加（拖入路径数组）/ 删 / 清空 / 打开 / 显示所在文件夹 */
   shelfList(): Promise<ShelfItem[]> {
@@ -288,7 +327,6 @@ export interface PrefsShape {
   pagesCustom?: PagesCustom
   shelfView?: 'lg' | 'md' | 'sm' | 'list'
 }
-
 contextBridge.exposeInMainWorld('island', api)
 
 export type IslandApi = typeof api

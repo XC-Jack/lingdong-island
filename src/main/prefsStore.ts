@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -98,6 +98,17 @@ function save(data: PrefsShape): void {
 }
 
 /**
+ * 偏好变更广播（SPEC-settings-shell）：设置窗口和岛是两个独立的渲染进程，
+ * 一边改了另一边必须当场跟上（改设置窗口里的勾选，岛上的组件立刻变）。
+ * 用 BrowserWindow.getAllWindows() 而不是只发给主窗口——设置窗口也是其中一个。
+ */
+function broadcastPrefs(data: PrefsShape): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('prefs:changed', data)
+  }
+}
+
+/**
  * 界面偏好存储（US-032 页面自定义）：JSON 文件持久化在 userData 目录。
  * 为什么不用渲染层 localStorage：本机实测 file:// 来源的 localStorage 跨进程重启会丢失
  * （写入后优雅退出再启动读回为 null），页面裁剪偏好必须跨重启保留，故走主进程文件。
@@ -110,6 +121,8 @@ export function setupPrefsStore(): void {
 
   ipcMain.handle('prefs:set', (_e, payload: unknown): PrefsShape => {
     const data = load()
+    // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
+    const before = JSON.stringify(data)
     const { pagesCustom, shelfView } = (payload ?? {}) as { pagesCustom?: unknown; shelfView?: unknown }
     const pc = normalizePagesCustom(pagesCustom)
     if (pc) data.pagesCustom = pc
@@ -118,6 +131,9 @@ export function setupPrefsStore(): void {
     if (sv) data.shelfView = sv
     else if (shelfView !== undefined) delete data.shelfView
     save(data)
+    // 只在真正有变化时广播：prefs:set 的调用方常带「乐观更新」，无变化广播会让
+    // 另一端把自己刚点的东西又写一遍（视觉上闪一下）
+    if (JSON.stringify(before) !== JSON.stringify(data)) broadcastPrefs(data)
     return data
   })
 }

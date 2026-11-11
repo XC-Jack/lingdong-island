@@ -36,12 +36,18 @@ const ok = (name, cond, extra = '') => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // ---------- CDP（渲染层） ----------
-async function cdpEval(expr) {
+/**
+ * SPEC-settings-shell 起，CDP 里有两个 page target：岛（index.html）和设置窗口（settings.html）。
+ * cdpEval 只查岛；`.pm-*` 面板元素现在住在设置窗口，要用 settingsEval。
+ */
+const IS_SETTINGS = (t) => (t.url ?? '').includes('settings.html')
+
+async function evalOnTarget(expr, wantSettings) {
   for (let i = 0; i < 40; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
-      const page = list.find((t) => t.type === 'page')
-      if (!page) throw new Error('no page target')
+      const page = list.find((t) => t.type === 'page' && IS_SETTINGS(t) === wantSettings)
+      if (!page) throw new Error(wantSettings ? 'no settings target' : 'no page target')
       const ws = new WebSocket(page.webSocketDebuggerUrl)
       const r = await new Promise((res, rej) => {
         const timer = setTimeout(() => rej(new Error('cdp timeout')), 15000)
@@ -57,6 +63,11 @@ async function cdpEval(expr) {
     await sleep(500)
   }
 }
+
+/** 岛窗口 */
+const cdpEval = (expr) => evalOnTarget(expr, false)
+/** 设置窗口（页面管理面板在这里） */
+const settingsEval = (expr) => evalOnTarget(expr, true)
 
 // ---------- Inspector（主进程） ----------
 async function mainEval(expr) {
@@ -179,15 +190,15 @@ const READ_COLLAPSED_ORDER = `(() => {
   return found.map((f) => f.k)
 })()`
 
-/** 打开「页面管理」面板（主进程 IPC，等价右键菜单项） */
+/** 打开「页面管理」（SPEC-settings-shell 起在独立设置窗口里） */
 async function openPanel() {
-  await mainEval(`(require('electron').BrowserWindow.getAllWindows()[0].webContents.send('island:manage-pages'), 'ok')`)
-  await sleep(1000)
+  await cdpEval(`(window.island.openSettings('pages'), 'ok')`)
+  await sleep(1500)
 }
-/** 点面板底部「完成并收起」 */
+/** 关闭设置窗口 */
 async function closePanel() {
-  await cdpEval(`(() => { const b = document.querySelector('.pm-close'); if (!b) return 'no-button'; b.click(); return 'ok' })()`)
-  await sleep(1200)
+  await settingsEval(`(window.island.closeSettings(), 'ok')`)
+  await sleep(1000)
 }
 
 let child = null
@@ -241,7 +252,7 @@ try {
   child = await startApp()
   {
     await openPanel()
-    await cdpEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
     await sleep(700)
     ok('H2a 取消勾选时钟写进 prefs.json',
       readPrefs()?.pagesCustom?.collapsed?.clock === false,
@@ -254,7 +265,7 @@ try {
       JSON.stringify(head.infoOrder))
 
     await openPanel()
-    await cdpEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
     await sleep(700)
     ok('H2c 重新勾选写回 true', readPrefs()?.pagesCustom?.collapsed?.clock === true,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))

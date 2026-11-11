@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, Notification } from 'electron'
+import { app, dialog, ipcMain, Notification, BrowserWindow } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -10,8 +10,9 @@ import { join } from 'node:path'
  *   通知是只读外部系统库（wpndatabase），导出它们没有意义。
  * - 导出对象字段与 store 落盘格式一致（todos 数组 / items 数组原样字段），
  *   不做加工，将来做导入时可以直接按键拼回。
- * - 入口在右键/托盘菜单（「导出数据…」），主进程原生另存为对话框，
- *   渲染层不参与；结果用系统通知反馈（岛可能正处于收起态）。
+ * - 入口在设置窗口「常规 → 导出数据」（2026-11-11 用户要求搬进来，原右键/托盘菜单项已删），
+ *   主进程原生另存为对话框，渲染层按钮只负责触发与显示结果；同时用系统通知反馈
+ *   （岛可能正处于收起态，设置窗口也可能已经关掉）。
  */
 
 export interface ExportResult {
@@ -85,7 +86,7 @@ function notifyResult(title: string, body: string): void {
 }
 
 export function setupExportStore(): void {
-  ipcMain.handle('app:export-data', async (): Promise<ExportResult> => {
+  ipcMain.handle('app:export-data', async (event): Promise<ExportResult> => {
     // 默认目录取「文档」；拿不到就退回 userData，反正对话框允许用户改
     let defaultDir = app.getPath('userData')
     try {
@@ -93,8 +94,9 @@ export function setupExportStore(): void {
     } catch {
       /* 个别环境无文档目录，退回 userData */
     }
-    // 有主窗口时挂模态（防连点导出叠对话框）；没有就弹独立对话框
-    const win = BrowserWindowSafe()
+    // 模态挂在**发起调用的那个窗口**上（2026-11-11 起入口在设置窗口里；以前固定取
+    // getAllWindows()[0] 会挂到岛窗口上，对话框跑偏）。取不到就弹独立对话框。
+    const win = BrowserWindow.fromWebContents(event.sender) ?? undefined
     const opts = {
       title: '导出灵动岛数据',
       defaultPath: join(defaultDir, stampName()),
@@ -115,11 +117,4 @@ export function setupExportStore(): void {
       return { ok: false, reason: 'failed', detail }
     }
   })
-}
-
-/** 取主窗口（另存为对话框挂模态用）；窗口不在时 Electron 会弹非模态对话框 */
-function BrowserWindowSafe(): Electron.BrowserWindow | undefined {
-  const { BrowserWindow } = require('electron') as typeof import('electron')
-  const list = BrowserWindow.getAllWindows()
-  return list.length > 0 ? list[0] : undefined
 }
