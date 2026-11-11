@@ -31,7 +31,8 @@ let collapsedWidth = 143
 // 展开态尺寸（2026-11-11 两轮调整）：
 // 1) SPEC-island-compact 把整岛按 zoom 0.75 缩小，所以上限从 {720,420} 收到 {540,315}；
 // 2) 用户随后要求「添加任务不要拉伸界面，通知页和待办页也一样」，各页改成固定尺寸
-//    （styles.css 里 .island.expanded 写死 440×252 布局 px，0.75 缩放后 = 330×189 视觉 px），
+//    （styles.css 里 .island.expanded 写死 470×320 布局 px，0.75 缩放后 ≈ 353×240 视觉 px；
+//     高 320 而不是按 0.75 等比的 252，是因为日程页日历要放表头 + 6 行日期，实测 320 是刚好放全的最小值），
 //    内容超出只在列表内部滚动。这里把初始值也对齐，避免首帧按旧值开窗再被 ResizeObserver 纠正。
 const EXPANDED_MIN = { width: 315, height: 165 }
 const EXPANDED_MAX = { width: 540, height: 315 }

@@ -129,12 +129,15 @@ body {
 .collapsed-banner {
   position: absolute;
   left: 50%;
-  top: 48px;
+  /* 2026-11-11 独立验收（a54d9af）实测：整岛缩到 0.75 后收起窗口只有 144×67 逻辑 px，
+     而横幅原来 max-width 300 / top 48 是按旧窗口（190×88）调的，长标题时左右各越出约 30px、
+     底部越出 1.7px，肉眼可见被切。这里改成跟着窗口宽度走，并上移让底部留在窗口内。 */
+  top: 44px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 300px;
+  max-width: calc(100% - 6px);
   padding: 7px 12px;
   border-radius: 16px;
   background: rgba(9, 9, 11, 0.97);
@@ -262,7 +265,10 @@ body {
 .banner-title {
   font-size: 12px;
   color: #f2f3f5;
-  max-width: 240px;
+  /* 跟横幅可用宽度走（原 max-width 240 是按旧窗口调的，缩到 0.75 后会把横幅顶出窗口）。
+     用 100% 而不是算窗口减固定值：父 .banner-text 已有 min-width:0，flex 会把它压到可用宽度，
+     再靠这里的 ellipsis 截断——写成 calc(100vw - 96px) 会把横幅压得比可用宽度还窄一大截。 */
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }

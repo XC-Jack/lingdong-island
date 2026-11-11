@@ -2390,9 +2390,10 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded, scheduleCollapse])
 
-  // 翻页（‹ ›）：在被启用的页面里逐页走，**到头就停住、不循环**
-  // （2026-11-11 用户实机反馈「一直点左边的切换界面的按键会一直重复…就是一直在第一页和最后一页循环」，
-  //  要求改成不循环。原先用 `% list.length` 取模，点到最后会跳回第一页。）
+  // 翻页（‹ ›）：在被启用的页面里逐页走，**到头循环**（第一页按左回到最后一页、
+  // 最后一页按右回到第一页，2026-11-11 用户确认要这样）。
+  // 用户当时报的「一直点左边的切换界面的按键会一直重复」不是循环语义的问题，
+  // 而是下面那条残留守卫 `if (p === 4) return list[0]` 造成的（翻到音乐页弹回第一页）。
   // 注意：这里原来还有一条 `if (p === 4) return list[0]`——那是「page 4 = 页面管理面板」时代的守卫，
   // 页面管理搬进设置窗口后 4 变成了音乐页，这条残留导致翻到音乐页就被弹回第一页。
   const flipPage = useCallback((dir: 1 | -1) => {
@@ -2402,9 +2403,7 @@ export default function App(): React.JSX.Element {
       // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
       let idx = list.indexOf(p)
       if (idx === -1) idx = 0
-      // 2026-11-11 用户确认：要循环翻页 —— 第一页按左回到最后一页、最后一页按右回到第一页。
-      // （上一版改成「到头停住」是因为把「翻到音乐页就弹回第一页」当成循环语义理解的，
-      //   那其实是残留守卫的 bug，已在下面 useEffect 处删掉；循环本身是用户想要的行为。）
+      // 取模循环：第一页按左回到最后一页、最后一页按右回到第一页。
       return list[(idx + dir + list.length) % list.length]
     })
   }, [])
