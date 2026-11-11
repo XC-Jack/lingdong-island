@@ -294,6 +294,21 @@ body {
 .set-btn:active {
   background: rgba(255, 255, 255, 0.18);
 }
+.set-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 卡片下方的结果提示（导出成功给路径、失败给原因）；路径很长，允许断行 */
+.set-note {
+  margin-top: 6px;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(242, 243, 245, 0.5);
+  word-break: break-all;
+  user-select: text;
+}
 
 /* 占位说明（专注·喝水） */
 .set-placeholder {

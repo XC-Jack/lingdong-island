@@ -125,21 +125,27 @@ export default function PageManagerSection({
     onChange({ ...pagesCustom, collapsed: { ...pagesCustom.collapsed, [k]: !pagesCustom.collapsed[k] } })
   }
   const reset = (): void => onChange(defaultPagesCustom())
-  // 拖拽排序（US-032 反馈）：只在「显示的页面」列表里拖换位；HTML5 dataTransfer 必须带数据
-  // 才稳定触发 dragover/drop（项目踩坑记录）；语义与置物架一致用「互换」。
+  // 拖拽排序（US-032 反馈 + 2026-11-11 用户修正）：只在「显示的页面」列表里拖换位；
+  // HTML5 dataTransfer 必须带数据才稳定触发 dragover/drop（项目踩坑记录）。
+  // **插入**语义，与下方收起态组件区一致（用户原话「上面的这个要和下面的互换逻辑一样，从中间插入」）：
+  // 拖到目标行上半 → 插到它前面，下半 → 插到它后面，其余页顺移；被拖项先从序列里抽掉。
   const dragFrom = useRef<number | CollapsedKey | null>(null)
-  const reorderTo = (targetPageId: number): void => {
+  /** 页面区的落点提示（与组件区的 dropHint 分开存：键的类型不同，混用会让 TS 收窄出错） */
+  const [pageHint, setPageHint] = useState<{ i: number; before: boolean } | null>(null)
+  const reorderTo = (targetPageId: number, before: boolean): void => {
     const from = dragFrom.current
     dragFrom.current = null
+    setPageHint(null)
     if (typeof from !== 'number' || from === targetPageId) return
-    const pages = pagesCustom.pages.includes(from) ? [...pagesCustom.pages] : null
-    if (!pages) return
-    const fi = pages.indexOf(from)
-    const ti = pages.indexOf(targetPageId)
-    if (ti === -1) return // 目标未勾选：不参与排序
-    pages[fi] = targetPageId
-    pages[ti] = from
-    onChange({ ...pagesCustom, pages })
+    // 未勾选的页不参与排序；被拖项也不在 pages 里时无从下手
+    if (!pagesCustom.pages.includes(from) || !pagesCustom.pages.includes(targetPageId)) return
+    // 先抽掉再插：这样「前/后」直接以抽掉后的列表为准，不用为 fi<ti 单独减一
+    const rest = pagesCustom.pages.filter((p) => p !== from)
+    const ti = rest.indexOf(targetPageId)
+    if (ti === -1) return
+    const insertAt = before ? ti : ti + 1
+    rest.splice(insertAt, 0, from)
+    onChange({ ...pagesCustom, pages: rest })
   }
   // 收起态组件排序（美化-02）：**插入**语义，不是互换——用户 2026-11-08 验收反馈
   // 「拖动组件插空放」，即把被拖项抽出来插到目标行的前/后空隙，其余组件顺移。
@@ -166,7 +172,7 @@ export default function PageManagerSection({
   }
   return (
     <div className="pm-panel">
-      <div className="pm-section">页面（勾选显示，按住拖动换顺序）</div>
+      <div className="pm-section">页面（勾选显示，按住拖到目标行插入）</div>
       {(() => {
         // 按用户自定义顺序渲染：已勾选页按 pages 排在前（可拖），未勾选页按固定号排在后
         const shown = pagesCustom.pages.map((p) => ({ m: PAGE_META[p], i: p, on: true }))
@@ -179,20 +185,36 @@ export default function PageManagerSection({
           return (
             <div
               key={i}
-              className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''}`}
+              className={`pm-row ${on ? '' : 'pm-row-off'} ${locked ? 'pm-locked' : ''} ${
+                pageHint?.i === i ? (pageHint.before ? 'pm-drop-before' : 'pm-drop-after') : ''
+              }`}
               draggable={on}
               onDragStart={(e) => {
                 e.dataTransfer.setData('text/plain', String(i))
                 e.dataTransfer.effectAllowed = 'move'
                 dragFrom.current = i
               }}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
+              onDragOver={(e) => {
+                // 未勾选的页不接落点：它们不在 pages 里，插进去没有意义
+                if (!on) return
                 e.preventDefault()
-                reorderTo(i)
+                if (typeof dragFrom.current === 'number' && dragFrom.current !== i) {
+                  setPageHint({ i, before: dropEdge(e.currentTarget, e.clientY) })
+                }
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  setPageHint((h) => (h?.i === i ? null : h))
+                }
+              }}
+              onDrop={(e) => {
+                if (!on) return
+                e.preventDefault()
+                reorderTo(i, dropEdge(e.currentTarget, e.clientY))
               }}
               onDragEnd={() => {
                 dragFrom.current = null
+                setPageHint(null)
               }}
             >
               <input type="checkbox" checked={on} onChange={() => togglePage(i)} />
@@ -201,7 +223,7 @@ export default function PageManagerSection({
               {locked ? (
                 <span className="pm-lock-hint">至少保留一个</span>
               ) : on ? (
-                <span className="pm-grip" title="按住拖到另一行换位置">
+                <span className="pm-grip" title="按住拖到目标行：落在上半插到它前面，落在下半插到它后面">
                   ⋮⋮
                 </span>
               ) : null}

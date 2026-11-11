@@ -10,11 +10,14 @@
  * S6 关闭设置窗口不影响岛（岛 target 仍在，收起态仍有胶囊）
  * S7 岛里不再有第 5 页：翻页圆点只有 4 个
  * S8 重复 openSettings 不会叠出多个设置窗口
+ * S9 自启状态双向同步（设置窗口 ↔ 岛，不重启）
+ * S10 页面区拖拽是「插入」不是「互换」（2026-11-11 用户修正）
+ * S11 导出数据入口在设置窗口「常规」分区，IPC 通道存活
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
  */
 import { spawn, execSync } from './isolate-userdata.mjs'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -276,6 +279,152 @@ try {
     autostartOrig = null
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && el.className.includes('expanded')) el.click(); return 'ok' })()`)
     await sleep(700)
+  }
+
+  // ========== S10 页面区拖拽是「插入」不是「互换」（2026-11-11 用户修正） ==========
+  {
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('页面管理')); if (b) b.click(); return 'ok' })()`)
+    await sleep(600)
+    await settingsEval(`(() => { const r = document.querySelector('.pm-reset'); if (r) r.click(); return 'ok' })()`)
+    await sleep(700)
+    const basePages = readPrefs()?.pagesCustom?.pages
+    ok('S10a 重置后页面恢复默认顺序 [0,1,2,3]',
+      JSON.stringify(basePages) === JSON.stringify([0, 1, 2, 3]), JSON.stringify(basePages))
+
+    /** 把页面区第 fromIdx 行拖到第 toIdx 行的上半/下半。
+     *  页面行没有 data-comp，用「不带 data-comp 的 .pm-row」按 DOM 顺序取。 */
+    const dragPageRow = async (fromIdx, toIdx, half) => {
+      const start = await settingsEval(`(() => {
+        const rows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
+        const from = rows[${fromIdx}]
+        const to = rows[${toIdx}]
+        if (!from || !to) return 'missing-row'
+        window.__e2eDt2 = new DataTransfer()
+        from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt2 }))
+        const b = to.getBoundingClientRect()
+        window.__e2eY2 = b.top + b.height * ${half === 'before' ? 0.25 : 0.75}
+        to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt2, clientY: window.__e2eY2 }))
+        return 'ok'
+      })()`)
+      if (start !== 'ok') return start
+      await sleep(300)
+      const hintCls = await settingsEval(`(() => {
+        const rows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
+        return rows[${toIdx}]?.className ?? 'missing-row'
+      })()`)
+      await settingsEval(`(() => {
+        const rows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
+        const from = rows[${fromIdx}]
+        const to = rows[${toIdx}]
+        if (!from || !to) return 'missing-row'
+        to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt2, clientY: window.__e2eY2 }))
+        from.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt2 }))
+        return 'ok'
+      })()`)
+      await sleep(900)
+      return hintCls
+    }
+
+    // ① 通知(2) 拖到 待办(0) 上半 → 插到最前：[2,0,1,3]
+    const c1 = await dragPageRow(2, 0, 'before')
+    ok('S10b 悬停目标行上半出现「插到前面」提示类',
+      typeof c1 === 'string' && c1.includes('pm-drop-before'), c1)
+    let pg = readPrefs()?.pagesCustom?.pages
+    ok('S10c 插入到前面：pages 变为 [2,0,1,3]',
+      JSON.stringify(pg) === JSON.stringify([2, 0, 1, 3]), JSON.stringify(pg))
+    // 反证不是互换：互换会得到 [2,1,0,3]（1 与 0 换位）
+    ok('S10d 不是互换语义（待办没被顶到通知原位）',
+      JSON.stringify(pg) !== JSON.stringify([2, 1, 0, 3]), JSON.stringify(pg))
+
+    // ② 日程(3) 拖到 待办(0) 上半 → [2,0,1,3] 里 0 在下标 1，插到它前面 → [2,3,0,1]
+    await dragPageRow(3, 1, 'before')
+    pg = readPrefs()?.pagesCustom?.pages
+    ok('S10e 再拖一次仍是插入：pages 变为 [2,3,0,1]',
+      JSON.stringify(pg) === JSON.stringify([2, 3, 0, 1]), JSON.stringify(pg))
+    // 反证：互换会得到 [2,3,1,0]
+    ok('S10f 第二次也不是互换（1 与 0 位置未对调）',
+      JSON.stringify(pg) !== JSON.stringify([2, 3, 1, 0]), JSON.stringify(pg))
+
+    // ③ 通知(2) 拖到 置物架(1) 下半 → [3,0,1,2]
+    const c2 = await dragPageRow(0, 3, 'after')
+    ok('S10g 悬停目标行下半出现「插到后面」提示类',
+      typeof c2 === 'string' && c2.includes('pm-drop-after'), c2)
+    pg = readPrefs()?.pagesCustom?.pages
+    ok('S10h 插入到后面：pages 变为 [3,0,1,2]',
+      JSON.stringify(pg) === JSON.stringify([3, 0, 1, 2]), JSON.stringify(pg))
+    ok('S10i pages 长度仍为 4 且无重复',
+      Array.isArray(pg) && pg.length === 4 && new Set(pg).size === 4, JSON.stringify(pg))
+
+    // ④ 拖到自己身上不变化
+    await dragPageRow(1, 1, 'before')
+    ok('S10j 拖到自身不改变 pages',
+      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([3, 0, 1, 2]),
+      JSON.stringify(readPrefs()?.pagesCustom?.pages))
+
+    // 收尾：重置回默认，别把用户的页面顺序留在测试态
+    await settingsEval(`(() => { const r = document.querySelector('.pm-reset'); if (r) r.click(); return 'ok' })()`)
+    await sleep(700)
+    ok('S10k 重置回默认 [0,1,2,3]',
+      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([0, 1, 2, 3]),
+      JSON.stringify(readPrefs()?.pagesCustom?.pages))
+  }
+
+  // ========== S11 导出数据搬进设置窗口（2026-11-11 用户要求） ==========
+  {
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('常规')); if (b) b.click(); return 'ok' })()`)
+    await sleep(600)
+    const hasRow = await settingsEval(`document.body.innerText.includes('导出数据')`)
+    ok('S11a 常规分区有「导出数据」行', hasRow === true)
+    const btnText = await settingsEval(`(() => {
+      const b = Array.from(document.querySelectorAll('.set-btn')).find(e => e.textContent.includes('导出'))
+      return b ? b.textContent.trim() : 'no-btn'
+    })()`)
+    ok('S11b 有「导出…」按钮', typeof btnText === 'string' && btnText.includes('导出'), btnText)
+
+    // 真点一次，主进程会弹原生另存为；用 WM_CLOSE 按标题关掉，断言走的是取消分支
+    // （证明 IPC 通道存活且模态确实挂在设置窗口上，不会卡死）。手法同 e2e-export.mjs。
+    const closeDialog = () => {
+      const script = [
+        'Add-Type -TypeDefinition @\'',
+        'using System;',
+        'using System.Runtime.InteropServices;',
+        'using System.Text;',
+        'public class WClose2 {',
+        '  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr l);',
+        '  public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);',
+        '  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);',
+        '  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);',
+        '  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);',
+        '}',
+        '\'@',
+        '$cb = [WClose2+EnumWindowsProc]{ param($h,$l)',
+        '  if ([WClose2]::IsWindowVisible($h)) {',
+        '    $sb = New-Object System.Text.StringBuilder 256',
+        '    [void][WClose2]::GetWindowText($h,$sb,256)',
+        '    if ($sb.ToString() -match \'导出灵动岛数据|另存为\') { [void][WClose2]::SendMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) }',
+        '  }',
+        '  $true',
+        '}',
+        '[void][WClose2]::EnumWindows($cb,[IntPtr]::Zero)'
+      ].join('\n')
+      try { spawn('powershell', ['-NoProfile', '-Command', script], { stdio: 'ignore' }) } catch { /* 关不掉就靠超时 */ }
+    }
+    setTimeout(closeDialog, 1200)
+    const raw = await settingsEval(`window.island.exportData().then(r => JSON.stringify(r)).catch(e => 'ERR:' + e.message)`)
+    let res = null
+    if (typeof raw === 'string' && raw.startsWith('{')) {
+      try { res = JSON.parse(raw) } catch { /* 非 JSON 就按失败处理 */ }
+    }
+    ok('S11c 导出 IPC 通道存活（返回结构合法）',
+      res !== null && typeof res.ok === 'boolean', String(raw))
+    ok('S11d 对话框取消后返回 canceled 分支（不落盘）',
+      res !== null && (res.ok === true || (res.canceled === true && res.reason === 'canceled')),
+      String(raw))
+    if (res && res.ok && typeof res.path === 'string' && existsSync(res.path)) {
+      // 万一对话框没关掉、用户点了保存，清理掉这份测试产物
+      try { rmSync(res.path, { force: true }) } catch { /* ignore */ }
+      console.log('  ! 注意：另存为对话框被误确认，已删除测试文件 ' + res.path)
+    }
   }
 
   // ========== S6 关闭设置窗口不影响岛 ==========

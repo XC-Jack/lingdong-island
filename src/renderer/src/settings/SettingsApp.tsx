@@ -96,6 +96,9 @@ export default function SettingsApp(): ReactElement {
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
+  // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
+  const [exporting, setExporting] = useState(false)
+  const [exportNote, setExportNote] = useState('')
 
   // 启动回填偏好 + 订阅后续变更
   useEffect(() => {
@@ -172,6 +175,28 @@ export default function SettingsApp(): ReactElement {
     })
   }
 
+  /**
+   * 导出数据（US-029；2026-11-11 从右键/托盘菜单搬到这里）。
+   * 真正的文件读写与另存为对话框都在主进程，这里只触发并把结果显示在行内；
+   * 主进程同时会发系统通知，岛收起时也看得到。
+   */
+  const runExport = (): void => {
+    if (exporting) return
+    setExporting(true)
+    setExportNote('')
+    window.island
+      .exportData()
+      .then((r) => {
+        if (r.ok) setExportNote(`已导出到 ${r.path}`)
+        else if (r.canceled) setExportNote('')
+        else setExportNote(`导出失败：${r.detail ?? r.reason ?? '未知原因'}`)
+      })
+      .catch((err: unknown) => {
+        setExportNote(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+      })
+      .finally(() => setExporting(false))
+  }
+
   /** 开机自启：先乐观翻转，再以主进程实际状态校准 */
   const toggleAutoStart = (): void => {
     const next = !(autoStart ?? false)
@@ -244,7 +269,18 @@ export default function SettingsApp(): ReactElement {
                     打开文件夹
                   </button>
                 </Row>
+                <Row label="导出数据" hint="把待办和日程保存成一个 JSON 文件">
+                  <button
+                    type="button"
+                    className="set-btn"
+                    disabled={exporting}
+                    onClick={runExport}
+                  >
+                    {exporting ? '导出中…' : '导出…'}
+                  </button>
+                </Row>
               </div>
+              {exportNote ? <div className="set-note">{exportNote}</div> : null}
             </section>
           ) : section === 'pages' ? (
             <section className="set-page">

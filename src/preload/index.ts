@@ -112,8 +112,8 @@ const api = {
   },
   /**
    * 数据导出（US-029）：弹主进程原生「另存为」，把待办+日程写成 JSON。
-   * 右键/托盘菜单点「导出数据…」时由主进程经 executeJavaScript 触发这里；
-   * 渲染层自身不提供按钮。返回结果供 e2e 断言与将来扩展用。
+   * 入口在设置窗口「常规 → 导出数据」（2026-11-11 起；原右键/托盘菜单项已删）。
+   * 返回结果供渲染层显示与 e2e 断言用。
    */
   exportData(): Promise<ExportResult> {
     return ipcRenderer.invoke('app:export-data')

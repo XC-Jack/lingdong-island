@@ -56,14 +56,16 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。设置（SPEC-settings-shell）+ 导出数据（US-029）+ 手动隐藏（US-041）+ 退出 */
+/**
+ * 岛内右键 / 托盘右键共用的菜单。设置（SPEC-settings-shell）+ 手动隐藏（US-041）+ 退出。
+ * 导出数据（US-029）2026-11-11 起搬到设置窗口「常规 → 导出数据」，这里不再提供入口。
+ */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
   const hiddenByUser = manualHide
   return Menu.buildFromTemplate([
     { label: '设置…', click: () => openSettings('general') },
     { label: '页面管理…', click: () => openSettings('pages') },
-    { label: '导出数据…', click: () => void exportData() },
     { type: 'separator' },
     hiddenByUser
       ? { label: '显示灵动岛', click: () => mainWindow?.webContents.send('noop') /* 占位 */ }
@@ -71,13 +73,6 @@ function buildAppMenu(): Menu {
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
-}
-
-/** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
-function exportData(): void {
-  void mainWindow?.webContents.executeJavaScript('window.island && window.island.exportData()').catch(() => {
-    /* 渲染层不在时退化为无操作；导出入口仍可从托盘菜单重试 */
-  })
 }
 
 /**
