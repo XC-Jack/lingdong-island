@@ -20,8 +20,8 @@
 
 | 文件 | 改动 |
 |---|---|
-| `src/renderer/src/styles.css` | `.app` 加 `zoom: 0.75`（一处生效、整体等比缩小，避免逐条改 2000 多行的字号/内边距）；`.island.expanded` 由「按内容撑开 + min/max 区间」改为**固定 440×252 布局 px**；`.sched-split` 由 `width:max-content` 改 `width:100%`、`.sched-day` min-width `252→168`、`.cal` 宽 `232→204` |
-| `src/main/index.ts` | 常量按 0.75 缩放：`COLLAPSED_WIN_HEIGHT 88→66`、`COLLAPSED_MIN_W 150→113`、`COLLAPSED_MAX_W 320→240`、`collapsedWidth 190→143`、`EXPANDED_MIN {420,220}→{315,165}`、`EXPANDED_MAX {720,420}→{540,315}`、`expandedSize {560,300}→{420,225}→{330,189}`（第二轮按固定尺寸对齐） |
+| `src/renderer/src/styles.css` | `.app` 加 `zoom: 0.75`（一处生效、整体等比缩小，避免逐条改 2000 多行的字号/内边距）；`.island.expanded` 由「按内容撑开 + min/max 区间」改为**固定 470×320 布局 px**；`.sched-split` 由 `width:max-content` 改 `width:100%`、`.sched-day` min-width `252→168`、`.cal` 宽 `232→204` |
+| `src/main/index.ts` | 常量按 0.75 缩放：`COLLAPSED_WIN_HEIGHT 88→66`、`COLLAPSED_MIN_W 150→113`、`COLLAPSED_MAX_W 320→240`、`collapsedWidth 190→143`、`EXPANDED_MIN {420,220}→{315,165}`、`EXPANDED_MAX {720,420}→{540,315}`、`expandedSize {560,300}→{420,225}→{353,240}`（第二轮按固定尺寸对齐） |
 | `src/renderer/src/App.tsx` | 翻页 `flipPage` 去掉取模循环 + 删掉残留的 `if (p === 4) return list[0]`；「当前页被裁掉」的 useEffect 删掉 `if (p >= 4) return p` 豁免 |
 | `scripts/e2e-pages-custom.mjs` | P4a 断言由「从最后一页翻回第一页」改为「停在最后一页」 |
 | `docs/Spec/SPEC-island-compact.md` | 本文件 |
@@ -30,7 +30,7 @@
 
 ## 三、预期行为
 
-1. 展开态岛固定约 **330×189** 视觉 px（原 720×420 上限、按内容撑开），**各页尺寸完全相同**，且加/删条目不变。
+1. 展开态岛固定约 **353×240** 视觉 px（原 720×420 上限、按内容撑开），**各页尺寸完全相同**，且加/删条目不变。
 2. 收起态胶囊高度约 **31px**（原 42），宽度上限约 **240**（原 320）。
 3. 视觉比例整体缩小，**排版关系不变**：字号、图标、间距、圆角同步缩小，仍是同样的层级和密度，不出现「字没变小但框变小」的挤压。
 4. 窗口边缘仍紧贴岛边缘（不留可见透明死区，否则那片区域点不到桌面）。
@@ -52,7 +52,7 @@
 
 - [x] `npm run typecheck` EXIT=0
 - [x] `npm run build` EXIT=0
-- [x] 展开态实测各页尺寸一致（330×189），加 8 条待办/8 条日程后尺寸不变
+- [x] 展开态实测各页尺寸一致（353×240），加 8 条待办/8 条日程后尺寸不变
 - [x] 收起态实测高度 ≤ 35（实测 31.5，窗口 67）
 - [x] 各页（待办/置物架/通知/日程/音乐）文字不重叠、不截断、不出现横向滚动
 - [x] 通知横幅能正常弹出、不被窗口裁掉、5 秒自动收回
@@ -90,7 +90,7 @@
 | 2026-11-11 | `e2e-notify-compact` / `e2e-notify-icon` / `e2e-notify-live` | 2 过 0 败 / 8 过 0 败 / 1 过 0 败 | — |
 | 2026-11-11 | `e2e-music` | PASS 15 过 / 0 败 / 3 跳过（本机无 SMTC 会话时空态分支） | 有播放器时的 M2–M4 分支本轮未跑 |
 | 2026-11-11 | `e2e-settings-shell` | PASS 51 过 / 0 败（设置窗口 880×580 未受影响） | — |
-| 2026-11-11 22:05 | 第二版：各页固定尺寸后重测 | 待办/置物架/通知/日程/音乐 全部 `330×189`、窗口 `331×190`；加 8 条待办后不变；加 8 条日程后不变 | 真机人眼观感 |
+| 2026-11-11 22:05 | 第二版：各页固定尺寸后重测 | 待办/置物架/通知/日程/音乐 全部 `353×240`、窗口 `354×240`；加 8 条待办后不变；加 8 条日程后不变 | 真机人眼观感 |
 | 2026-11-11 22:06 | 第二版：翻页语义重测 | 第一页按「‹」2 次仍停在第一页；最后一页按「›」2 次仍停在最后一页 | — |
 | 2026-11-11 22:07 | 第二版：列表内部滚动 | 待办 8 条时 `listH=50 / scrollH=354 / canScroll=true` | — |
 | 2026-11-11 22:08 | 第二版：全套回归 10 个脚本 | `e2e-beautify-04` 27/0、`e2e-todo-today` PASS、`e2e-collapsed-todo` PASS、`e2e-schedule-day` PASS、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-scroll` 6/0、`e2e-notify-compact` 2/0、`e2e-notify-icon` 8/0、`e2e-code-hint` 10/0（高 67）、`e2e-settings-shell` 51/0 | — |

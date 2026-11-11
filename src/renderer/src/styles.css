@@ -66,10 +66,17 @@ body {
   min-height: 0;
   /* panel-body 是 align-items:flex-start（子项默认取内容高度，可超出容器被窗口裁掉）；
      align-self:stretch 把本块压回 panel-body 的实际高度，列表超长时让 .todo-list 自己滚（US-037）。
-     只影响垂直方向，各页水平 max-content 布局不受影响。 */
+     只影响垂直方向。 */
   align-self: stretch;
   display: flex;
   flex-direction: column;
+  /* 2026-11-11：岛改成固定宽度后，flex 子项默认 min-width:auto 会让宽内容（日程页的
+     日历+列表）顶出岛右缘被 overflow:hidden 裁掉。加 min-width:0 允许被压窄，
+     超出的部分由各自内部处理（列表省略号 / 内部滚动）。 */
+  min-width: 0;
+  /* 宽度跟随岛内可用宽度；以前靠 max-content 撑开是因为岛宽按内容自适应，
+     现在岛宽固定，撑开只会溢出。 */
+  width: 100%;
 }
 
 /* 置物架/通知页：内容宽度自适应，但工具条必须贴岛右缘（与头部右侧对齐），
@@ -100,8 +107,10 @@ body {
      翻页和加条目时整块跟着跳。现在各页统一尺寸，内容超出就在列表内部滚动。
      布局 px（zoom 0.75 之后视觉 330×189）；主进程 EXPANDED_MIN/MAX 与 expandedSize 按此同步。 */
   flex-shrink: 0;
-  width: 440px;
-  height: 252px;
+  /* 高度 320 而不是按 0.75 等比（252）：日程页日历要放表头 + 6 行日期 + 内边距，
+     252 布局 px 下日历底部会被裁掉。320 是实测「日历刚好完整显示（calCH=calSH=203）」的最小值。 */
+  width: 470px;
+  height: 320px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -563,11 +572,9 @@ body {
 
 /* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。
    绝对定位挂头部右下，不参与 flex 流（width:100% 参流会把标题挤竖排） */
+/* 2026-11-11：岛缩到 0.75 后头部变矮，原先 absolute + top:100% 会把「圆环 + n/m」
+   压到下方输入框上（用户截图可见 0/9 盖住＋按钮）。改成头部内的正常流，排在自启开关左边。 */
 .todo-stat {
-  position: absolute;
-  right: 2px;
-  top: 100%;
-  margin-top: 3px;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1529,6 +1536,9 @@ body {
   width: 100%;
   /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
   min-height: 0;
+  /* 2026-11-11：岛固定宽度后，窄屏下日历(204)+右栏(168)+间距(12) 仍比可用宽度略宽，
+     给左栏加收缩权限，避免整体顶出岛右缘被裁。 */
+  min-width: 0;
 }
 
 /* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
@@ -1538,6 +1548,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
+  min-width: 0;
 }
 
 .sched-day-head {

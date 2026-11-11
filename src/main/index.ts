@@ -36,7 +36,7 @@ let collapsedWidth = 143
 const EXPANDED_MIN = { width: 315, height: 165 }
 const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的，默认值给个合理初始） */
-let expandedSize = { width: 330, height: 189 }
+let expandedSize = { width: 353, height: 240 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
 /** 过渡动画时长（毫秒）。用户实测 220ms 太急，调到 500ms（US-038 验收反馈，用户嫌 320 仍快） */
