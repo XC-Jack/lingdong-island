@@ -2402,10 +2402,10 @@ export default function App(): React.JSX.Element {
       // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
       let idx = list.indexOf(p)
       if (idx === -1) idx = 0
-      const next = idx + dir
-      if (next < 0) return list[0]
-      if (next >= list.length) return list[list.length - 1]
-      return list[next]
+      // 2026-11-11 用户确认：要循环翻页 —— 第一页按左回到最后一页、最后一页按右回到第一页。
+      // （上一版改成「到头停住」是因为把「翻到音乐页就弹回第一页」当成循环语义理解的，
+      //   那其实是残留守卫的 bug，已在下面 useEffect 处删掉；循环本身是用户想要的行为。）
+      return list[(idx + dir + list.length) % list.length]
     })
   }, [])
 
