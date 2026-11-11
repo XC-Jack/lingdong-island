@@ -19,7 +19,19 @@ interface PagesCustom {
 interface PrefsShape {
   pagesCustom?: PagesCustom
   shelfView?: string
+  /**
+   * 音乐页一次性补入标记（SPEC-music-page）。
+   * 老版本的 pages 只可能是 0..3，升级后要把新的音乐页（索引 4）补进去；
+   * 但用户如果自己手动关掉音乐页，绝不能下次启动又冒出来——所以补完就置 true，
+   * 以后不再补。缺字段视为「还没补过」。
+   */
+  musicIntro?: boolean
 }
+
+/** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
+const MAX_PAGE_INDEX = 4
+/** 音乐页索引（SPEC-music-page） */
+const MUSIC_PAGE = 4
 
 const EMPTY: PrefsShape = {}
 
@@ -53,7 +65,7 @@ function normalizePagesCustom(v: unknown): PagesCustom | undefined {
   const raw = v as Partial<PagesCustom>
   // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
   const pages = Array.isArray(raw.pages)
-    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= MAX_PAGE_INDEX))]
     : []
   if (pages.length === 0) return undefined
   const collapsed: Record<CollapsedKey, boolean> = {
@@ -87,6 +99,10 @@ function load(): PrefsShape {
     if (pc) out.pagesCustom = pc
     const sv = normalizeShelfView(parsed.shelfView)
     if (sv) out.shelfView = sv
+    // musicIntro 必须原样带出去：prefs:set 是「load → 改 → save」，
+    // 这里丢了标记，下一次任何偏好写入就会把「已补过音乐页」的事实抹掉，
+    // 用户手动关掉的音乐页会再次冒出来。
+    if (parsed.musicIntro === true) out.musicIntro = true
     return out
   } catch {
     return { ...EMPTY }
@@ -113,9 +129,40 @@ function broadcastPrefs(data: PrefsShape): void {
  * 为什么不用渲染层 localStorage：本机实测 file:// 来源的 localStorage 跨进程重启会丢失
  * （写入后优雅退出再启动读回为 null），页面裁剪偏好必须跨重启保留，故走主进程文件。
  */
+/**
+ * 老用户一次性补上音乐页（SPEC-music-page）。
+ *
+ * 为什么需要它：音乐页是第 5 页（索引 4），而老版本 prefs.json 里的 pages 只可能
+ * 是 [0,1,2,3]，且 defaultPagesCustom 只在「没有 prefs」时才生效——不给老数据补一刀，
+ * 存量用户升级后永远看不到音乐页。
+ *
+ * 为什么要 musicIntro 标记：只补一次。用户补完之后自己把音乐页关掉，
+ * 下次启动不能又冒出来（那就是「关不掉的功能」）。
+ *
+ * 补的条件：有 pagesCustom（说明是老用户有自定义记录）且标记不是 true 且当前没勾音乐页。
+ * 没有 pagesCustom 的（全新安装）由渲染层 defaultPagesCustom 直接带上音乐页，不需要补。
+ */
+function migrateMusicPage(): void {
+  const data = load()
+  if (data.musicIntro === true) return
+  if (!data.pagesCustom) return
+  if (data.pagesCustom.pages.includes(MUSIC_PAGE)) {
+    // 已经在显示音乐页（理论上不会发生，除非用户手改过），只落标记
+    data.musicIntro = true
+    save(data)
+    return
+  }
+  data.pagesCustom = { ...data.pagesCustom, pages: [...data.pagesCustom.pages, MUSIC_PAGE] }
+  data.musicIntro = true
+  save(data)
+  console.log('[prefs] 已为老用户补上音乐页（第 5 页）')
+}
+
 export function setupPrefsStore(): void {
   file = join(app.getPath('userData'), 'prefs.json')
   mkdirSync(app.getPath('userData'), { recursive: true })
+
+  migrateMusicPage()
 
   ipcMain.handle('prefs:get', (): PrefsShape => load())
 
@@ -123,13 +170,21 @@ export function setupPrefsStore(): void {
     const data = load()
     // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
     const before = JSON.stringify(data)
-    const { pagesCustom, shelfView } = (payload ?? {}) as { pagesCustom?: unknown; shelfView?: unknown }
+    const { pagesCustom, shelfView, musicIntro } = (payload ?? {}) as {
+      pagesCustom?: unknown
+      shelfView?: unknown
+      musicIntro?: unknown
+    }
     const pc = normalizePagesCustom(pagesCustom)
     if (pc) data.pagesCustom = pc
     else if (pagesCustom !== undefined) delete data.pagesCustom // 显式传 pagesCustom 才动它，未传保持原值
     const sv = normalizeShelfView(shelfView)
     if (sv) data.shelfView = sv
     else if (shelfView !== undefined) delete data.shelfView
+    if (typeof musicIntro === 'boolean') {
+      if (musicIntro) data.musicIntro = true
+      else delete data.musicIntro
+    }
     save(data)
     // 只在真正有变化时广播：prefs:set 的调用方常带「乐观更新」，无变化广播会让
     // 另一端把自己刚点的东西又写一遍（视觉上闪一下）

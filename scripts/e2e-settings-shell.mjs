@@ -5,10 +5,10 @@
  * S1 设置窗口能打开：调 window.island.openSettings('pages') 后 CDP 里出现 url 含 settings.html 的 target
  * S2 左导航三项齐全（常规/页面管理/专注·喝水），openSettings('pages') 落在「页面管理」
  * S3 常规页：版本号非空、数据目录路径是 userData、自启开关在场
- * S4 页面管理页：页面区 4 行 + 收起态组件区 6 行
+ * S4 页面管理页：页面区 5 行（含音乐）+ 收起态组件区 6 行
  * S5 设置窗口改偏好 → 岛立刻同步（取消铃铛勾选后收起态不再渲染，勾回恢复）
  * S6 关闭设置窗口不影响岛（岛 target 仍在，收起态仍有胶囊）
- * S7 岛里不再有第 5 页：翻页圆点只有 4 个
+ * S7 岛里没有页面管理页：翻页圆点只有业务页（2026-11-11 起 5 个，含音乐）
  * S8 重复 openSettings 不会叠出多个设置窗口
  * S9 自启状态双向同步（设置窗口 ↔ 岛，不重启）
  * S10 页面区拖拽是「插入」不是「互换」（2026-11-11 用户修正）
@@ -94,9 +94,11 @@ async function stopApp(child) {
 }
 
 function writePrefs(order, collapsedOverride = {}) {
+  // musicIntro: true —— 让「老用户补音乐页」的迁移不再介入，测试基线固定为 5 页
   writeFileSync(PREFS, JSON.stringify({
+    musicIntro: true,
     pagesCustom: {
-      pages: [0, 1, 2, 3],
+      pages: [0, 1, 2, 3, 4],
       collapsed: { pet: true, clock: true, battery: true, net: true, todo: true, bell: true, ...collapsedOverride },
       order
     }
@@ -169,9 +171,9 @@ try {
       nav.some((s) => s.includes('常规')) && nav.some((s) => s.includes('页面管理')) && nav.some((s) => s.includes('专注')),
       JSON.stringify(nav))
 
-    // openSettings('pages') 落点：页面管理分区可见（4 行页面 + 6 行组件）
+    // openSettings('pages') 落点：页面管理分区可见（5 行页面 + 6 行组件）
     const rows = await settingsEval(`document.querySelectorAll('.pm-row').length`)
-    ok('S2b openSettings("pages") 直接落在页面管理分区', rows === 10, `实际 .pm-row 共 ${rows} 行`)
+    ok('S2b openSettings("pages") 直接落在页面管理分区', rows === 11, `实际 .pm-row 共 ${rows} 行`)
   }
 
   // ========== S3 常规页 ==========
@@ -202,7 +204,7 @@ try {
     await sleep(600)
     const pageRows = await settingsEval(`document.querySelectorAll('.pm-panel > .pm-row, .pm-panel div.pm-row').length`)
     const compRows = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
-    ok('S4a 页面区 4 行', pageRows - compRows === 4, `总行 ${pageRows} 组件行 ${compRows}`)
+    ok('S4a 页面区 5 行', pageRows - compRows === 5, `总行 ${pageRows} 组件行 ${compRows}`)
     ok('S4b 收起态组件区 6 行', compRows === 6, `实际 ${compRows}`)
     const labels = await settingsEval(`Array.from(document.querySelectorAll('.pm-row[data-comp] .pm-name')).map(e => e.textContent).join(',')`)
     ok('S4c 组件行文案含「通知铃铛」', labels.includes('通知铃铛'), labels)
@@ -230,12 +232,12 @@ try {
     ok('S5d 勾回后岛当场恢复', bellBack === 1, `实际 ${bellBack}`)
   }
 
-  // ========== S7 岛里没有第 5 页 ==========
+  // ========== S7 岛里没有页面管理页 ==========
   {
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && !el.className.includes('expanded')) el.click(); return 'ok' })()`)
     await sleep(900)
     const dots = await islandEval(`document.querySelectorAll('.dots .dot').length`)
-    ok('S7 翻页圆点只有 4 个（页面管理页已摘除）', dots === 4, `实际 ${dots}`)
+    ok('S7 翻页圆点只有业务页 5 个（页面管理页已摘除，音乐页已加入）', dots === 5, `实际 ${dots}`)
     const hasPm = await islandEval(`document.querySelectorAll('.pm-row').length`)
     ok('S7b 岛 DOM 里没有 .pm-row（面板已搬走）', hasPm === 0, `实际 ${hasPm}`)
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && el.className.includes('expanded')) el.click(); return 'ok' })()`)
@@ -290,8 +292,8 @@ try {
     await settingsEval(`(() => { const r = document.querySelector('.pm-reset'); if (r) r.click(); return 'ok' })()`)
     await sleep(700)
     const basePages = readPrefs()?.pagesCustom?.pages
-    ok('S10a 重置后页面恢复默认顺序 [0,1,2,3]',
-      JSON.stringify(basePages) === JSON.stringify([0, 1, 2, 3]), JSON.stringify(basePages))
+    ok('S10a 重置后页面恢复默认顺序 [0,1,2,3,4]',
+      JSON.stringify(basePages) === JSON.stringify([0, 1, 2, 3, 4]), JSON.stringify(basePages))
 
     /** 把页面区第 fromIdx 行拖到第 toIdx 行的上半/下半。
      *  页面行没有 data-comp，用「不带 data-comp 的 .pm-row」按 DOM 顺序取。 */
@@ -327,47 +329,51 @@ try {
       return hintCls
     }
 
-    // ① 通知(2) 拖到 待办(0) 上半 → 插到最前：[2,0,1,3]
+    // ① 通知(页2) 拖到 待办(页0) 上半 → 插到最前：[2,0,1,3,4]
     const c1 = await dragPageRow(2, 0, 'before')
     ok('S10b 悬停目标行上半出现「插到前面」提示类',
       typeof c1 === 'string' && c1.includes('pm-drop-before'), c1)
     let pg = readPrefs()?.pagesCustom?.pages
-    ok('S10c 插入到前面：pages 变为 [2,0,1,3]',
-      JSON.stringify(pg) === JSON.stringify([2, 0, 1, 3]), JSON.stringify(pg))
-    // 反证不是互换：互换会得到 [2,1,0,3]（1 与 0 换位）
+    ok('S10c 插入到前面：pages 变为 [2,0,1,3,4]',
+      JSON.stringify(pg) === JSON.stringify([2, 0, 1, 3, 4]), JSON.stringify(pg))
+    // 反证不是互换：互换会得到 [2,1,0,3,4]（1 与 0 换位）
     ok('S10d 不是互换语义（待办没被顶到通知原位）',
-      JSON.stringify(pg) !== JSON.stringify([2, 1, 0, 3]), JSON.stringify(pg))
+      JSON.stringify(pg) !== JSON.stringify([2, 1, 0, 3, 4]), JSON.stringify(pg))
 
-    // ② 日程(3) 拖到 待办(0) 上半 → [2,0,1,3] 里 0 在下标 1，插到它前面 → [2,3,0,1]
-    await dragPageRow(3, 1, 'before')
+    // ② 音乐(页4) 拖到 待办(页0) 上半 → [2,0,1,3,4] 里 0 在下标 1，插到它前面 → [2,4,0,1,3]
+    //    选跨 3 位的组合：相邻两行调换时插入和互换结果相同，没有判别力
+    await dragPageRow(4, 1, 'before')
     pg = readPrefs()?.pagesCustom?.pages
-    ok('S10e 再拖一次仍是插入：pages 变为 [2,3,0,1]',
-      JSON.stringify(pg) === JSON.stringify([2, 3, 0, 1]), JSON.stringify(pg))
-    // 反证：互换会得到 [2,3,1,0]
+    ok('S10e 再拖一次仍是插入：pages 变为 [2,4,0,1,3]',
+      JSON.stringify(pg) === JSON.stringify([2, 4, 0, 1, 3]), JSON.stringify(pg))
+    // 反证：互换会得到 [2,4,1,3,0]
     ok('S10f 第二次也不是互换（1 与 0 位置未对调）',
-      JSON.stringify(pg) !== JSON.stringify([2, 3, 1, 0]), JSON.stringify(pg))
+      JSON.stringify(pg) !== JSON.stringify([2, 4, 1, 3, 0]), JSON.stringify(pg))
 
-    // ③ 通知(2) 拖到 置物架(1) 下半 → [3,0,1,2]
-    const c2 = await dragPageRow(0, 3, 'after')
+    // ③ 第一行(页2) 拖到 最后一行(页3) 下半 → [4,0,1,3,2]
+    const c2 = await dragPageRow(0, 4, 'after')
     ok('S10g 悬停目标行下半出现「插到后面」提示类',
       typeof c2 === 'string' && c2.includes('pm-drop-after'), c2)
     pg = readPrefs()?.pagesCustom?.pages
-    ok('S10h 插入到后面：pages 变为 [3,0,1,2]',
-      JSON.stringify(pg) === JSON.stringify([3, 0, 1, 2]), JSON.stringify(pg))
-    ok('S10i pages 长度仍为 4 且无重复',
-      Array.isArray(pg) && pg.length === 4 && new Set(pg).size === 4, JSON.stringify(pg))
+    ok('S10h 插入到后面：pages 变为 [4,0,1,3,2]',
+      JSON.stringify(pg) === JSON.stringify([4, 0, 1, 3, 2]), JSON.stringify(pg))
+    // 反证：互换会得到 [3,4,0,1,2]
+    ok('S10i 第三次也不是互换（首尾对调）',
+      JSON.stringify(pg) !== JSON.stringify([3, 4, 0, 1, 2]), JSON.stringify(pg))
+    ok('S10j pages 长度仍为 5 且无重复',
+      Array.isArray(pg) && pg.length === 5 && new Set(pg).size === 5, JSON.stringify(pg))
 
     // ④ 拖到自己身上不变化
     await dragPageRow(1, 1, 'before')
-    ok('S10j 拖到自身不改变 pages',
-      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([3, 0, 1, 2]),
+    ok('S10k 拖到自身不改变 pages',
+      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([4, 0, 1, 3, 2]),
       JSON.stringify(readPrefs()?.pagesCustom?.pages))
 
     // 收尾：重置回默认，别把用户的页面顺序留在测试态
     await settingsEval(`(() => { const r = document.querySelector('.pm-reset'); if (r) r.click(); return 'ok' })()`)
     await sleep(700)
-    ok('S10k 重置回默认 [0,1,2,3]',
-      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([0, 1, 2, 3]),
+    ok('S10l 重置回默认 [0,1,2,3,4]',
+      JSON.stringify(readPrefs()?.pagesCustom?.pages) === JSON.stringify([0, 1, 2, 3, 4]),
       JSON.stringify(readPrefs()?.pagesCustom?.pages))
   }
 
@@ -498,7 +504,7 @@ try {
     const after = readPrefs()
     ok('S12c 全过程组件行峰值仍是 6（观测器覆盖 ' + (frames?.frames ?? '?') + ' 帧，没冒第 7 行）',
       frames?.maxComp === 6, `峰值 ${frames?.maxComp}`)
-    ok('S12d 全过程总行峰值仍是 10（4 页 + 6 组件）', frames?.maxAll === 10, `峰值 ${frames?.maxAll}`)
+    ok('S12d 全过程总行峰值仍是 11（5 页 + 6 组件）', frames?.maxAll === 11, `峰值 ${frames?.maxAll}`)
     ok('S12e order 仍是 6 个合法键，没有混进数字',
       Array.isArray(after?.pagesCustom?.order) &&
         after.pagesCustom.order.length === 6 &&

@@ -54,3 +54,30 @@ export interface AppInfo {
   /** 用户数据目录绝对路径（%APPDATA%\lingdong-island） */
   userData: string
 }
+
+/**
+ * 音乐页要显示的一份播放快照（SPEC-music-page）。
+ * 数据来自 Windows SMTC（系统媒体传输控制），由 `src/main/musicStore.ts` 每秒采一次，
+ * 只有字段真的变了才广播，避免渲染层每秒重渲染。
+ */
+export interface MusicState {
+  /** 有没有可用的媒体会话；false 时其余字段都是空的，音乐页显示空态 */
+  active: boolean
+  /** 歌名（SMTC 的 Title，可能是文件名，播放器给什么就是什么） */
+  title: string
+  /** 歌手；很多本地文件没有标签，会是空串 */
+  artist: string
+  /** 专辑名；同上，可能为空 */
+  album: string
+  /** 当前播放位置（秒）；读不到时是 0 */
+  position: number
+  /** 总时长（秒）；流媒体/直播可能为 0 */
+  duration: number
+  /** 是否正在播放（暂停时为 false） */
+  playing: boolean
+  /** 播放器进程名，例如 `PotPlayerMini64.exe`；用于让用户知道是谁在放 */
+  app: string
+}
+
+/** 音乐控制命令（渲染层 → 主进程 → SMTC） */
+export type MusicCommand = 'toggle' | 'next' | 'prev'

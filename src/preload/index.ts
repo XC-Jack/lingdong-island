@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -124,6 +124,26 @@ const api = {
   },
   prefsSet(payload: PrefsShape): Promise<PrefsShape> {
     return ipcRenderer.invoke('prefs:set', payload)
+  },
+  /**
+   * 音乐页（SPEC-music-page / US-031）：读当前播放快照。
+   * 首次调用会懒启动主进程里的常驻 PowerShell 桥接（约 50MB），
+   * 所以只在渲染层真的要显示音乐页时才调。
+   */
+  musicGet(): Promise<MusicState> {
+    return ipcRenderer.invoke('music:get')
+  },
+  /** 音乐控制：'toggle' 播放/暂停、'next' 下一首、'prev' 上一首。返回是否已把命令发出 */
+  musicControl(cmd: MusicCommand): Promise<boolean> {
+    return ipcRenderer.invoke('music:control', cmd)
+  },
+  /** 播放状态变化推送（主进程每秒采样，字段真的变了才发）。返回取消订阅函数 */
+  onMusicState(cb: (s: MusicState) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, s: MusicState): void => cb(s)
+    ipcRenderer.on('music:state', h)
+    return () => {
+      ipcRenderer.removeListener('music:state', h)
+    }
   },
   /** 待办清单：读 / 增 / 勾选切换 / 删 / 改名，全部返回最新全量列表 */
   todosList(): Promise<Todo[]> {
@@ -326,6 +346,8 @@ export interface PagesCustom {
 export interface PrefsShape {
   pagesCustom?: PagesCustom
   shelfView?: 'lg' | 'md' | 'sm' | 'list'
+  /** 音乐页一次性补入标记（SPEC-music-page）；老用户升级后补过就置 true，不再补第二次 */
+  musicIntro?: boolean
 }
 contextBridge.exposeInMainWorld('island', api)
 

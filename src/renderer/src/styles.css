@@ -2089,3 +2089,143 @@ div.pm-row[draggable='true'] {
 .pm-close:hover {
   background: #8fe58f;
 }
+
+/* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
+
+/* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
+.music-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* 封面占位（不是真封面）：SMTC 缩略图在 PS 5.1 里取不到字节，这里用音符块，
+   播放时轻微呼吸，给「在放」一点活气 */
+.music-cover {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ff8fa3;
+  background: linear-gradient(145deg, rgba(255, 143, 163, 0.22), rgba(255, 143, 163, 0.08));
+  border: 1px solid rgba(255, 143, 163, 0.25);
+}
+.music-cover svg {
+  width: 22px;
+  height: 22px;
+}
+.music-cover.playing {
+  animation: music-breathe 2.6s ease-in-out infinite;
+}
+@keyframes music-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 143, 163, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 143, 163, 0.09); }
+}
+/* 动效偏好：系统设了「减少动画」就停掉呼吸 */
+@media (prefers-reduced-motion: reduce) {
+  .music-cover.playing { animation: none; }
+}
+
+.music-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.music-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f2f3f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.music-artist {
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
+   这样每秒推进走合成层、不触发布局，配合 transition 就是连续的 */
+.music-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+.music-bar {
+  position: relative;
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.12);
+}
+.music-bar-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #ff8fa3, #ff6b8a);
+  transition: transform 960ms linear;
+  will-change: transform;
+}
+.music-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(242, 243, 245, 0.38);
+}
+
+/* 控制条：三个按钮居中。主按钮（播放/暂停）实心、比两侧大一档 */
+.music-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  padding-top: 2px;
+}
+.music-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: rgba(242, 243, 245, 0.75);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+}
+.music-btn:hover:not(:disabled) {
+  color: #f2f3f5;
+  background: rgba(255, 255, 255, 0.13);
+}
+.music-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.music-btn-main {
+  width: 38px;
+  height: 38px;
+  color: #1a0b10;
+  background: #ff8fa3;
+}
+.music-btn-main:hover:not(:disabled) {
+  background: #ffa2b3;
+}
+.music-btn:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Todo, ShelfItem } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand } from '../../shared/types'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -73,10 +73,10 @@ interface PagesCustom {
   order: CollapsedKey[]
 }
 
-/** 默认全开（4 页 + 6 个收起态组件）+ 默认顺序 */
+/** 默认全开（5 页 + 6 个收起态组件）+ 默认顺序 */
 function defaultPagesCustom(): PagesCustom {
   return {
-    pages: [0, 1, 2, 3],
+    pages: [0, 1, 2, 3, 4],
     collapsed: { pet: true, clock: true, battery: true, net: true, todo: true, bell: true },
     order: [...DEFAULT_COLLAPSED_ORDER]
   }
@@ -115,7 +115,7 @@ function normalizePagesCustom(v: unknown): PagesCustom | null {
   const raw = v as Partial<PagesCustom>
   // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
   const pages = Array.isArray(raw.pages)
-    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 4))]
     : []
   if (pages.length === 0) return null
   const collapsed = defaultPagesCustom().collapsed
@@ -210,6 +210,43 @@ const IcoCal = (): React.JSX.Element => (
     <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
     <path d="M3.5 9.5h17M8 3v4M16 3v4" />
   </IconSvg>
+)
+
+/** 音符（音乐页）：实心音符更适合做控制条前缀 */
+const IcoMusic = (): React.JSX.Element => (
+  <IconSvg>
+    <path d="M9 18V6.5l9-2v11" />
+    <circle cx="6.5" cy="18" r="2.5" />
+    <circle cx="15.5" cy="15.5" r="2.5" />
+  </IconSvg>
+)
+
+/** 上一首 / 下一首 / 播放 / 暂停（音乐页控制按钮） */
+const IcoPrev = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor">
+    <rect x="5" y="6" width="2.2" height="12" rx="1" />
+    <path d="M19 6.6v10.8a.8.8 0 0 1-1.24.67l-8.1-5.4a.8.8 0 0 1 0-1.34l8.1-5.4A.8.8 0 0 1 19 6.6z" />
+  </svg>
+)
+
+const IcoNext = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="currentColor">
+    <rect x="16.8" y="6" width="2.2" height="12" rx="1" />
+    <path d="M5 6.6v10.8a.8.8 0 0 0 1.24.67l8.1-5.4a.8.8 0 0 0 0-1.34l-8.1-5.4A.8.8 0 0 0 5 6.6z" />
+  </svg>
+)
+
+const IcoPlay = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+    <path d="M8 5.6v12.8a.9.9 0 0 0 1.38.76l9.6-6.4a.9.9 0 0 0 0-1.52l-9.6-6.4A.9.9 0 0 0 8 5.6z" />
+  </svg>
+)
+
+const IcoPause = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
+    <rect x="7" y="5" width="3.6" height="14" rx="1.2" />
+    <rect x="13.4" y="5" width="3.6" height="14" rx="1.2" />
+  </svg>
 )
 
 /** 文件夹（在文件夹中显示） */
@@ -1718,12 +1755,178 @@ function SchedulePanel(): React.JSX.Element {
   )
 }
 
+/**
+ * 音乐页（SPEC-music-page / US-031）：显示系统正在播放什么 + 播放/上一首/下一首控制。
+ *
+ * 数据来源是 Windows SMTC（系统媒体传输控制），不是任何一家播放器的私有接口，
+ * 所以 PotPlayer、网易云、浏览器里的视频都能用同一套。
+ *
+ * 两个刻意的设计：
+ * 1. 进度条**不**每秒重挂：主进程按整秒比较后才广播，界面收到 position 直接改
+ *    transform: scaleX，靠 CSS transition 补成连续前进，避免一跳一跳。
+ * 2. 播放中才本地插值：主进程每秒给一个采样点，两次采样之间界面自己的
+ *    setInterval 把进度往前推，暂停时立刻停——这样即使主进程慢一拍，进度条也是顺的。
+ */
+function fmtDuration(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '0:00'
+  const s = Math.floor(sec % 60)
+  const m = Math.floor(sec / 60) % 60
+  const h = Math.floor(sec / 3600)
+  const mmss = `${m}:${String(s).padStart(2, '0')}`
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : mmss
+}
+
+function MusicPanel(): React.JSX.Element {
+  const [music, setMusic] = useState<MusicState | null>(null)
+  // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
+  const [live, setLive] = useState(0)
+  const [busy, setBusy] = useState<MusicCommand | null>(null)
+
+  // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
+  useEffect(() => {
+    let alive = true
+    void window.island.musicGet().then((s) => {
+      if (alive) setMusic(s)
+    })
+    const off = window.island.onMusicState((s) => setMusic(s))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  // 每次收到新快照就把插值重置到采样点
+  useEffect(() => {
+    if (music) setLive(music.position)
+  }, [music?.position, music?.title, music?.playing])
+
+  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动
+  useEffect(() => {
+    if (!music || !music.active || !music.playing) return
+    const id = setInterval(() => {
+      setLive((v) => {
+        const next = v + 1
+        return music.duration > 0 ? Math.min(next, music.duration) : next
+      })
+    }, 1000)
+    return () => clearInterval(id)
+  }, [music?.active, music?.playing, music?.duration, music])
+
+  const ctl = useCallback(
+    (cmd: MusicCommand) => {
+      if (busy) return
+      setBusy(cmd)
+      void window.island
+        .musicControl(cmd)
+        .catch(() => false)
+        .finally(() => {
+          // 给播放器 300ms 反应时间再解锁，防连点把播放器按懵
+          setTimeout(() => setBusy(null), 300)
+        })
+    },
+    [busy]
+  )
+
+  const active = music?.active === true
+  const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
+
+  if (!active) {
+    return (
+      <div className="todo-panel">
+        <div className="notify-empty">
+          <div className="notify-empty-inner">
+            <svg viewBox="0 0 24 24" className="notify-empty-icon" aria-hidden="true">
+              <path
+                d="M9 18V6.5l9-2v11"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <circle cx="6.5" cy="18" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="15.5" cy="15.5" r="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+            <span className="shelf-drop-hint">现在没有在放歌</span>
+            <span className="notify-empty-sub">用任意播放器开始播放，这里就会显示</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="todo-panel music-panel">
+      <div className="music-main">
+        {/* 封面占位：SMTC 的缩略图在 PowerShell 5.1 里拿不到字节（已实测三条路全失败），
+            这里用音符块代替，不做假封面 */}
+        <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
+          <IcoMusic />
+        </div>
+        <div className="music-meta">
+          <div className="music-title" title={music?.title || '未知曲目'}>
+            {music?.title || '未知曲目'}
+          </div>
+          <div className="music-artist" title={music?.artist || music?.album || ''}>
+            {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+          </div>
+        </div>
+      </div>
+
+      <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
+        <div className="music-bar">
+          <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+        </div>
+        <div className="music-times">
+          <span className="music-time">{fmtDuration(live)}</span>
+          <span className="music-time">{fmtDuration(music?.duration ?? 0)}</span>
+        </div>
+      </div>
+
+      <div className="music-ctl">
+        <button
+          type="button"
+          className="music-btn"
+          title="上一首"
+          aria-label="上一首"
+          disabled={busy !== null}
+          onClick={() => ctl('prev')}
+        >
+          <IcoPrev />
+        </button>
+        <button
+          type="button"
+          className={`music-btn music-btn-main ${music?.playing ? 'on' : ''}`}
+          title={music?.playing ? '暂停' : '播放'}
+          aria-label={music?.playing ? '暂停' : '播放'}
+          aria-pressed={music?.playing === true}
+          disabled={busy !== null}
+          onClick={() => ctl('toggle')}
+        >
+          {music?.playing ? <IcoPause /> : <IcoPlay />}
+        </button>
+        <button
+          type="button"
+          className="music-btn"
+          title="下一首"
+          aria-label="下一首"
+          disabled={busy !== null}
+          onClick={() => ctl('next')}
+        >
+          <IcoNext />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** 页标签：页头图标组件 + 名称（对照视频里每页左上角的彩色小图标 + 页名）；图标用线性 SVG，不用 emoji */
 const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string }[] = [
   { icon: IcoCheck, label: '待办', accent: '#7dd87d' },
   { icon: IcoShelf, label: '置物架', accent: '#ffb74d' },
   { icon: IcoBell, label: '通知', accent: '#9f8bff' },
   { icon: IcoCal, label: '日程', accent: '#64b5f6' },
+  { icon: IcoMusic, label: '音乐', accent: '#ff8fa3' },
 ]
 
 export default function App(): React.JSX.Element {
@@ -2444,8 +2647,10 @@ export default function App(): React.JSX.Element {
                   <ShelfPanel />
                 ) : page === 2 ? (
                   <NotifyPanel onUnread={onNotifyUnread} refreshTick={notifyRefreshTick} />
-                ) : (
+                ) : page === 3 ? (
                   <SchedulePanel />
+                ) : (
+                  <MusicPanel />
                 )}
               </div>
             </div>
