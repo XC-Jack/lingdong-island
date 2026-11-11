@@ -334,6 +334,20 @@ const main = async () => {
       const num = cell.querySelector('.cal-num')
       const mark = cell.querySelector('.cal-mark')
       const markCs = mark ? getComputedStyle(mark) : null
+      const todayMark = cell.querySelector('.cal-mark')
+      const todayMarkCs = todayMark ? getComputedStyle(todayMark) : null
+      // 颜色解析：这段 JS 是塞进模板字符串再传给页面的，反斜杠会被吃掉，
+      // 所以一律用字符类取数字，不要写转义括号。
+      const nums = (s) => (s.match(/[0-9.]+/g) || []).map(Number)
+      const near3 = (p, r, g, b, tol) => Math.abs(p[0] - r) <= tol && Math.abs(p[1] - g) <= tol && Math.abs(p[2] - b) <= tol
+      // 描边：box-shadow 里应有蓝色（2026-11-11 第二轮改成描边态，不再用底色）
+      const ringNums = nums(cs.boxShadow || '')
+      const hasBlueRing = ringNums.length >= 3 && !near3(ringNums, 242, 243, 245, 12) && (ringNums[0] - 100) ** 2 + (ringNums[1] - 181) ** 2 + (ringNums[2] - 246) ** 2 < 9000
+      // 打开日程页默认选中今天：此时形态 = 蓝实心底 + 一圈白描边（区分「今天」与「我点的某天」）。
+      const isSelected = cell.classList.contains('selected')
+      const bgNums = nums(cs.backgroundColor || '')
+      const isBlueBg = bgNums.length >= 3 && (bgNums[0] - 100) ** 2 + (bgNums[1] - 181) ** 2 + (bgNums[2] - 246) ** 2 < 9000
+      const todayRingOk = isSelected ? isBlueBg : hasBlueRing
       // 对称性：所有可见格子的高度必须一致（用户 2026-11-11 反馈「今天那行被撑高」）
       const heights = cells.map((b) => Math.round(b.getBoundingClientRect().height))
       const minH = Math.min(...heights)
@@ -345,6 +359,10 @@ const main = async () => {
         today: cell.classList.contains('today'),
         selected: cell.classList.contains('selected'),
         bg: cs.backgroundColor,
+        ringColor: cs.boxShadow,
+        hasBlueRing,
+        todayRingOk,
+        todayMarkColor: todayMarkCs ? todayMarkCs.backgroundColor : 'none',
         tagCount: cell.querySelectorAll('.cal-tag, .cal-tags, .cal-more').length,
         markCount: cell.querySelectorAll('.cal-mark').length,
         markVisible: !!(mark && markCs && markCs.display !== 'none' && parseFloat(markCs.width) > 0),
@@ -358,14 +376,27 @@ const main = async () => {
     })()`)
     const cv = JSON.parse(cstat)
     ok('C1 今天的格子能找到且带 .today', cv.found && cv.today === true, `found=${cv.found}`)
-    ok('C2 今天实心高亮（背景不透明度 ≥ 0.8，不再是 0.22 淡蓝）', (() => {
+    // 2026-11-11 第二轮反馈：白底黑点太丑 → 今天改成「蓝描边 + 蓝字」。
+    // 注意打开日程页默认就选中今天，此时命中 .cal-day.selected（蓝实心、深色点），
+    // 所以要把「今天且选中」与「今天未选中」两种情况分开判。
+    ok('C2 今天不再用白底（白底是用户 2026-11-11 明确否掉的样式）', (() => {
       if (!cv.found) return false
-      const mm = cv.bg.match(/rgba?\(([^)]+)\)/)
-      if (!mm) return false
-      const parts = mm[1].split(',').map((s) => Number(s.trim()))
-      const a = parts.length > 3 ? parts[3] : 1
-      return a >= 0.8
-    })(), `bg=${cv.bg}`)
+      const p = (cv.bg.match(/[0-9.]+/g) || []).map(Number)
+      if (p.length < 3) return false
+      const near = (x, y) => Math.abs(x - y) <= 12
+      const isWhiteBg = near(p[0], 242) && near(p[1], 243) && near(p[2], 245) && (p.length < 4 || p[3] > 0.5)
+      return !isWhiteBg
+    })(), `bg=${cv.bg} selected=${cv.selected}`)
+    ok('C2b 未选中时今天靠蓝描边标识 / 选中时是蓝底，绝不再是白底', cv.todayRingOk === true, `ring=${cv.ringColor} selected=${cv.selected}`)
+    ok('C2c 今天的点点与底色反色（选中蓝底→浅点；未选中深底→亮蓝点）', (() => {
+      if (!cv.found) return false
+      const p = (cv.todayMarkColor.match(/[0-9.]+/g) || []).map(Number)
+      if (p.length < 3) return false
+      const near = (x, y, tol = 16) => Math.abs(x - y) <= tol
+      // 用户 2026-11-11 明确否掉黑点，选中态也换成浅点 #f2f3f5
+      if (cv.selected) return near(p[0], 242) && near(p[1], 243) && near(p[2], 245)
+      return near(p[0], 143, 20) && near(p[1], 201, 20) && near(p[2], 251, 20) // #8fc9fb 亮蓝
+    })(), `markColor=${cv.todayMarkColor} selected=${cv.selected}`)
     ok('C3 格内不再有日程标签（用户要求改回只用一个点）', cv.tagCount === 0, `tags=${cv.tagCount}`)
     ok('C4 有安排的日子该格有一个可见的蓝点', cv.markCount === 1 && cv.markVisible === true, `mark=${cv.markCount} visible=${cv.markVisible}`)
     ok('C5 其它有安排的日子同样有点', cv.otherMarked === true, `otherMarked=${cv.otherMarked}`)

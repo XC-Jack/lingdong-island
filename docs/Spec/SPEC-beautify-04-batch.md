@@ -97,6 +97,13 @@
 | 2026-11-11 | 「打开」按钮可见性返工 | 第一版 `opacity:0` 只在 hover 显现，截图自检发现根本找不到按钮 → 改 `opacity:0.5` 常显、hover/focus 变 1，重截图确认 | — |
 | 2026-11-11 | 日历「今天+选中」叠加样式补做 | 默认选中的就是今天，两者样式完全相同会看不出今天在哪 → 新增 `.cal-day.today.selected` 内描边 | — |
 
+| 2026-11-11 | 用户第二轮实机反馈：「白色背景和黑点，太丑了，换一个；还有就是刚刚有通知，通知栏没有反应」 | ①`.cal-day.today` 改蓝描边 + 蓝字（不再白底）、`.cal-day.selected .cal-mark` 由黑点改浅点；②`onNotifyArrived` 补未读数重拉（见第八节第二条） | — |
+| 2026-11-11 | 写探针 `.tmp/probe-notify-offpage.mjs` 复现「来通知岛没反应」 | 复现成功：展开停在待办页注入 toast，主进程 unread 9→10，铃铛 aria-label 一直「9 条未读通知」6 秒不变 —— 根因是 `NotifyPanel` 只在展开且停在通知页时挂载，卸载后没人更新 `notifyUnread` | — |
+| 2026-11-11 | 修完后 `npm run typecheck` / `npm run build` | EXIT=0 / EXIT=0（`index-C7RjkAr8.js 105.12 kB`、`index-FLQr4AX-.css 54.22 kB`） | — |
+| 2026-11-11 | 修完后 `node .tmp/probe-notify-fixed.mjs` | **PASS 3 过 / 0 败**：P1 铃铛「10 条未读通知」→「11 条」、P2 界面与主进程一致（11=11）、P3 停在通知页来通知列表顶部自动出现（不用退出重进） | — |
+| 2026-11-11 | 修完后 `node scripts/e2e-beautify-04.mjs`（C2 段重写为 C2/C2b/C2c） | **PASS 27 过 / 0 败 / 0 跳过**：C2 `bg=rgb(100,181,246)` 不再是白底、C2b `ring=rgba(242,243,245,0.9) 0 0 0 1.5px inset`、C2c `markColor=rgb(242,243,245)`、C6 `min=24 max=24` | 真实鼠标手感 |
+| 2026-11-11 | 修完后回归 `e2e-schedule-day` / `e2e-schedule-crossmonth` / `e2e-schedule-scroll` / `e2e-todo-today` / `e2e-notify-compact` / `e2e-notify-live` | 全过（PASS / 8 过 0 败 / 6 过 0 败 / PASS / 2 过 0 败 / 1 过 0 败）。**注意：必须先杀掉预览版 electron 再跑**，否则互相干扰（首轮 `e2e-todo-today` 报「A1 没进到待办页，标题 = 通知」、schedule 三个脚本 0 过全败） | — |
+
 ## 八、验收记录
 
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |

@@ -2074,6 +2074,13 @@ export default function App(): React.JSX.Element {
   const [notifyRefreshTick, setNotifyRefreshTick] = useState(0)
   useEffect(() => {
     window.island.onNotifyArrived((item: NotifyItem) => {
+      // 未读数只能从这里来：NotifyPanel 只在展开态且停在通知页时挂载，
+      // 它卸载后没人更新 notifyUnread，铃铛数字会一直停在旧值
+      // （2026-11-11 用户实测「来通知了岛没反应」就是这条）。所以每条到达都主动重拉一次。
+      void window.island
+        .notifyList()
+        .then((r: NotifyListResult) => setNotifyUnread(r.unread))
+        .catch(() => {})
       if (expandedRef.current) {
         // 展开期间累计条数：补弹时一次性显示总数
         if (pendingBanner.current === null) pendingBanner.current = { item, count: 1 }
