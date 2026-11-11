@@ -13,7 +13,8 @@
  * S9 自启状态双向同步（设置窗口 ↔ 岛，不重启）
  * S10 页面区拖拽是「插入」不是「互换」（2026-11-11 用户修正）
  * S11 导出数据入口在设置窗口「常规」分区，IPC 通道存活
- * S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）
+ * S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）；
+ *     提示线在 dragover→drop 之间采样、行数用 rAF 帧序列取峰值（复验指出单点采样恒真）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
  */
@@ -429,6 +430,9 @@ try {
   }
 
   // ========== S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）==========
+  // 采样要点（复验指出第一版 S12 恒真，已按此改写）：
+  // ① 提示线必须在 dragover 之后、drop 之前采样 —— onDragEnd 会立刻清掉它，事后再查必然为 0；
+  // ② 第 7 行只活约 3ms，单点采样必然读到 6，必须用 MutationObserver + rAF 取整段帧序列的最大值。
   {
     await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('页面管理')); if (b) b.click(); return 'ok' })()`)
     await sleep(600)
@@ -440,8 +444,22 @@ try {
       cmpBefore === 6 && Array.isArray(before?.pagesCustom?.order) && before.pagesCustom.order.length === 6,
       `行 ${cmpBefore} / order ${JSON.stringify(before?.pagesCustom?.order)}`)
 
-    // 抓页面区第 0 行，拖到组件区第 0 行上松手（真实用户手滑会这么干）
-    await settingsEval(`(() => {
+    // 装观测器 + 派发 dragstart → dragover，返回「dragover 之后」的提示线数量（此刻还没 drop）
+    // 行数用 MutationObserver 的同步回调记录 —— 第 7 行只活约 3ms，纯 rAF 采样（约 16.7ms 一帧）会漏。
+    const hintAtHover = await settingsEval(`(() => {
+      const snap = () => {
+        const comp = document.querySelectorAll('.pm-row[data-comp]').length
+        const all = document.querySelectorAll('.pm-row').length
+        if (comp > window.__s12.maxComp) window.__s12.maxComp = comp
+        if (all > window.__s12.maxAll) window.__s12.maxAll = all
+        window.__s12.frames++
+      }
+      window.__s12 = { maxComp: 0, maxAll: 0, frames: 0, running: true }
+      window.__s12.mo = new MutationObserver(() => { if (window.__s12.running) snap() })
+      window.__s12.mo.observe(document.querySelector('.pm-panel'), { childList: true, subtree: true, attributes: true, characterData: true })
+      const tick = () => { if (!window.__s12.running) return; snap(); requestAnimationFrame(tick) }
+      requestAnimationFrame(tick)
+
       const pageRows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
       const compRows = Array.from(document.querySelectorAll('.pm-row[data-comp]'))
       const from = pageRows[0]
@@ -450,28 +468,47 @@ try {
       window.__e2eDt3 = new DataTransfer()
       from.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3 }))
       const b = to.getBoundingClientRect()
-      to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: b.top + b.height * 0.25 }))
-      to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: b.top + b.height * 0.25 }))
+      window.__e2eY3 = b.top + b.height * 0.25
+      to.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: window.__e2eY3 }))
+      return 'ok'
+    })()`)
+    await sleep(350) // 让 React 提交 dragover 引起的状态更新，同时观测器持续采样
+    const hoverHints = await settingsEval(`document.querySelectorAll('.pm-drop-before,.pm-drop-after').length`)
+    ok('S12b 跨区悬停时不亮落点提示线（dragover→drop 之间采样）',
+      hintAtHover === 'ok' && hoverHints === 0, `dragover ${hintAtHover} / 提示线 ${hoverHints}`)
+
+    // 继续 drop + dragend，然后收观测器
+    await settingsEval(`(() => {
+      const pageRows = Array.from(document.querySelectorAll('.pm-row')).filter(r => !r.hasAttribute('data-comp'))
+      const compRows = Array.from(document.querySelectorAll('.pm-row[data-comp]'))
+      const from = pageRows[0]
+      const to = compRows[0]
+      if (!from || !to) return 'missing-row'
+      to.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3, clientY: window.__e2eY3 }))
       from.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: window.__e2eDt3 }))
       return 'ok'
     })()`)
-    await sleep(900)
+    await sleep(700)
+    const frames = await settingsEval(`(() => {
+      window.__s12.running = false
+      if (window.__s12.mo) window.__s12.mo.disconnect()
+      return { maxComp: window.__s12.maxComp, maxAll: window.__s12.maxAll, frames: window.__s12.frames }
+    })()`)
 
     const after = readPrefs()
-    const cmpAfter = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
-    const totalRows = await settingsEval(`document.querySelectorAll('.pm-row').length`)
-    ok('S12b 落下后组件行仍是 6 行（不冒出第 7 行）', cmpAfter === 6, `实际 ${cmpAfter}`)
-    ok('S12c 页面上总行数仍是 10 行（4 页 + 6 组件）', totalRows === 10, `实际 ${totalRows}`)
-    ok('S12d order 仍是 6 个合法键，没有混进数字',
+    ok('S12c 全过程组件行峰值仍是 6（观测器覆盖 ' + (frames?.frames ?? '?') + ' 帧，没冒第 7 行）',
+      frames?.maxComp === 6, `峰值 ${frames?.maxComp}`)
+    ok('S12d 全过程总行峰值仍是 10（4 页 + 6 组件）', frames?.maxAll === 10, `峰值 ${frames?.maxAll}`)
+    ok('S12e order 仍是 6 个合法键，没有混进数字',
       Array.isArray(after?.pagesCustom?.order) &&
         after.pagesCustom.order.length === 6 &&
         after.pagesCustom.order.every((k) => typeof k === 'string'),
       JSON.stringify(after?.pagesCustom?.order))
-    ok('S12e 页面顺序未被跨区拖拽改动',
+    ok('S12f 页面顺序未被跨区拖拽改动',
       JSON.stringify(after?.pagesCustom?.pages) === JSON.stringify(before?.pagesCustom?.pages),
       `前 ${JSON.stringify(before?.pagesCustom?.pages)} → 后 ${JSON.stringify(after?.pagesCustom?.pages)}`)
-    ok('S12f 不亮落点提示线（跨区不该提示）',
-      (await settingsEval(`document.querySelectorAll('.pm-drop-before,.pm-drop-after').length`)) === 0)
+    ok('S12g 观测器确实在采样（帧数 > 0，防「观测器没跑导致恒真」）',
+      typeof frames?.frames === 'number' && frames.frames > 0, `帧数 ${frames?.frames}`)
   }
 
   // ========== S6 关闭设置窗口不影响岛 ==========
