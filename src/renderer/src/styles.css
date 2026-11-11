@@ -549,15 +549,47 @@ body {
   color: rgba(242, 243, 245, 0.92);
 }
 
-/* 待办完成度（自启开关正下方一行，仅 0/0 纯数字——用户 m02643）：
+/* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。
    绝对定位挂头部右下，不参与 flex 流（width:100% 参流会把标题挤竖排） */
 .todo-stat {
   position: absolute;
   right: 2px;
   top: 100%;
   margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   line-height: 1;
+}
+
+/* 完成度圆环（美化-04）：底环常驻，前景环按完成比例画，顺时针从头开始。
+   24×24 的 viewBox、r=9，正好塞进头部右下那一行。 */
+.todo-ring {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  transform: rotate(-90deg); /* stroke 起点在 3 点钟方向，转 90° 到 12 点 */
+}
+
+.todo-ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 3;
+}
+
+.todo-ring-fg {
+  fill: none;
+  stroke: #7dd87d;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 全部做完：环变绿到底并带一点光晕（与待办勾选同色系） */
+.todo-ring-fg.full {
+  stroke: #7dd87d;
+  filter: drop-shadow(0 0 3px rgba(125, 216, 125, 0.5));
 }
 
 .todo-count {
@@ -730,6 +762,60 @@ body {
   color: rgba(242, 243, 245, 0.35);
   text-align: center;
   padding: 18px 0;
+}
+
+/* ===== 美化-04：待办页底部完成度进度条 =====
+   细轨 + 圆头填充 + 百分比。填充用 transform: scaleX 而不是改 width——
+   浏览器可以直接合成，不会触发重排，切页时也不抖。 */
+.todo-progress {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+
+.todo-progress-bar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.todo-progress-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #7dd87d, #9ee79e);
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* 全部完成：填充变成实心绿并带一点外侧光晕 */
+.todo-progress-fill.full {
+  background: #7dd87d;
+  box-shadow: 0 0 6px rgba(125, 216, 125, 0.45);
+}
+
+.todo-progress-text {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: rgba(242, 243, 245, 0.4);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-progress-text b {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(242, 243, 245, 0.72);
 }
 
 .todo-item {
@@ -1525,15 +1611,24 @@ body {
   border-radius: 8px;
   cursor: pointer;
   line-height: 1;
+  /* 美化-04 回退（2026-11-11 用户实机反馈）：格子里只放日期数字，保持每行等高对称。
+     曾经做成纵向 flex 塞当天安排的小标签，结果有安排的那行被撑高、整行错位。 */
+  display: block;
+  text-align: center;
+  min-height: 24px;
 }
 
 .cal-day:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* 今天：一圈亮蓝描边 + 蓝字（不用实心底色）。
+   2026-11-11 第二轮实机反馈：第一版是白底 + 黑点，用户原话「白色背景和黑点，太丑了」——
+   白块在纯黑岛上太跳。改成只在格子上描一圈蓝边，与整体深色调一致。
+   与「选中日」（蓝实心）仍能区分：今天是描边空心，选中是实心填充。 */
 .cal-day.today {
-  background: rgba(100, 181, 246, 0.22);
-  color: #aed6ff;
+  box-shadow: inset 0 0 0 1.5px #64b5f6;
+  color: #8fc9fb;
   font-weight: 700;
 }
 
@@ -1543,7 +1638,16 @@ body {
   font-weight: 700;
 }
 
-/* 有安排的日子：底部蓝点 */
+/* 今天同时被选中（默认就是这个状态：打开日程页默认选今天）：
+   底色是选中的蓝，但加一圈白描边，让「这是今天」和「这是我点的某一天」区分开。
+   没有这一条时，用户把选中移到别的日子就再也看不出今天在哪。 */
+.cal-day.today.selected {
+  box-shadow: inset 0 0 0 1.5px rgba(242, 243, 245, 0.9);
+}
+
+/* 有安排的日子：底部蓝点（唯一的标记方式）。
+   美化-04 曾把格内塞满小标签，2026-11-11 用户实机反馈后改回「只标一个点」，
+   之前那条 `.cal-day.has-tag .cal-mark { display: none }` 一并删除。 */
 .cal-mark {
   position: absolute;
   left: 50%;
@@ -1555,8 +1659,16 @@ body {
   background: #64b5f6;
 }
 
+/* 今天的格子是深底蓝字，点也用亮蓝才看得见（原来这里是黑点，配白底才成立）。 */
+.cal-day.today .cal-mark {
+  background: #8fc9fb;
+}
+
+/* 选中日是蓝实心底，点必须是浅色才可见——不用黑色（用户 2026-11-11 明确说
+   「白色背景和黑点，太丑了」）。这条放在最后，优先级最高
+   （打开日程页默认就选中今天，两者会同时命中）。 */
 .cal-day.selected .cal-mark {
-  background: #0b0e14;
+  background: #f2f3f5;
 }
 
 /* 待办徽标（日程页混排里的待办项） */
@@ -1890,6 +2002,26 @@ body {
   flex-direction: row;
   align-items: flex-start;
   gap: 7px;
+}
+
+/* ===== 美化-04：通知条目右侧（时间 + 未读蓝点）=====
+   条目是 flex 行：正文按钮 flex:1，右侧这一列 flex:none，永远贴在条目右缘。
+   2026-11-11 用户实机反馈：去掉原来的「打开」按钮（点了没效果），
+   蓝点从时间左边挪到时间右边 —— 蓝点成为整行最右端的标记。 */
+.notify-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 未读小蓝点：放在时间右边，也就是整条通知的最右端 */
+.notify-unread {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64b5f6;
+  box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.16);
 }
 
 .shelf-actions {
