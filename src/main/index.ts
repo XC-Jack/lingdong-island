@@ -9,6 +9,7 @@ import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
+import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
@@ -55,12 +56,13 @@ function quitApp(): void {
   app.quit()
 }
 
-/** 岛内右键 / 托盘右键共用的菜单。导出数据（US-029）+ 页面管理（US-032）+ 手动隐藏（US-041）+ 退出 */
+/** 岛内右键 / 托盘右键共用的菜单。设置（SPEC-settings-shell）+ 导出数据（US-029）+ 手动隐藏（US-041）+ 退出 */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
   const hiddenByUser = manualHide
   return Menu.buildFromTemplate([
-    { label: '页面管理…', click: () => openPageManager() },
+    { label: '设置…', click: () => openSettings('general') },
+    { label: '页面管理…', click: () => openSettings('pages') },
     { label: '导出数据…', click: () => void exportData() },
     { type: 'separator' },
     hiddenByUser
@@ -69,11 +71,6 @@ function buildAppMenu(): Menu {
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
-}
-
-/** 右键/托盘菜单的页面管理入口（US-032）：让渲染层展开岛并切到页面管理面板 */
-function openPageManager(): void {
-  mainWindow?.webContents.send('island:manage-pages')
 }
 
 /** 右键/托盘菜单的导出入口（US-029）：转发给 exportStore 注册的 IPC 通道 */
@@ -245,6 +242,7 @@ app.whenReady().then(() => {
   setupScheduleStore()
   setupExportStore()
   setupPrefsStore()
+  setupSettingsWindow()
   initClipboardWatch()
   createWindow()
   createTray()
@@ -268,6 +266,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  // 设置窗口是独立窗口（SPEC-settings-shell）：关掉它不能等于退出应用。
+  // 岛上窗口（mainWindow）还在时不算「全部窗口关闭」；这里额外兜一层，
+  // 用户手动关掉设置窗后岛仍然活着的正常路径不会走到这。
   stopStatus()
   stopNotifyStore()
   stopScheduleStore()

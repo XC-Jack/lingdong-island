@@ -1,0 +1,252 @@
+#!/usr/bin/env node
+/**
+ * e2e SPEC-settings-shell：带左导航的独立设置窗口
+ *
+ * S1 设置窗口能打开：调 window.island.openSettings('pages') 后 CDP 里出现 url 含 settings.html 的 target
+ * S2 左导航三项齐全（常规/页面管理/专注·喝水），openSettings('pages') 落在「页面管理」
+ * S3 常规页：版本号非空、数据目录路径是 userData、自启开关在场
+ * S4 页面管理页：页面区 4 行 + 收起态组件区 6 行
+ * S5 设置窗口改偏好 → 岛立刻同步（取消铃铛勾选后收起态不再渲染，勾回恢复）
+ * S6 关闭设置窗口不影响岛（岛 target 仍在，收起态仍有胶囊）
+ * S7 岛里不再有第 5 页：翻页圆点只有 4 个
+ * S8 重复 openSettings 不会叠出多个设置窗口
+ *
+ * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
+ */
+import { spawn, execSync } from './isolate-userdata.mjs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+const ROOT = process.cwd()
+const ELECTRON = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
+const CDP_PORT = 9321
+const INSPECT_PORT = 9229
+const USER_DATA = join(process.env.APPDATA, 'lingdong-island')
+const PREFS = join(USER_DATA, 'prefs.json')
+const NOTIF_READ = join(USER_DATA, 'notif-read.json')
+
+const DEFAULT_ORDER = ['battery', 'pet', 'clock', 'net', 'todo', 'bell']
+
+let passed = 0
+let failed = 0
+const ok = (name, cond, extra = '') => {
+  if (cond) { passed++; console.log(`  ✓ ${name}`) }
+  else { failed++; console.log(`  ✗ ${name}${extra ? ' —— ' + extra : ''}`) }
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+const IS_SETTINGS = (t) => (t.url ?? '').includes('settings.html')
+
+async function listTargets() {
+  return (await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()).filter((t) => t.type === 'page')
+}
+
+/** 在岛（wantSettings=false）或设置窗口（true）上求值 */
+async function evalOnTarget(expr, wantSettings) {
+  for (let i = 0; i < 40; i++) {
+    try {
+      const pages = await listTargets()
+      const page = pages.find((t) => IS_SETTINGS(t) === wantSettings)
+      if (!page) throw new Error(wantSettings ? 'no settings target' : 'no page target')
+      const ws = new WebSocket(page.webSocketDebuggerUrl)
+      const r = await new Promise((res, rej) => {
+        const timer = setTimeout(() => rej(new Error('cdp timeout')), 15000)
+        ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, returnByValue: true, awaitPromise: true, includeCommandLineAPI: true } }))
+        ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id === 1) { clearTimeout(timer); ws.close(); res(m.result) } }
+        ws.onerror = rej
+      })
+      if (r?.exceptionDetails) throw new Error('eval 异常：' + (r.exceptionDetails.exception?.description ?? r.exceptionDetails.text))
+      return r?.result?.value
+    } catch (e) {
+      if (i === 39) throw e
+    }
+    await sleep(500)
+  }
+}
+const islandEval = (expr) => evalOnTarget(expr, false)
+const settingsEval = (expr) => evalOnTarget(expr, true)
+
+function killApp() {
+  try { execSync('taskkill /IM electron.exe /T /F', { stdio: 'ignore' }) } catch { /* 无进程 */ }
+}
+
+async function startApp() {
+  const env = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
+  const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${CDP_PORT}`, `--inspect=${INSPECT_PORT}`], {
+    cwd: ROOT,
+    env,
+    stdio: 'ignore'
+  })
+  await sleep(3500)
+  return child
+}
+
+async function stopApp(child) {
+  try { child.kill('SIGKILL') } catch { /* 已退 */ }
+  killApp()
+  await sleep(1200)
+}
+
+function writePrefs(order, collapsedOverride = {}) {
+  writeFileSync(PREFS, JSON.stringify({
+    pagesCustom: {
+      pages: [0, 1, 2, 3],
+      collapsed: { pet: true, clock: true, battery: true, net: true, todo: true, bell: true, ...collapsedOverride },
+      order
+    }
+  }, null, 2), 'utf8')
+}
+const readPrefs = () => JSON.parse(readFileSync(PREFS, 'utf8'))
+
+/** 打开设置窗口并等到它加载完 */
+async function openSettings(section) {
+  await islandEval(`(window.island.openSettings('${section}'), 'ok')`)
+  await sleep(1800)
+}
+async function closeSettings() {
+  await settingsEval(`(window.island.closeSettings(), 'ok')`)
+  await sleep(1200)
+}
+
+let child = null
+const prefsBackup = existsSync(PREFS) ? readFileSync(PREFS, 'utf8') : null
+const notifBackup = existsSync(NOTIF_READ) ? readFileSync(NOTIF_READ, 'utf8') : null
+
+try {
+  mkdirSync(USER_DATA, { recursive: true })
+
+  killApp(); await sleep(800)
+  writePrefs(DEFAULT_ORDER)
+  // 造未读：lastOrder 与 hiddenUntil 同时清零，铃铛才可观测
+  if (notifBackup !== null) {
+    const w = JSON.parse(notifBackup)
+    w.lastOrder = 0
+    w.hiddenUntil = 0
+    writeFileSync(NOTIF_READ, JSON.stringify(w), 'utf8')
+  }
+  child = await startApp()
+
+  // ========== S1 设置窗口能打开 ==========
+  {
+    const before = await listTargets()
+    ok('S1a 启动时只有岛一个 page target', before.length === 1 && !before.some(IS_SETTINGS),
+      JSON.stringify(before.map((t) => t.url)))
+
+    await openSettings('pages')
+    const after = await listTargets()
+    ok('S1b 打开后出现 settings.html target',
+      after.some((t) => IS_SETTINGS(t)),
+      JSON.stringify(after.map((t) => t.url)))
+  }
+
+  // ========== S2 左导航 ==========
+  {
+    const nav = await settingsEval(`Array.from(document.querySelectorAll('.set-nav-item')).map(e => e.textContent.trim())`)
+    ok('S2a 左导航三项齐全', Array.isArray(nav) && nav.length === 3 &&
+      nav.some((s) => s.includes('常规')) && nav.some((s) => s.includes('页面管理')) && nav.some((s) => s.includes('专注')),
+      JSON.stringify(nav))
+
+    // openSettings('pages') 落点：页面管理分区可见（4 行页面 + 6 行组件）
+    const rows = await settingsEval(`document.querySelectorAll('.pm-row').length`)
+    ok('S2b openSettings("pages") 直接落在页面管理分区', rows === 10, `实际 .pm-row 共 ${rows} 行`)
+  }
+
+  // ========== S3 常规页 ==========
+  {
+    // 点左导航「常规」
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('常规')); if (!b) return 'no-nav'; b.click(); return 'ok' })()`)
+    await sleep(600)
+    const general = await settingsEval(`(() => {
+      const txt = document.body.innerText
+      return JSON.stringify({
+        hasAuto: !!document.querySelector('.set-switch'),
+        hasVerRow: txt.includes('版本'),
+        ver: (txt.match(/\\d+\\.\\d+\\.\\d+/) ?? [null])[0],
+        hasDataRow: txt.includes('数据文件夹') || txt.includes('数据目录'),
+        pmRows: document.querySelectorAll('.pm-row').length
+      })
+    })()`)
+    const g = JSON.parse(general)
+    ok('S3a 常规页有自启开关', g.hasAuto === true, general)
+    ok('S3b 常规页显示版本号（x.y.z）', typeof g.ver === 'string' && /^\d+\.\d+\.\d+$/.test(g.ver), general)
+    ok('S3c 常规页有数据文件夹入口', g.hasDataRow === true, general)
+    ok('S3d 切到常规后页面管理行不在 DOM 里', g.pmRows === 0, `实际 ${g.pmRows}`)
+  }
+
+  // ========== S4 页面管理分区结构 ==========
+  {
+    await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('页面管理')); if (!b) return 'no-nav'; b.click(); return 'ok' })()`)
+    await sleep(600)
+    const pageRows = await settingsEval(`document.querySelectorAll('.pm-panel > .pm-row, .pm-panel div.pm-row').length`)
+    const compRows = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
+    ok('S4a 页面区 4 行', pageRows - compRows === 4, `总行 ${pageRows} 组件行 ${compRows}`)
+    ok('S4b 收起态组件区 6 行', compRows === 6, `实际 ${compRows}`)
+    const labels = await settingsEval(`Array.from(document.querySelectorAll('.pm-row[data-comp] .pm-name')).map(e => e.textContent).join(',')`)
+    ok('S4c 组件行文案含「通知铃铛」', labels.includes('通知铃铛'), labels)
+    const hasReset = await settingsEval(`!!document.querySelector('.pm-reset')`)
+    ok('S4d 有「重置为默认」按钮', hasReset === true)
+    const hasNoClose = await settingsEval(`document.querySelectorAll('.pm-close').length`)
+    ok('S4e 页面管理里不再有「完成并收起」', hasNoClose === 0, `实际 ${hasNoClose}`)
+  }
+
+  // ========== S5 设置窗口改偏好 → 岛同步 ==========
+  {
+    const bellBefore = await islandEval(`document.querySelector('.collapsed-bell') ? 1 : 0`)
+    ok('S5a 初始未读在，收起态有铃铛', bellBefore === 1, '本机通知库为空时此项会失败')
+
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await sleep(900)
+    ok('S5b 取消勾选铃铛写进 prefs.json', readPrefs()?.pagesCustom?.collapsed?.bell === false,
+      JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
+    const bellOff = await islandEval(`document.querySelector('.collapsed-bell') ? 1 : 0`)
+    ok('S5c 岛当场跟着变（prefs:changed 广播生效，未重启）', bellOff === 0, `实际 ${bellOff}`)
+
+    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="bell"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
+    await sleep(900)
+    const bellBack = await islandEval(`document.querySelector('.collapsed-bell') ? 1 : 0`)
+    ok('S5d 勾回后岛当场恢复', bellBack === 1, `实际 ${bellBack}`)
+  }
+
+  // ========== S7 岛里没有第 5 页 ==========
+  {
+    await islandEval(`(() => { const el = document.querySelector('.island'); if (el && !el.className.includes('expanded')) el.click(); return 'ok' })()`)
+    await sleep(900)
+    const dots = await islandEval(`document.querySelectorAll('.dots .dot').length`)
+    ok('S7 翻页圆点只有 4 个（页面管理页已摘除）', dots === 4, `实际 ${dots}`)
+    const hasPm = await islandEval(`document.querySelectorAll('.pm-row').length`)
+    ok('S7b 岛 DOM 里没有 .pm-row（面板已搬走）', hasPm === 0, `实际 ${hasPm}`)
+    await islandEval(`(() => { const el = document.querySelector('.island'); if (el && el.className.includes('expanded')) el.click(); return 'ok' })()`)
+    await sleep(700)
+  }
+
+  // ========== S6 关闭设置窗口不影响岛 ==========
+  {
+    await closeSettings()
+    const after = await listTargets()
+    ok('S6a 关闭后 settings.html target 消失', !after.some(IS_SETTINGS), JSON.stringify(after.map((t) => t.url)))
+    const alive = await islandEval(`document.querySelector('.island') ? 1 : 0`)
+    ok('S6b 岛仍然存活（关设置窗 ≠ 退出应用）', alive === 1, `实际 ${alive}`)
+  }
+
+  // ========== S8 重复打开不叠窗口 ==========
+  {
+    await openSettings('general')
+    await openSettings('pages')
+    const all = await listTargets()
+    const settingsCount = all.filter(IS_SETTINGS).length
+    ok('S8a 连续打开两次只有一个设置窗口', settingsCount === 1, `实际 ${settingsCount}`)
+    const rows = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
+    ok('S8b 第二次打开把分区切到页面管理', rows === 6, `实际组件行 ${rows}`)
+  }
+} catch (e) {
+  failed++
+  console.log('  ✗ 异常：' + (e?.stack ?? e?.message ?? e))
+} finally {
+  killApp()
+  if (prefsBackup !== null) writeFileSync(PREFS, prefsBackup, 'utf8')
+  if (notifBackup !== null) writeFileSync(NOTIF_READ, notifBackup, 'utf8')
+}
+
+console.log(`\nE2E SETTINGS-SHELL: ${failed > 0 ? 'FAIL' : 'PASS'}（${passed} 过 / ${failed} 败）`)
+process.exit(failed > 0 ? 1 : 0)
