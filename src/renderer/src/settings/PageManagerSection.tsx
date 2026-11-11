@@ -30,10 +30,10 @@ export interface PagesCustom {
   order: CollapsedKey[]
 }
 
-/** 默认全开（4 页 + 6 个收起态组件）+ 默认顺序 */
+/** 默认全开（5 页 + 6 个收起态组件）+ 默认顺序 */
 export function defaultPagesCustom(): PagesCustom {
   return {
-    pages: [0, 1, 2, 3],
+    pages: [0, 1, 2, 3, 4],
     collapsed: { pet: true, clock: true, battery: true, net: true, todo: true, bell: true },
     order: [...DEFAULT_COLLAPSED_ORDER]
   }
@@ -70,7 +70,7 @@ export function normalizePagesCustom(v: unknown): PagesCustom | null {
   const raw = v as Partial<PagesCustom>
   // 顺序即用户自定义的页面顺序（US-032 反馈）：只做去重 + 范围校验 + 非空，不排序。
   const pages = Array.isArray(raw.pages)
-    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 3))]
+    ? [...new Set(raw.pages.filter((n) => Number.isInteger(n) && n >= 0 && n <= 4))]
     : []
   if (pages.length === 0) return null
   const collapsed = defaultPagesCustom().collapsed
@@ -87,7 +87,8 @@ const PAGE_META: { label: string; accent: string }[] = [
   { label: '待办', accent: '#7dd87d' },
   { label: '置物架', accent: '#ffb74d' },
   { label: '通知', accent: '#9f8bff' },
-  { label: '日程', accent: '#64b5f6' }
+  { label: '日程', accent: '#64b5f6' },
+  { label: '音乐', accent: '#ff8fa3' }
 ]
 
 /** 收起态组件在页面管理面板里的显示名（US-032 / 美化-02） */

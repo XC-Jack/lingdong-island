@@ -9,6 +9,7 @@ import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
+import { setupMusicStore, stopMusicStore } from './musicStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
@@ -45,13 +46,15 @@ let manualHide = false
 
 /**
  * 真正退出应用（US-034）。
- * 顺序很重要：先停两个轮询（通知 30s、日程提醒 60s），再 app.quit()。
- * 不先停的话，退出瞬间可能正好轮询到一条到点提醒，弹出一个「点不回去」的通知。
+ * 顺序很重要：先停各轮询（通知 30s、日程提醒 60s、音乐 1s）与常驻子进程，再 app.quit()。
+ * 不先停的话，退出瞬间可能正好轮询到一条到点提醒，弹出一个「点不回去」的通知；
+ * 音乐那条常驻 PowerShell 也会变成孤儿进程留在后台。
  */
 function quitApp(): void {
   stopStatus()
   stopNotifyStore()
   stopScheduleStore()
+  stopMusicStore()
   stopFullscreenWatch()
   app.quit()
 }
@@ -237,6 +240,7 @@ app.whenReady().then(() => {
   setupScheduleStore()
   setupExportStore()
   setupPrefsStore()
+  setupMusicStore()
   setupSettingsWindow()
   initClipboardWatch()
   createWindow()
@@ -267,6 +271,7 @@ app.on('window-all-closed', () => {
   stopStatus()
   stopNotifyStore()
   stopScheduleStore()
+  stopMusicStore()
   app.quit()
 })
 

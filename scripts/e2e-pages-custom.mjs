@@ -17,10 +17,12 @@ const fail = (msg) => { console.error(`[FAIL] ${msg}`); process.exitCode = 1 }
 const ok = (msg) => { console.log(`[PASS] ${msg}`); passed++ }
 
 const PREF_PATH = join(process.env.APPDATA, 'lingdong-island', 'prefs.json')
-const PREF_CLOCK_OFF = JSON.stringify({ pagesCustom: { pages: [0, 1, 2], collapsed: { pet: true, clock: false, battery: true, net: true, todo: true } } }, null, 2)
-const PREF_DEFAULT = JSON.stringify({ pagesCustom: { pages: [0, 1, 2, 3], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
+// musicIntro: true —— 这三份都是「故意裁剪」的页面集合。不带这个标记，主进程的
+// migrateMusicPage() 会给老数据补上音乐页（索引 4），圆点数就不再是脚本期望的值。
+const PREF_CLOCK_OFF = JSON.stringify({ musicIntro: true, pagesCustom: { pages: [0, 1, 2], collapsed: { pet: true, clock: false, battery: true, net: true, todo: true } } }, null, 2)
+const PREF_DEFAULT = JSON.stringify({ musicIntro: true, pagesCustom: { pages: [0, 1, 2, 3], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
 // 页面顺序调整（日程提到最前）+ 其余默认
-const PREF_REORDER = JSON.stringify({ pagesCustom: { pages: [3, 0, 1, 2], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
+const PREF_REORDER = JSON.stringify({ musicIntro: true, pagesCustom: { pages: [3, 0, 1, 2], collapsed: { pet: true, clock: true, battery: true, net: true, todo: true } } }, null, 2)
 
 async function connect() {
   for (let i = 0; i < 40; i++) {
