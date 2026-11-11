@@ -28,10 +28,15 @@ const COLLAPSED_MAX_W = 240
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
 let collapsedWidth = 143
 /** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
+// 展开态尺寸（2026-11-11 两轮调整）：
+// 1) SPEC-island-compact 把整岛按 zoom 0.75 缩小，所以上限从 {720,420} 收到 {540,315}；
+// 2) 用户随后要求「添加任务不要拉伸界面，通知页和待办页也一样」，各页改成固定尺寸
+//    （styles.css 里 .island.expanded 写死 440×252 布局 px，0.75 缩放后 = 330×189 视觉 px），
+//    内容超出只在列表内部滚动。这里把初始值也对齐，避免首帧按旧值开窗再被 ResizeObserver 纠正。
 const EXPANDED_MIN = { width: 315, height: 165 }
 const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的，默认值给个合理初始） */
-let expandedSize = { width: 420, height: 225 }
+let expandedSize = { width: 330, height: 189 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
 /** 过渡动画时长（毫秒）。用户实测 220ms 太急，调到 500ms（US-038 验收反馈，用户嫌 320 仍快） */

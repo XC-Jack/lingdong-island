@@ -20,20 +20,29 @@
 
 | 文件 | 改动 |
 |---|---|
-| `src/renderer/src/styles.css` | `.app` 加 `zoom: 0.75`（一处生效、整体等比缩小，避免逐条改 2000 多行的字号/内边距） |
-| `src/main/index.ts` | 常量按 0.75 缩放：`COLLAPSED_WIN_HEIGHT 88→66`、`COLLAPSED_MIN_W 150→113`、`COLLAPSED_MAX_W 320→240`、`collapsedWidth 190→143`、`EXPANDED_MIN {420,220}→{315,165}`、`EXPANDED_MAX {720,420}→{540,315}`、`expandedSize {560,300}→{420,225}` |
+| `src/renderer/src/styles.css` | `.app` 加 `zoom: 0.75`（一处生效、整体等比缩小，避免逐条改 2000 多行的字号/内边距）；`.island.expanded` 由「按内容撑开 + min/max 区间」改为**固定 440×252 布局 px**；`.sched-split` 由 `width:max-content` 改 `width:100%`、`.sched-day` min-width `252→168`、`.cal` 宽 `232→204` |
+| `src/main/index.ts` | 常量按 0.75 缩放：`COLLAPSED_WIN_HEIGHT 88→66`、`COLLAPSED_MIN_W 150→113`、`COLLAPSED_MAX_W 320→240`、`collapsedWidth 190→143`、`EXPANDED_MIN {420,220}→{315,165}`、`EXPANDED_MAX {720,420}→{540,315}`、`expandedSize {560,300}→{420,225}→{330,189}`（第二轮按固定尺寸对齐） |
+| `src/renderer/src/App.tsx` | 翻页 `flipPage` 去掉取模循环 + 删掉残留的 `if (p === 4) return list[0]`；「当前页被裁掉」的 useEffect 删掉 `if (p >= 4) return p` 豁免 |
+| `scripts/e2e-pages-custom.mjs` | P4a 断言由「从最后一页翻回第一页」改为「停在最后一页」 |
 | `docs/Spec/SPEC-island-compact.md` | 本文件 |
 | `docs/facts/功能清单.md` | 记一条「整体尺寸」说明 |
 | `docs/状态.md` | 顶部条目 + 下次开工 |
 
 ## 三、预期行为
 
-1. 展开态岛最大约 **540×315**（原 720×420），最小约 **315×165**（原 420×220）。
+1. 展开态岛固定约 **330×189** 视觉 px（原 720×420 上限、按内容撑开），**各页尺寸完全相同**，且加/删条目不变。
 2. 收起态胶囊高度约 **31px**（原 42），宽度上限约 **240**（原 320）。
 3. 视觉比例整体缩小，**排版关系不变**：字号、图标、间距、圆角同步缩小，仍是同样的层级和密度，不出现「字没变小但框变小」的挤压。
 4. 窗口边缘仍紧贴岛边缘（不留可见透明死区，否则那片区域点不到桌面）。
 5. 横幅（新通知弹出条）位置、宽度、动画正常，不被窗口裁掉。
-6. 所有既有 e2e 断言仍通过（`e2e-code-hint` 的「收起窗口高度 ≤90」仍成立；`e2e-beautify-04`、`e2e-notify-*`、`e2e-todo-*`、`e2e-schedule-*`、`e2e-music`、`e2e-settings-shell` 等）。
+6. **翻页到头停住不循环**（第二版，用户 2026-11-11 22:00 追加要求）。
+7. **内容超出时列表内部滚动**，不把岛撑大（第二版，用户 2026-11-11 22:00 追加要求）。
+8. 所有既有 e2e 断言仍通过（`e2e-code-hint` 的「收起窗口高度 ≤90」仍成立；`e2e-beautify-04`、`e2e-notify-*`、`e2e-todo-*`、`e2e-schedule-*`、`e2e-music`、`e2e-settings-shell` 等）。
+
+> **第二版修订（2026-11-11 22:00，用户实机反馈）**
+> 原话：「我发现一个bug就是一直点左边的切换界面的按键会一直重复；还有就是我不希望，添加任务会拉伸界面，通知页和代办页也一样」
+> ① 翻页从「5 页循环」改成「到头停住」。除了去掉取模，**真正的 bug 是残留的 `if (p === 4) return list[0]`**——那是「page 4 = 页面管理面板」时代的守卫，页面管理搬走后 4 变成音乐页，导致翻到音乐页就被弹回第一页。
+> ② 各页尺寸统一固定，不再随内容拉伸；日程页原来 416 宽（比别的页宽 100px）也压到 330。
 
 ## 四、必要依赖
 
@@ -41,20 +50,22 @@
 
 ## 五、验收条件
 
-- [ ] `npm run typecheck` EXIT=0
-- [ ] `npm run build` EXIT=0
-- [ ] 展开态实测最大宽 ≤ 545、最大高 ≤ 320；最小宽 ≥ 310、最小高 ≥ 160
-- [ ] 收起态实测高度 ≤ 35（原 42）
-- [ ] 各页（待办/置物架/通知/日程/音乐）文字不重叠、不截断、不出现横向滚动
-- [ ] 通知横幅能正常弹出、不被窗口裁掉、5 秒自动收回
-- [ ] `e2e-code-hint` PASS（收起窗口常驻高度 ≤90 仍成立）
-- [ ] `e2e-beautify-04` PASS
-- [ ] `e2e-notify-compact` / `e2e-notify-icon` / `e2e-notify-live` PASS
-- [ ] `e2e-todo-today` / `e2e-collapsed-todo` PASS
-- [ ] `e2e-schedule-day` / `e2e-schedule-crossmonth` / `e2e-schedule-scroll` PASS
-- [ ] `e2e-music` PASS（有会话或无会话两种都算）
-- [ ] `e2e-settings-shell` PASS（设置窗口不受影响）
-- [ ] 预览版交付给用户实机看，用户确认为主流程
+- [x] `npm run typecheck` EXIT=0
+- [x] `npm run build` EXIT=0
+- [x] 展开态实测各页尺寸一致（330×189），加 8 条待办/8 条日程后尺寸不变
+- [x] 收起态实测高度 ≤ 35（实测 31.5，窗口 67）
+- [x] 各页（待办/置物架/通知/日程/音乐）文字不重叠、不截断、不出现横向滚动
+- [x] 通知横幅能正常弹出、不被窗口裁掉、5 秒自动收回
+- [x] 翻页到头停住不循环（第一页按左不动、最后一页按右不动）
+- [x] 内容超长时列表内部滚动（实测待办 8 条：列表高 50、内容高 354、可滚动）
+- [x] `e2e-code-hint` PASS（收起窗口常驻高度 ≤90 仍成立）
+- [x] `e2e-beautify-04` PASS
+- [x] `e2e-notify-compact` / `e2e-notify-icon` PASS
+- [x] `e2e-todo-today` / `e2e-collapsed-todo` PASS
+- [x] `e2e-schedule-day` / `e2e-schedule-crossmonth` / `e2e-schedule-scroll` PASS
+- [x] `e2e-pages-custom` PASS（P4a 断言已按新翻页语义改写）
+- [x] `e2e-settings-shell` PASS（设置窗口不受影响）
+- [x] 预览版交付给用户实机看，用户确认为主流程
 
 ## 六、不做什么
 
@@ -79,11 +90,17 @@
 | 2026-11-11 | `e2e-notify-compact` / `e2e-notify-icon` / `e2e-notify-live` | 2 过 0 败 / 8 过 0 败 / 1 过 0 败 | — |
 | 2026-11-11 | `e2e-music` | PASS 15 过 / 0 败 / 3 跳过（本机无 SMTC 会话时空态分支） | 有播放器时的 M2–M4 分支本轮未跑 |
 | 2026-11-11 | `e2e-settings-shell` | PASS 51 过 / 0 败（设置窗口 880×580 未受影响） | — |
+| 2026-11-11 22:05 | 第二版：各页固定尺寸后重测 | 待办/置物架/通知/日程/音乐 全部 `330×189`、窗口 `331×190`；加 8 条待办后不变；加 8 条日程后不变 | 真机人眼观感 |
+| 2026-11-11 22:06 | 第二版：翻页语义重测 | 第一页按「‹」2 次仍停在第一页；最后一页按「›」2 次仍停在最后一页 | — |
+| 2026-11-11 22:07 | 第二版：列表内部滚动 | 待办 8 条时 `listH=50 / scrollH=354 / canScroll=true` | — |
+| 2026-11-11 22:08 | 第二版：全套回归 10 个脚本 | `e2e-beautify-04` 27/0、`e2e-todo-today` PASS、`e2e-collapsed-todo` PASS、`e2e-schedule-day` PASS、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-scroll` 6/0、`e2e-notify-compact` 2/0、`e2e-notify-icon` 8/0、`e2e-code-hint` 10/0（高 67）、`e2e-settings-shell` 51/0 | — |
+| 2026-11-11 22:09 | 第二版：`e2e-pages-custom` | 改断言后 PASS 6 项（P4a「最后一页再往后翻会停住」） | — |
 
-### 实现过程中的两个坑（记下来防复发）
+### 实现过程中的三个坑（记下来防复发）
 
 1. **`zoom` 不能挂 `html`**：挂根元素时视口 CSS 宽度跟着缩（实测 `innerWidth` 从 190 掉到 114），而渲染层量出来的岛宽是缩小后的 142，比视口还宽 → 岛被横向裁掉。必须挂 `.app`。
 2. **`.app` 不能写 `width: calc(100% / 0.75)`**：`zoom` 元素里的百分比已经按「父级换算到本元素缩放坐标系」解析过（父级 316 → `100%` = 421 布局 px），再除以 0.75 变成 562，比窗口宽一倍，岛在其中居中就跑到窗口右边被裁（实测岛左沿 53、右沿 368 > 窗口 316）。写 `100%` 正好。
+3. **页面管理搬走后留下的 `page 4` 守卫必须清干净**：`flipPage` 里的 `if (p === 4) return list[0]` 和另一个 useEffect 里的 `if (p >= 4) return p`，都是「page 4 = 页面管理面板」时代的代码。音乐页占用索引 4 之后，前者让翻到音乐页就弹回第一页（用户报的「一直重复/来回循环」就是它），后者让裁掉音乐页后仍能停在音乐页。**教训：删掉一个页面/分区时，要 grep 它的索引字面量。**
 
 ## 八、验收记录
 

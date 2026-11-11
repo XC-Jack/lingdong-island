@@ -90,13 +90,13 @@ try {
   const dots = await cdp(ws2, "document.querySelectorAll('.dots .dot').length")
   if (dots === 3) ok('P3a 裁掉日程后圆点 3 个') ; else fail(`P3a 圆点应 3 个，got ${dots}`)
 
-  // P4 从最后保留页往后翻应回到第 0 页
+  // P4 从最后保留页再往后翻应停住（2026-11-11 用户要求改成不循环）
   await cdp(ws2, "document.querySelectorAll('.dots .dot')[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))")
   await sleep(300)
   await cdp(ws2, "document.querySelectorAll('.pager-arrow')[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true })); 'clicked'")
   await sleep(300)
   const activeIdx = await cdp(ws2, "Array.from(document.querySelectorAll('.dots .dot')).findIndex(d => d.classList.contains('active'))")
-  if (activeIdx === 0) ok('P4a 从最后保留页往后翻回到第一页') ; else fail(`P4a 应回到第 0 页，got ${activeIdx}`)
+  if (activeIdx === 2) ok('P4a 最后一页再往后翻会停住（不循环回第一页）') ; else fail(`P4a 应停在最后一页(下标 2)，got ${activeIdx}`)
 } catch (e) {
   fail(e.message)
 } finally {

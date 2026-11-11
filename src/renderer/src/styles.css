@@ -95,14 +95,13 @@ body {
 }
 
 .island.expanded {
-  /* 宽高随内容自然撑开（参照视频各页按内容收紧），上限由主进程 clamp */
+  /* 固定尺寸（2026-11-11 用户要求「不希望添加任务会拉伸界面，通知页和待办页也一样」）。
+     原来是 width/height: max-content + min/max 区间，内容多了岛就长高、日程页还比别的页宽 100px，
+     翻页和加条目时整块跟着跳。现在各页统一尺寸，内容超出就在列表内部滚动。
+     布局 px（zoom 0.75 之后视觉 330×189）；主进程 EXPANDED_MIN/MAX 与 expandedSize 按此同步。 */
   flex-shrink: 0;
-  width: max-content;
-  min-width: 420px;
-  max-width: 720px;
-  height: max-content;
-  min-height: 220px;
-  max-height: 420px;
+  width: 440px;
+  height: 252px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -1520,12 +1519,14 @@ body {
 
 /* ---------- 日程页 ---------- */
 
-/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局） */
+/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局）
+   2026-11-11 用户要求各页尺寸统一、不随内容拉伸，所以这里改成按容器宽度分配
+   （原来 width:max-content 会把岛撑到 416，比别的页宽 100px，翻页时整块跳）。 */
 .sched-split {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   align-items: stretch;
-  width: max-content;
+  width: 100%;
   /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
   min-height: 0;
 }
@@ -1533,7 +1534,7 @@ body {
 /* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
 .sched-day {
   flex: 1;
-  min-width: 252px;
+  min-width: 168px;
   display: flex;
   flex-direction: column;
   min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
@@ -1562,7 +1563,7 @@ body {
 /* 月历 */
 .cal {
   flex: none;
-  width: 232px;
+  width: 204px;
   display: flex;
   flex-direction: column;
   gap: 4px;
