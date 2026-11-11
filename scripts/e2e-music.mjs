@@ -11,9 +11,11 @@
  * M6 页面管理里能勾掉音乐页 → 岛圆点少一个；勾回 → 恢复
  *
  * 前提：本机要有注册了 SMTC 的播放器（PotPlayer / 网易云 / 系统「电影和电视」等）。
- * 没有会话时 M2 的「有会话结构」分支会跳过并明确打印 SKIP，不算失败。
+ * 没有会话时不判失败，但**有会话却读不到会话**（桥接坏了）判失败（M2a0）——这两件事以前被
+ * 同一条 skip() 混在一起，导致功能已坏时 e2e 仍报 PASS（独立验收 B2）。
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
+ * 有失败时以非 0 退出码结束。
  */
 import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -78,8 +80,55 @@ async function startApp() {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
   const child = spawn(ELECTRON, ['.', `--remote-debugging-port=${CDP_PORT}`], { cwd: ROOT, env, stdio: 'ignore' })
-  await sleep(3500)
+  // 轮询 CDP 就绪，不再固定 sleep(3500)：迁移实测需要 2524ms，固定等 3500ms 只剩 1 秒余量，
+  // 慢一点就会让 M5a/M5b 读 prefs 时迁移还没落盘。迁移在 app.whenReady 里、窗口创建之前完成，
+  // 所以「能看到页面 target」就等于「迁移已经跑完」。
+  const t0 = Date.now()
+  while (Date.now() - t0 < 20000) {
+    try {
+      const list = await listTargets()
+      if (list.length > 0) break
+    } catch { /* CDP 还没起来 */ }
+    await sleep(250)
+  }
+  await sleep(400)
   return child
+}
+
+/**
+ * 独立查询本机真实 SMTC 会话数 —— 故意不复用 src/main/smtcScript.ts 那条链路。
+ * 目的：区分「本机真的没有播放器」和「有播放器但桥接读不到」。
+ * 后者以前会被 skip() 吞掉，导致功能坏了 e2e 仍报 PASS（独立验收 B2）。
+ * 返回 -1 表示查询本身失败（未知），调用方应退回旧的跳过行为。
+ */
+const SESSION_COUNT_PS1 = `
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+[void][Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
+$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
+  $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
+  $_.GetParameters()[0].ParameterType.Name -like "IAsyncOperation*" -and
+  $_.GetGenericArguments().Count -eq 1
+})[0]
+$task = $asTask.MakeGenericMethod([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]).Invoke($null, @([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()))
+$task.Wait(-1) | Out-Null
+$mgr = $task.Result
+[Console]::Out.WriteLine((@($mgr.GetSessions())).Count)
+`
+
+function countSessions() {
+  try {
+    mkdirSync(join(ROOT, '.tmp'), { recursive: true })
+    const file = join(ROOT, '.tmp', 'e2e-session-count.ps1')
+    // 必须带 UTF-8 BOM，否则 PS 5.1 按 ANSI 解码会把类型名解坏
+    writeFileSync(file, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(SESSION_COUNT_PS1, 'utf8')]))
+    const out = execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${file}"`, { encoding: 'utf8', timeout: 30000 })
+    const n = Number(String(out).trim().split(/\r?\n/).pop())
+    return Number.isFinite(n) ? n : -1
+  } catch {
+    return -1
+  }
 }
 
 function writePrefs(pages, extra = {}) {
@@ -174,11 +223,18 @@ try {
   {
     const state = await waitForMusicState()
     const active = state?.active === true
-    console.log(`  · 当前会话：${active ? `${state.title} / ${state.app} / ${state.playing ? '播放中' : '暂停'}` : '（无）'}`)
+    // 本机真实会话数（不复用被测链路）：用来区分「真没播放器」和「有播放器但读不到」
+    const realSessions = countSessions()
+    console.log(`  · 当前会话：${active ? `${state.title} / ${state.app} / ${state.playing ? '播放中' : '暂停'}` : '（无）'}；本机真实 SMTC 会话数 ${realSessions}`)
+    // 有会话却读不到 = 功能坏了，必须判失败；以前这里会静默 skip，功能坏了 e2e 仍报 PASS
+    const readable = realSessions <= 0 || active
+    ok('M2a0 本机有 SMTC 会话时桥接必须能读到（读不到＝功能坏了，不算跳过）',
+      readable, `真实会话 ${realSessions} 个，但 musicGet().active = ${active}`)
+    const canCheckSession = active
 
     const hasBar = await islandEval(`document.querySelectorAll('.music-bar-fill').length`)
     const btns = await islandEval(`document.querySelectorAll('.music-ctl .music-btn').length`)
-    if (active) {
+    if (canCheckSession) {
       ok('M2a 有会话时渲染进度条', hasBar === 1, `实际 ${hasBar}`)
       ok('M2b 有会话时渲染三个控制按钮（上一首/播放暂停/下一首）', btns === 3, `实际 ${btns}`)
       const title = await islandEval(`document.querySelector('.music-title')?.textContent?.trim() ?? ''`)
@@ -192,8 +248,11 @@ try {
         state && typeof state.title === 'string' && typeof state.position === 'number' &&
         typeof state.duration === 'number' && typeof state.playing === 'boolean' && typeof state.app === 'string',
         JSON.stringify(state))
+    } else if (realSessions > 0) {
+      // 已有 M2a0 判失败，这里不重复计败，也不假装通过
+      skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)
     } else {
-      skip('M2a–M2e 有会话时的结构断言', '本机没有注册 SMTC 的播放器会话')
+      skip('M2a–M2e 有会话时的结构断言', '本机确实没有注册 SMTC 的播放器会话')
       const empty = await islandEval(`document.body.innerText.includes('现在没有在放歌')`)
       ok('M2f 无会话时显示空态文案', empty === true)
       const noCtl = await islandEval(`document.querySelectorAll('.music-ctl .music-btn').length`)
@@ -205,7 +264,9 @@ try {
   {
     const before = await waitForMusicState()
     if (before?.active !== true) {
-      skip('M3a–M3d 播放/暂停控制', '本机没有活动播放会话')
+      // 有会话却读不到已在 M2a0 判失败；这里只区分「真没会话」与「已知坏了」
+      const n = countSessions()
+      skip('M3a–M3d 播放/暂停控制', n > 0 ? `本机有 ${n} 个会话但桥接读不到（已由 M2a0 判失败）` : '本机确实没有活动播放会话')
     } else {
       // 点主按钮
       await islandEval(`(() => { const b = document.querySelector('.music-btn-main'); if (!b) return 'no-btn'; b.click(); return 'ok' })()`)
@@ -231,7 +292,8 @@ try {
   {
     const s = await waitForMusicState()
     if (s?.active !== true || !(s.duration > 0)) {
-      skip('M4a–M4c 进度条比例', '没有会话或总时长未知')
+      const n = countSessions()
+      skip('M4a–M4c 进度条比例', s?.active === true ? '总时长未知' : (n > 0 ? `本机有 ${n} 个会话但桥接读不到（已由 M2a0 判失败）` : '没有会话'))
     } else {
       const scale = await islandEval(`(() => {
         const el = document.querySelector('.music-bar-fill')
@@ -306,3 +368,5 @@ try {
 }
 
 console.log(`\nE2E MUSIC: ${failed > 0 ? 'FAIL' : 'PASS'}（${passed} 过 / ${failed} 败${skipped > 0 ? ` / ${skipped} 跳过` : ''}）`)
+// 有失败必须以非 0 退出，否则 CI/验收方只能靠人眼看日志（其余 e2e 脚本都是这个口径）
+process.exit(failed > 0 ? 1 : 0)

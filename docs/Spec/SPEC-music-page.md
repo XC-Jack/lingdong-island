@@ -24,6 +24,7 @@
 |---|---|
 | `src/shared/types.ts` | 新增 `MusicState`、`MusicCommand` |
 | `src/main/musicStore.ts` | **新建**：常驻 PowerShell 子进程桥接 SMTC，1 秒轮询，状态变化广播到所有窗口 |
+| `src/main/smtcScript.ts` | **新建**：桥接用的 PowerShell 脚本正文（`String.raw` 模板），只读会话 + 播放控制 |
 | `src/main/index.ts` | 启动时 `setupMusicStore()`，退出时 `stopMusicStore()` |
 | `src/main/prefsStore.ts` | pages 合法范围 0..3 → 0..4；一次性迁移：老 prefs 补上音乐页 |
 | `src/preload/index.ts` | 新增 `musicGet` / `onMusicState` / `musicControl` |
@@ -31,6 +32,7 @@
 | `src/renderer/src/settings/PageManagerSection.tsx` | 页面区 4 行 → 5 行（加「音乐」行 + 配色点）；`normalizePagesCustom` 范围同步 |
 | `src/renderer/src/styles.css` | 音乐页样式（封面占位、进度条、控制按钮） |
 | `scripts/e2e-music.mjs` | **新建** e2e |
+| `scripts/e2e-music-session.mjs` | **新建**多会话回归 e2e（造 2 个以上假会话，让「正在播放」落在索引 > 0） |
 | `scripts/e2e-settings-shell.mjs` | S4a / S7 的 4 → 5 |
 | `scripts/e2e-pages-custom.mjs` | 圆点数断言随页数变化 |
 | `docs/facts/功能清单.md`、`docs/facts/用户角色与用户故事.md`、`docs/状态.md` | 同步事实 |
@@ -63,8 +65,8 @@
 - [x] 8. 设置窗口页面管理里出现「音乐」行，取消勾选后岛里圆点从 5 变 4，且落盘到 `prefs.json`
 - [x] 9. 老 prefs（pages `[0,1,2,3]`）启动后被补成含 4，且 `musicIntro` 标记落盘；再次启动不重复追加
 - [x] 10. 用户手动取消勾选音乐后重启，音乐页保持关闭（不复活）
-- [ ] 11. 打包安装到 `D:\软件\灵动岛\` 后，装机版能显示真实歌曲信息
-- [ ] 12. 独立验收（未参与实现的会话）通过并写入第八节
+- [x] 11. 打包安装到 `D:\软件\灵动岛\` 后，装机版能显示真实歌曲信息
+- [ ] 12. 独立验收（未参与实现的会话）通过并写入第九节
 
 ## 七、不做什么
 
@@ -82,7 +84,10 @@
 |---|---|---|---|
 | 2026-11-11 | `npm run typecheck`（node + web） | EXIT=0 | — |
 | 2026-11-11 | `npm run build` | EXIT=0，产物 `out/renderer/index.html 0.57 kB`、`settings.html 0.60 kB`、`index-DnBDfXwK.js 102.15 kB`、`index-BvX_0MjM.css 49.54 kB`、`settings-07JWtWzL.js 22.98 kB`、`settings-DjaANCVo.css 9.56 kB` | — |
-| 2026-11-11 | `node scripts/e2e-music.mjs`（PotPlayer 在跑，有真实 SMTC 会话） | **PASS 24 过 / 0 败**，M1a–M1d、M2a–M2e、M3a–M3d、M4a–M4c、M5a–M5g 全过；连跑两次结果一致 | 无会话分支（M2f/M2g）在播放器运行时走了 skip 路径，未在「真的没有播放器」时实跑 |
+| 2026-11-11 | `node scripts/e2e-music.mjs`（PotPlayer 在跑，有真实 SMTC 会话） | **PASS 25 过 / 0 败**，M1a–M1d、M2a0、M2a–M2e、M3a–M3d、M4a–M4c、M5a–M5g 全过；连跑多次结果一致 | 无会话分支（M2f/M2g）在播放器运行时走了 skip 路径，另单独在「真的没有播放器」时跑过一次（15 过 / 0 败 / 3 跳过） |
+| 2026-11-11 | `node scripts/e2e-music.mjs`（关掉播放器，本机真的没有 SMTC 会话） | **PASS 15 过 / 0 败 / 3 跳过**，M2a0 正确判「本机真实会话数 0 → 不算失败」，M2f/M2g 空态分支真跑 | 该次 M3/M4 仍走 skip（没有会话可控制） |
+| 2026-11-11 | `node scripts/e2e-music-session.mjs`（**新建**，多会话回归） | **PASS 10 过 / 0 败**：造出 3 个会话、`PLAYING_IDX=1`（正在播放的不在索引 0），桥接三次 poll 全 `active:true`、无 error 帧、挑中播放中的那个、toggle 回 `ok:true`、未知命令只回 1 条 ack | 假会话用的静音 wav 没有元数据，故不断言歌名非空 |
+| 2026-11-11 | **负对照**：把两处 `@($sessions)[$idx]` 临时改回裸索引 `$sessions[$idx]` 后跑同一多会话 e2e | **FAIL 5 过 / 5 败**（S5/S6/S7/S8/S9 全败，error 帧「不能对 Null 值表达式调用方法。」）；恢复后 10 过 / 0 败 —— 证明该 e2e 对本缺陷有判别力 | — |
 | 2026-11-11 | 回归 `node scripts/e2e-settings-shell.mjs` | **PASS 51 过 / 0 败**（S4a 页面区 5 行、S7 圆点 5 个、S10 按 5 页重算、S12d 峰值 11） | — |
 | 2026-11-11 | 回归 `node scripts/e2e-collapse-order.mjs` | **PASS 22 过 / 0 败** | — |
 | 2026-11-11 | 回归 `node scripts/e2e-head-order.mjs` | **PASS 14 过 / 0 败** | — |
@@ -90,11 +95,19 @@
 | 2026-11-11 | 回归 `e2e-export.mjs`、`e2e-bell-notify.mjs`、`e2e-shelf-view-pref.mjs`、`e2e-exit-and-shelf-view.mjs` | 全 PASS（bell-notify 15 过 / 0 败） | — |
 | 2026-11-11 | 桥接脚本单测（`.tmp/test-fix.mjs` + `fix-candidate.ps1`） | 读到真实会话 `{"active":true,"title":"世界上根本没有这种夜露_BV1FKpP6NEcq.mp4","position":32.2,"duration":364.2,"playing":true,"app":"PotPlayerMini64.exe"}`；`toggle` 回 `{"ok":true}` 且 `playing` 真翻转 | — |
 
-### 开发过程中修掉的两个真实缺陷（供验收复核）
+### 开发过程中修掉的三个真实缺陷（供验收复核）
 
 1. **桥接永远读不到会话**（已修）：PowerShell 函数返回 WinRT 对象后，调用方拿到的对象丢了类型投影，再调 `GetPlaybackInfo()` 抛 `System.ArgumentException: 对象的类型不能为 Windows 运行时类型`。原代码把该异常吞在 `try/catch` 里并 emit 空态，现象是「永远没有正在播放」。
-   修复：`PickSession()`/`GetSnapshot()` 改为只在**同一作用域内**用 `$sessions[$idx]` 取快照，脚本只向外传索引（`PickIndex` 返回 int）；`catch` 改为 emit `{type:"error",msg}`，Node 侧 `console.warn` 出来，不再静默。
-2. **e2e 的 M5e/M5g 偶发失败**（已修）：重启后 React 首帧还没挂载 `.island`，脚本里 `el && el.click()` 静默跳过点击，圆点数读到 0。修复方式是加 `ensureExpanded()`（轮询到 `.island` 出现且展开为止）；M5g 另改为先关设置窗口再展开岛，与真实用户操作顺序一致。
+   修复：删掉 `PickSession()`/`GetSnapshot()` 两个函数，改为 `PickIndex` 只返回索引（int），快照在**主循环同一作用域内联**取；`catch` 改为 emit `{type:"error",msg}`，Node 侧 `console.warn` 出来，不再静默。
+2. **多会话时仍然读不到（第一版修复没修干净，独立验收 B1）**：`$mgr.GetSessions()` 返回的是 `System.__ComObject` 包装的 WinRT `IVectorView`，**裸索引 `$sessions[$i]` 只有 `[0]` 有效，`[1]` 及以后一律 `$null`**：
+   ```
+   i=0  $sessions[0] = obj   callOK   |  @($sessions)[0] = obj  callOK
+   i=1  $sessions[1] = NULL           |  @($sessions)[1] = obj  callOK
+   ```
+   第一版修复用 `$s = $sessions[$idx]`，单会话时 `idx` 恒为 0 恰好命中，所以本地和 e2e 都看不出来；用户同时开着两个播放器、正在播放的不是索引 0 时就恒显示「现在没有在放歌」。
+   修复：两处改为 `$s = @($sessions)[$idx]`；同时订正了 `PickIndex` 上方写反的注释、把未知命令的重复 ack 挡掉、把空 `catch` 补上说明。
+3. **e2e 的 M5e/M5g 偶发失败**（已修）：重启后 React 首帧还没挂载 `.island`，脚本里 `el && el.click()` 静默跳过点击，圆点数读到 0。修复方式是加 `ensureExpanded()`（轮询到 `.island` 出现且展开为止）；M5g 另改为先关设置窗口再展开岛，与真实用户操作顺序一致。
+   同一轮还修掉了 e2e 的**假绿**（独立验收 B2）：原 `const active = state?.active === true` 把「本机真没会话」和「有会话但读不到」混成一件事，两者都走 `skip()`，功能已坏仍报 PASS；现在用独立 PowerShell 查询拿真实会话数，`会话数 > 0 && active === false` 判**失败**（M2a0），并且脚本以 `process.exit(failed > 0 ? 1 : 0)` 结束。
 
 ## 九、验收记录
 

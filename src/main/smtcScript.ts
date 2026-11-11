@@ -47,7 +47,14 @@ function Emit($obj) {
 # 调用方拿到的是经过 PowerShell 包装的代理，类型投影丢了，再调 GetPlaybackInfo()
 # 会抛 System.ArgumentException: 对象的类型不能为 Windows 运行时类型。
 # 这个异常会被 poll 的 try/catch 吞掉，表现成「永远没有会话」——排查了很久。
-# 传 int 出去、调用方自己用 $sessions[$i] 取原对象，投影就还在。
+#
+# 注意：调用方取原对象时必须先 @() 再索引，写成 @($sessions)[$i]，不能写 $sessions[$i]。
+# 原因（2026-11-11 独立验收实测）：$mgr.GetSessions() 返回的是 System.__ComObject 包装的
+# WinRT IVectorView，裸索引只有 [0] 有效，[1] 及以后一律回 $null：
+#   i=0  $sessions[0] = obj   callOK   |  @($sessions)[0] = obj  callOK
+#   i=1  $sessions[1] = NULL           |  @($sessions)[1] = obj  callOK
+# 裸索引拿到 $null 后调 TryGetMediaPropertiesAsync() 会抛「不能对 Null 值表达式调用方法」，
+# 界面就恒为空态。单会话时 idx 恒为 0，恰好命中，本地很难发现。
 function PickIndex($sessions) {
   $arr = @($sessions)
   if ($arr.Count -eq 0) { return -1 }
@@ -55,7 +62,9 @@ function PickIndex($sessions) {
   for ($i = 0; $i -lt $arr.Count; $i++) {
     try {
       if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { return [int]$i }
-    } catch { }
+    } catch {
+      # 单个会话取播放信息失败就跳过它，继续看下一个；不能因为一个坏会话让整体判失败
+    }
   }
   return 0
 }
@@ -88,9 +97,9 @@ while ($true) {
       Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = "" }
       continue
     }
-    # 快照必须在这个作用域里直接取，原因见 PickIndex 上方的注释
+    # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
     try {
-      $s = $sessions[$idx]
+      $s = @($sessions)[$idx]
       $props = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
       $tl = $s.GetTimelineProperties()
       $info = $s.GetPlaybackInfo()
@@ -114,14 +123,19 @@ while ($true) {
 
   if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $line; ok = $false }; continue }
 
-  $s = $sessions[$idx]
+  # 未知命令先挡掉，否则 switch 的 default 里 continue 之后还会落到下面那条 Emit，吐两条 ack
+  if ($line -ne "toggle" -and $line -ne "next" -and $line -ne "prev") {
+    Emit @{ type = "ack"; cmd = $line; ok = $false }
+    continue
+  }
+
+  $s = @($sessions)[$idx]
   $ok = $false
   try {
     switch ($line) {
       "toggle" { $ok = Await ($s.TryTogglePlayPauseAsync()) ([bool]) }
       "next"   { $ok = Await ($s.TrySkipNextAsync()) ([bool]) }
       "prev"   { $ok = Await ($s.TrySkipPreviousAsync()) ([bool]) }
-      default  { Emit @{ type = "ack"; cmd = $line; ok = $false }; continue }
     }
   } catch {
     Emit @{ type = "ack"; cmd = $line; ok = $false }
