@@ -112,6 +112,23 @@ async function closeSettings() {
 let child = null
 const prefsBackup = existsSync(PREFS) ? readFileSync(PREFS, 'utf8') : null
 const notifBackup = existsSync(NOTIF_READ) ? readFileSync(NOTIF_READ, 'utf8') : null
+/**
+ * S9 会真的开关机自启（改注册表）。原值必须在模块级记录、且恢复动作放 finally：
+ * 只要恢复写在 S9 块内部，中间任一 await 抛异常或进程被强杀就漏恢复，用户的开机自启
+ * 会停在测试翻转后的状态。恢复要在 killApp() 之前做——应用已被杀掉就没法调 IPC 了。
+ */
+let autostartOrig = null
+async function restoreAutostart() {
+  if (autostartOrig === null) return
+  try {
+    await islandEval(`window.island.autostartSet(${autostartOrig})`)
+    await sleep(500)
+    const now = await islandEval(`window.island.autostartGet()`)
+    if (now !== autostartOrig) console.log(`  ! 自启恢复失败：期望 ${autostartOrig}，实际 ${now}`)
+  } catch (e) {
+    console.log('  ! 自启恢复异常（应用可能已退出）：' + (e?.message ?? e))
+  }
+}
 
 try {
   mkdirSync(USER_DATA, { recursive: true })
@@ -222,8 +239,9 @@ try {
 
   // ========== S9 自启状态双向同步（独立验收阻断项 B2 的回归） ==========
   {
-    // 自启会真的改注册表，先记原值，无论成败都恢复
+    // 自启会真的改注册表，先记原值（模块级变量，finally 里兜底恢复）
     const orig = await islandEval(`window.island.autostartGet()`)
+    autostartOrig = orig
     // 展开岛，头部那枚胶囊才在 DOM 里
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && !el.className.includes('expanded')) el.click(); return 'ok' })()`)
     await sleep(900)
@@ -253,9 +271,9 @@ try {
     const switchState = await settingsEval(`(() => { const s = document.querySelector('.set-switch'); return s ? (s.getAttribute('aria-checked') === 'true' ? 1 : 0) : -1 })()`)
     ok('S9e 设置窗口开关反向跟随岛侧改动', switchState === (orig ? 1 : 0), `主进程 ${orig}，开关 ${switchState}`)
 
-    // 兜底：无论如何恢复原状态
-    await islandEval(`window.island.autostartSet(${orig})`)
-    await sleep(500)
+    // 正常路径先恢复（finally 里还有一道兜底，见 restoreAutostart）
+    await restoreAutostart()
+    autostartOrig = null
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && el.className.includes('expanded')) el.click(); return 'ok' })()`)
     await sleep(700)
   }
@@ -283,6 +301,9 @@ try {
   failed++
   console.log('  ✗ 异常：' + (e?.stack ?? e?.message ?? e))
 } finally {
+  // 恢复顺序有讲究：注册表要赶在 killApp() 之前（靠应用 IPC 写回去），
+  // 文件备份在应用杀掉后写更安全（不会被运行中的应用覆写）。
+  await restoreAutostart()
   killApp()
   if (prefsBackup !== null) writeFileSync(PREFS, prefsBackup, 'utf8')
   if (notifBackup !== null) writeFileSync(NOTIF_READ, notifBackup, 'utf8')
