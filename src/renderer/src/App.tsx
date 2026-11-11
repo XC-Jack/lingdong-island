@@ -20,6 +20,8 @@ interface NotifyItem {
 interface NotifyListResult {
   items: NotifyItem[]
   unread: number
+  /** 已读水位（美化-04）：`item.order > lastOrder` 即未读，用来画蓝点 */
+  lastOrder: number
 }
 
 /** 日程条目（与 preload/scheduleStore 保持一致） */
@@ -62,6 +64,9 @@ type CollapsedKey = (typeof COLLAPSED_KEYS)[number]
 
 /** 收起态组件的默认顺序（美化-02）：电量 → 岛仔 → 时钟 → 网络 → 待办 → 铃铛 */
 const DEFAULT_COLLAPSED_ORDER: CollapsedKey[] = ['battery', 'pet', 'clock', 'net', 'todo', 'bell']
+
+/** 完成度圆环的周长（r=9，2πr≈56.55）：stroke-dasharray 用它，dashoffset 按比例回退（美化-04） */
+const RING_CIRC = 2 * Math.PI * 9
 
 /**
  * 页面裁剪偏好：pages 是显示的页面索引集合，collapsed 是收起态组件开关，
@@ -687,6 +692,23 @@ function TodoPanel({
           </li>
         ))}
       </ul>
+      {/* 美化-04：完成度进度条（细轨 + 圆头填充 + 百分比）。
+          放在列表下方而不是头部——头部已经有圆环在显示同一个数，列表下方这一条
+          是"扫一眼就知道还剩多少"的横向读数，和头部圆环互为补充。 */}
+      {total > 0 && (
+        <div className="todo-progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
+          <div className="todo-progress-bar">
+            <div
+              className={`todo-progress-fill ${done >= total ? 'full' : ''}`}
+              style={{ transform: `scaleX(${total > 0 ? done / total : 0})` }}
+            />
+          </div>
+          <span className="todo-progress-text">
+            {done >= total ? '今天全部做完' : `还差 ${total - done} 件`}
+            <b>{Math.round((done / total) * 100)}%</b>
+          </span>
+        </div>
+      )}
     </div>
   )
 }
@@ -1170,12 +1192,15 @@ function NotifyPanel({
 }): React.JSX.Element {
   const [items, setItems] = useState<NotifyItem[]>([])
   const [loaded, setLoaded] = useState(false)
+  // 已读水位（美化-04）：order > lastOrder 的条目算未读，画蓝点
+  const [lastOrder, setLastOrder] = useState(0)
   // 相对时间（"5 分钟前"）每 30s 重算一次，避免开着不动时间变陈旧
   const [, tickNow] = useState(0)
 
   useEffect(() => {
     void window.island.notifyRefresh().then((r: NotifyListResult) => {
       setItems(r.items)
+      setLastOrder(r.lastOrder ?? 0)
       onUnread(r.unread)
       setLoaded(true)
     })
@@ -1186,13 +1211,22 @@ function NotifyPanel({
     return () => window.clearInterval(id)
   }, [])
 
+  // 标记已读后要拿到新的已读水位才能把蓝点消掉：notify:mark-read 只回未读数，
+  // 这里再拉一次 notify:list（读的是内存缓存，很轻）把 items/lastOrder/unread 一起刷新。
   const markRead = useCallback(() => {
-    void window.island.notifyMarkRead().then((n) => onUnread(n))
+    void window.island.notifyMarkRead().then(() => {
+      void window.island.notifyList().then((r: NotifyListResult) => {
+        setItems(r.items)
+        setLastOrder(r.lastOrder ?? 0)
+        onUnread(r.unread)
+      })
+    })
   }, [onUnread])
 
   const clearAll = useCallback(() => {
     void window.island.notifyClearAll().then((r: NotifyListResult) => {
       setItems(r.items)
+      setLastOrder(r.lastOrder ?? 0)
       onUnread(r.unread)
     })
   }, [onUnread])
@@ -1241,6 +1275,36 @@ function NotifyPanel({
       return next
     })
   }, [])
+
+  /**
+   * 条目右侧那一列（美化-04）：未读蓝点 + 相对时间 +（可选）「打开」按钮。
+   * 桌面通知中心常见形态。组/会话条的正文点击已经被「展开/收起」占用（US-040 两级堆叠），
+   * 所以这两层需要一个明确的动作按钮；具体条目正文本来就是「点开来源应用」，不再重复给按钮。
+   */
+  const renderSide = (
+    arrival: number,
+    unread: boolean,
+    onOpen?: () => void
+  ): React.JSX.Element => (
+    <span className="notify-side">
+      {unread && <i className="notify-unread" title="未读" />}
+      <span className="notify-time">{fmtRel(arrival)}</span>
+      {onOpen && (
+        <button
+          type="button"
+          className="notify-open"
+          title="打开来源应用"
+          aria-label="打开来源应用"
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpen()
+          }}
+        >
+          打开
+        </button>
+      )}
+    </span>
+  )
 
   return (
     <div className="todo-panel">
@@ -1338,7 +1402,7 @@ function NotifyPanel({
                     {latest.body && <span className="notify-text">{latest.body}</span>}
                   </span>
                 </button>
-                <span className="notify-time">{fmtRel(latest.arrival)}</span>
+                {renderSide(latest.arrival, latest.order > lastOrder, () => openOne(latest))}
                 {isOpen && (
                   <ul className="notify-sublist">
                     {[...threads.values()].map((tList) => {
@@ -1372,7 +1436,7 @@ function NotifyPanel({
                               {tLatest.body && <span className="notify-text">{tLatest.body}</span>}
                             </span>
                           </button>
-                          <span className="notify-time">{fmtRel(tLatest.arrival)}</span>
+                          {renderSide(tLatest.arrival, tLatest.order > lastOrder, () => openOne(tLatest))}
                           {tOpen && (
                             <ul className="notify-sublist">
                               {tList.map((it) => (
@@ -1393,7 +1457,7 @@ function NotifyPanel({
                                       {it.body && <span className="notify-text">{it.body}</span>}
                                     </span>
                                   </button>
-                                  <span className="notify-time">{fmtRel(it.arrival)}</span>
+                                  {renderSide(it.arrival, it.order > lastOrder)}
                                 </li>
                               ))}
                             </ul>
@@ -1412,15 +1476,21 @@ function NotifyPanel({
   )
 }
 
-/** 月历：本月网格（周一为首），今天高亮，有安排的日子带蓝点，可点选日期 */
+/** 日历格内的小标签数据（美化-04）：当天有安排就在格子里直接显示 */
+interface CalTag {
+  time: string | null
+  text: string
+}
+
+/** 月历：本月网格（周一为首），今天实心高亮，格内直接显示当天日程小标签，可点选日期 */
 function MonthCalendar({
   selected,
   onSelect,
-  markedDays,
+  tagsByDay,
 }: {
   selected: string // YYYY-MM-DD
   onSelect: (day: string) => void
-  markedDays: Set<string> // 有日程/待办的日子（YYYY-MM-DD）
+  tagsByDay: Map<string, CalTag[]> // 每天的安排（已按时间排好）
 }): React.JSX.Element {
   const [viewYear, setViewYear] = useState(() => Number(selected.slice(0, 4)))
   const [viewMonth, setViewMonth] = useState(() => Number(selected.slice(5, 7)) - 1) // 0-based
@@ -1468,22 +1538,40 @@ function MonthCalendar({
         ))}
       </div>
       <div className="cal-grid">
-        {cells.map((day, i) =>
-          day === null ? (
-            <span key={`e${i}`} />
-          ) : (
+        {cells.map((day, i) => {
+          if (day === null) return <span key={`e${i}`} />
+          const key = dayKey(day)
+          const tags = tagsByDay.get(key) ?? []
+          // 美化-04：格内最多显示 2 条，超出的折成「+N」——boardui 月历的做法。
+          // 格子只有约 30px 宽，再多就会把数字挤没。
+          const shown = tags.slice(0, 2)
+          const more = tags.length - shown.length
+          return (
             <button
               key={day}
               type="button"
-              className={`cal-day ${dayKey(day) === todayKey ? 'today' : ''} ${dayKey(day) === selected ? 'selected' : ''}`}
+              className={`cal-day ${key === todayKey ? 'today' : ''} ${key === selected ? 'selected' : ''} ${
+                tags.length > 0 ? 'has-tag' : ''
+              }`}
               aria-label={`选择 ${viewMonth + 1} 月 ${day} 日`}
-              onClick={() => onSelect(dayKey(day))}
+              onClick={() => onSelect(key)}
             >
-              {day}
-              {markedDays.has(dayKey(day)) && <i className="cal-mark" />}
+              <span className="cal-num">{day}</span>
+              {tags.length > 0 && (
+                <span className="cal-tags">
+                  {shown.map((t, ti) => (
+                    <span key={ti} className="cal-tag" title={`${t.time ? t.time + ' ' : ''}${t.text}`}>
+                      {t.time && <b>{t.time}</b>}
+                      {t.text}
+                    </span>
+                  ))}
+                  {more > 0 && <span className="cal-more">+{more}</span>}
+                </span>
+              )}
+              {tags.length > 0 && <i className="cal-mark" />}
             </button>
           )
-        )}
+        })}
       </div>
     </div>
   )
@@ -1563,8 +1651,23 @@ function SchedulePanel(): React.JSX.Element {
 
   // 今天（本地时区），用于「待办只在今天混排」与过期判定
   const todayKey = localDayKey()
-  // 有日程的日子标蓝点
-  const markedDays = new Set<string>(items.map((it) => it.day))
+  // 美化-04：日历格内直接显示当天安排（时间 + 标题），按时间排好。
+  // 只列日程，不把待办塞进格子——待办没有日期归属，塞进去会误导「今天有 5 件事」。
+  const tagsByDay = useMemo(() => {
+    const map = new Map<string, CalTag[]>()
+    const byDay = [...items].sort((a, b) => {
+      if (a.time && b.time) return a.time.localeCompare(b.time)
+      if (a.time) return -1
+      if (b.time) return 1
+      return a.createdAt - b.createdAt
+    })
+    for (const it of byDay) {
+      const arr = map.get(it.day)
+      if (arr) arr.push({ time: it.time, text: it.text })
+      else map.set(it.day, [{ time: it.time, text: it.text }])
+    }
+    return map
+  }, [items])
   // 选中日当天的日程（按 done / 时间排序）
   const dayItems = items.filter((it) => it.day === selDay)
   const schedSorted = [...dayItems].sort((a, b) => {
@@ -1583,7 +1686,7 @@ function SchedulePanel(): React.JSX.Element {
   return (
     <div className="sched-split">
       {/* 左栏：月历 */}
-      <MonthCalendar selected={selDay} onSelect={setSelDay} markedDays={markedDays} />
+      <MonthCalendar selected={selDay} onSelect={setSelDay} tagsByDay={tagsByDay} />
       {/* 右栏：当日安排 */}
       <div className="sched-day">
         <div className="sched-day-head">
@@ -2622,9 +2725,22 @@ export default function App(): React.JSX.Element {
                 <span className="autostart-dot" />
                 {autoStart === null ? '自启…' : autoStart ? '自启开' : '自启关'}
               </button>
-              {/* 完成度缩小为「0/0」纯数字，置于自启开关正下方（用户 m02643） */}
+              {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
+                  右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
+                  e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}
               {page === 0 && (
                 <span className="todo-stat">
+                  <svg className="todo-ring" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle className="todo-ring-bg" cx="12" cy="12" r="9" />
+                    <circle
+                      className={`todo-ring-fg ${todoStats.total > 0 && todoStats.done >= todoStats.total ? 'full' : ''}`}
+                      cx="12"
+                      cy="12"
+                      r="9"
+                      strokeDasharray={RING_CIRC}
+                      strokeDashoffset={RING_CIRC * (1 - (todoStats.total > 0 ? todoStats.done / todoStats.total : 0))}
+                    />
+                  </svg>
                   <b className="todo-count">
                     {todoStats.done}/{todoStats.total}
                   </b>

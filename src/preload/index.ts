@@ -37,6 +37,11 @@ export interface NotifyItem {
 export interface NotifyListResult {
   items: NotifyItem[]
   unread: number
+  /**
+   * 已读水位：`item.order > lastOrder` 即未读。
+   * 渲染层用它给未读条目画蓝点（美化-04），只读，不改语义。
+   */
+  lastOrder: number
 }
 
 /** 拖放落盘后的回调登记表（跨闭包广播，不走 ipcRenderer 事件——emit/on 参数语义容易踩坑） */

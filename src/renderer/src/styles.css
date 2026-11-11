@@ -549,15 +549,47 @@ body {
   color: rgba(242, 243, 245, 0.92);
 }
 
-/* 待办完成度（自启开关正下方一行，仅 0/0 纯数字——用户 m02643）：
+/* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。
    绝对定位挂头部右下，不参与 flex 流（width:100% 参流会把标题挤竖排） */
 .todo-stat {
   position: absolute;
   right: 2px;
   top: 100%;
   margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   line-height: 1;
+}
+
+/* 完成度圆环（美化-04）：底环常驻，前景环按完成比例画，顺时针从头开始。
+   24×24 的 viewBox、r=9，正好塞进头部右下那一行。 */
+.todo-ring {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  transform: rotate(-90deg); /* stroke 起点在 3 点钟方向，转 90° 到 12 点 */
+}
+
+.todo-ring-bg {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.14);
+  stroke-width: 3;
+}
+
+.todo-ring-fg {
+  fill: none;
+  stroke: #7dd87d;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 全部做完：环变绿到底并带一点光晕（与待办勾选同色系） */
+.todo-ring-fg.full {
+  stroke: #7dd87d;
+  filter: drop-shadow(0 0 3px rgba(125, 216, 125, 0.5));
 }
 
 .todo-count {
@@ -730,6 +762,60 @@ body {
   color: rgba(242, 243, 245, 0.35);
   text-align: center;
   padding: 18px 0;
+}
+
+/* ===== 美化-04：待办页底部完成度进度条 =====
+   细轨 + 圆头填充 + 百分比。填充用 transform: scaleX 而不是改 width——
+   浏览器可以直接合成，不会触发重排，切页时也不抖。 */
+.todo-progress {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 2px 0;
+}
+
+.todo-progress-bar {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.todo-progress-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, #7dd87d, #9ee79e);
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* 全部完成：填充变成实心绿并带一点外侧光晕 */
+.todo-progress-fill.full {
+  background: #7dd87d;
+  box-shadow: 0 0 6px rgba(125, 216, 125, 0.45);
+}
+
+.todo-progress-text {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: rgba(242, 243, 245, 0.4);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.todo-progress-text b {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(242, 243, 245, 0.72);
 }
 
 .todo-item {
@@ -1525,15 +1611,24 @@ body {
   border-radius: 8px;
   cursor: pointer;
   line-height: 1;
+  /* 美化-04：格子变成纵向布局——日期数字在上，当天安排的小标签在下 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
 }
 
 .cal-day:hover {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* 今天：实心高亮（美化-04 从淡蓝底改成实心）。
+   与「选中日」的区别靠色相：今天用白/浅灰实心，选中日用蓝实心（选中优先）。
+   两者同时命中时 selected 规则在后面，覆盖成蓝色——用户点今天时仍是蓝色选中态。 */
 .cal-day.today {
-  background: rgba(100, 181, 246, 0.22);
-  color: #aed6ff;
+  background: rgba(242, 243, 245, 0.9);
+  color: #0b0e14;
   font-weight: 700;
 }
 
@@ -1543,7 +1638,76 @@ body {
   font-weight: 700;
 }
 
-/* 有安排的日子：底部蓝点 */
+/* 今天同时被选中（默认就是这个状态：打开日程页默认选今天）：
+   底色仍是选中的蓝，但加一圈浅色内描边，让「这是今天」和「这是我点的某一天」区分开。
+   没有这一条时，用户把选中移到别的日子就再也看不出今天在哪。 */
+.cal-day.today.selected {
+  box-shadow: inset 0 0 0 1.5px rgba(242, 243, 245, 0.9);
+}
+
+/* 日期数字（与标签分开一层，方便 today/selected 上色不误伤标签） */
+.cal-num {
+  line-height: 1;
+}
+
+/* 当天安排的小标签堆（美化-04）：每格最多 2 条，其余折成「+N」 */
+.cal-tags {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  padding: 0 1px;
+}
+
+.cal-tag {
+  display: block;
+  font-size: 7.5px;
+  line-height: 1.25;
+  padding: 0 2px;
+  border-radius: 3px;
+  color: rgba(174, 214, 255, 0.95);
+  background: rgba(100, 181, 246, 0.18);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+/* 标签里的时间（有时间的日程才显示），比标题更亮一点 */
+.cal-tag b {
+  font-weight: 700;
+  margin-right: 1px;
+  color: #cfe6ff;
+}
+
+.cal-more {
+  font-size: 7.5px;
+  line-height: 1.25;
+  padding-left: 2px;
+  color: rgba(242, 243, 245, 0.45);
+  text-align: left;
+}
+
+/* 选中日/今天的整格反色时，标签不要跟着变难看：保持自身底色，只把文字提亮 */
+.cal-day.today .cal-tag,
+.cal-day.selected .cal-tag {
+  color: #0b0e14;
+  background: rgba(11, 14, 20, 0.16);
+}
+
+.cal-day.today .cal-tag b,
+.cal-day.selected .cal-tag b {
+  color: #0b0e14;
+}
+
+.cal-day.today .cal-more,
+.cal-day.selected .cal-more {
+  color: rgba(11, 14, 20, 0.6);
+}
+
+/* 有安排的日子：底部蓝点（保留，和标签并存——标签可能被 today/selected 反色盖住视觉） */
 .cal-mark {
   position: absolute;
   left: 50%;
@@ -1557,6 +1721,12 @@ body {
 
 .cal-day.selected .cal-mark {
   background: #0b0e14;
+}
+
+/* 有标签的格子不再重复画蓝点（标签本身已经说明「这天有安排」），
+   但保留 .cal-mark 节点以兼容依赖它的 e2e（隐藏视觉、保留 DOM）。 */
+.cal-day.has-tag .cal-mark {
+  display: none;
 }
 
 /* 待办徽标（日程页混排里的待办项） */
@@ -1890,6 +2060,51 @@ body {
   flex-direction: row;
   align-items: flex-start;
   gap: 7px;
+}
+
+/* ===== 美化-04：通知条目右侧（未读蓝点 + 时间 + 打开）=====
+   条目是 flex 行：正文按钮 flex:1，右侧这一列 flex:none，永远贴在条目右缘。 */
+.notify-side {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 未读小蓝点：和 boardui 通知中心同一个位置（时间左边） */
+.notify-unread {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64b5f6;
+  box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.16);
+}
+
+/* 「打开」按钮：常驻但压得很淡（0.5），鼠标进条目或键盘 focus 时才亮起来。
+   一开始做成完全隐藏（opacity:0）过——截图自检发现用户根本找不到这个按钮，
+   通知条目只有「打开来源应用」这一个真能用动作，藏起来等于没有。 */
+.notify-open {
+  border: none;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-family: inherit;
+  line-height: 1.5;
+  color: rgba(242, 243, 245, 0.55);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms, background 120ms, color 120ms;
+}
+
+.notify-item:hover .notify-open,
+.notify-open:focus-visible {
+  opacity: 1;
+}
+
+.notify-open:hover {
+  background: rgba(140, 110, 255, 0.28);
+  color: #f2f3f5;
 }
 
 .shelf-actions {

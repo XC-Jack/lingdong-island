@@ -318,15 +318,19 @@ export function setupNotifyStore(): void {
   pollTimer = setInterval(() => void refresh(), POLL_MS)
   watchDatabase()
 
-  ipcMain.handle('notify:list', () => ({ items: visibleItems(), unread: unreadCount() }))
+  // lastOrder = 已读水位：渲染层用它判断「这一条是不是未读」（order > lastOrder 即未读），
+  // 用来给未读条目画蓝点（美化-04）。只读暴露，读到什么就是什么。
+  ipcMain.handle('notify:list', () => ({ items: visibleItems(), unread: unreadCount(), lastOrder: readMark() }))
   ipcMain.handle('notify:mark-read', () => {
     markAllRead()
     return unreadCount()
   })
-  ipcMain.handle('notify:refresh', () => refresh().then(() => ({ items: visibleItems(), unread: unreadCount() })))
+  ipcMain.handle('notify:refresh', () =>
+    refresh().then(() => ({ items: visibleItems(), unread: unreadCount(), lastOrder: readMark() }))
+  )
   ipcMain.handle('notify:clear-all', () => {
     clearAll()
-    return { items: visibleItems(), unread: unreadCount() }
+    return { items: visibleItems(), unread: unreadCount(), lastOrder: readMark() }
   })
   ipcMain.handle('notify:open-source', (_e, appName: string, launch: string | null) => openSource(appName, launch))
 }
