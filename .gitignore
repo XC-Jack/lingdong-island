@@ -26,3 +26,4 @@ desktop.ini
 .env
 .env.*
 .dsh-vision-router/
+.tmp-e2e-schedule-backup.json
