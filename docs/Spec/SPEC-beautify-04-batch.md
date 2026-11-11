@@ -108,4 +108,11 @@
 
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
 |---|---|---|---|---|
-| — | 待批量验收（按 `docs/工程规则.md` 第三节第 5 条，本轮不单独验收） | — | — | — |
+**2026-11-12 00:0x（独立验收 · verifier-batch-2，fresh context，未参与实现）**：与本批 `SPEC-island-compact.md` 一起验收，针对 `a54d9af`（工作树 = `95bbaff`）。结论 **通过**，本条无 ❌。
+
+- **通知页**：未读蓝点在条目最右端（N3 断言逐个校验 `parent.classList.contains('notify-side')` + `parent.lastElementChild === dot` + 右沿差 ≤8px）；「打开」按钮已不存在（N4 `opens === 0`）；**非通知页来通知未读数也会跟着变**（本条是本批修的 bug，验收方在预览版展开停在待办页时注入真实 Windows toast，主进程 `unread 0→1`、铃铛 aria-label 791 ms 内更新）。
+- **待办页**：圆环与数字在 `.panel-head` 内正常流（`statTop=20 < headBottom=47`），不再压住输入框的＋按钮；`.todo-count` 文本仍是严格 `n/m`；底部进度条 `scaleX` 随完成度变化（T9 负对照：固定 `scaleX(0)` 后立刻报 `scaleX=0` 失败）。
+- **日历**：格内不再有标签（C3 `tags=0`）、有安排的日子标一个点（C4/C5）、30 格全等高（C6 `min=max=18`）、今天不再是白底（C2，实测 `rgb(100,181,246)` 蓝实心）、日期数字仍是格子文本（C7）。
+- **防恒真**：验收方对 3 条断言做了负对照（翻页、进度条、蓝点位置），改坏产品代码后**全部按预期失败**并 exit=1，`finally` 无条件还原，跑完 `git status --short` 为空。
+- 回归复现：`e2e-beautify-04` 27/0、`e2e-pages-custom` 6 项、`e2e-code-hint` 10/0、`e2e-settings-shell` 51/0、`e2e-todo-today`/`e2e-collapsed-todo`/`e2e-schedule-day` PASS、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-scroll` 6/0、`e2e-notify-compact` 2/0、`e2e-notify-icon` 8/0。
+- 未验证范围：真实鼠标手感、高 DPI 观感、通知库满载截断、SMTC、长时间稳定性。报告：`.tmp/独立验收-a54d9af.md`。
