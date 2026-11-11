@@ -1277,32 +1277,15 @@ function NotifyPanel({
   }, [])
 
   /**
-   * 条目右侧那一列（美化-04）：未读蓝点 + 相对时间 +（可选）「打开」按钮。
-   * 桌面通知中心常见形态。组/会话条的正文点击已经被「展开/收起」占用（US-040 两级堆叠），
-   * 所以这两层需要一个明确的动作按钮；具体条目正文本来就是「点开来源应用」，不再重复给按钮。
+   * 条目右侧那一列（美化-04）：相对时间 + 未读蓝点（蓝点固定在最右端）。
+   * 2026-11-11 用户实机反馈后调整：①去掉原来的「打开」按钮（点了没效果，正文点击已经能打开，
+   * 组/会话条的正文点击被「展开/收起」占用，要打开就展开到底层条目再点）；②蓝点从时间左边
+   * 挪到时间右边，成为整行的最右端标记，扫一眼就能看出哪几条没读。
    */
-  const renderSide = (
-    arrival: number,
-    unread: boolean,
-    onOpen?: () => void
-  ): React.JSX.Element => (
+  const renderSide = (arrival: number, unread: boolean): React.JSX.Element => (
     <span className="notify-side">
-      {unread && <i className="notify-unread" title="未读" />}
       <span className="notify-time">{fmtRel(arrival)}</span>
-      {onOpen && (
-        <button
-          type="button"
-          className="notify-open"
-          title="打开来源应用"
-          aria-label="打开来源应用"
-          onClick={(e) => {
-            e.stopPropagation()
-            onOpen()
-          }}
-        >
-          打开
-        </button>
-      )}
+      {unread && <i className="notify-unread" title="未读" />}
     </span>
   )
 
@@ -1402,7 +1385,7 @@ function NotifyPanel({
                     {latest.body && <span className="notify-text">{latest.body}</span>}
                   </span>
                 </button>
-                {renderSide(latest.arrival, latest.order > lastOrder, () => openOne(latest))}
+                {renderSide(latest.arrival, latest.order > lastOrder)}
                 {isOpen && (
                   <ul className="notify-sublist">
                     {[...threads.values()].map((tList) => {
@@ -1436,7 +1419,7 @@ function NotifyPanel({
                               {tLatest.body && <span className="notify-text">{tLatest.body}</span>}
                             </span>
                           </button>
-                          {renderSide(tLatest.arrival, tLatest.order > lastOrder, () => openOne(tLatest))}
+                          {renderSide(tLatest.arrival, tLatest.order > lastOrder)}
                           {tOpen && (
                             <ul className="notify-sublist">
                               {tList.map((it) => (
@@ -1476,21 +1459,15 @@ function NotifyPanel({
   )
 }
 
-/** 日历格内的小标签数据（美化-04）：当天有安排就在格子里直接显示 */
-interface CalTag {
-  time: string | null
-  text: string
-}
-
-/** 月历：本月网格（周一为首），今天实心高亮，格内直接显示当天日程小标签，可点选日期 */
+/** 月历：本月网格（周一为首），今天实心高亮，有安排的日子底部一个小蓝点，可点选日期 */
 function MonthCalendar({
   selected,
   onSelect,
-  tagsByDay,
+  markedDays,
 }: {
   selected: string // YYYY-MM-DD
   onSelect: (day: string) => void
-  tagsByDay: Map<string, CalTag[]> // 每天的安排（已按时间排好）
+  markedDays: Set<string> // 有安排的日子
 }): React.JSX.Element {
   const [viewYear, setViewYear] = useState(() => Number(selected.slice(0, 4)))
   const [viewMonth, setViewMonth] = useState(() => Number(selected.slice(5, 7)) - 1) // 0-based
@@ -1541,34 +1518,17 @@ function MonthCalendar({
         {cells.map((day, i) => {
           if (day === null) return <span key={`e${i}`} />
           const key = dayKey(day)
-          const tags = tagsByDay.get(key) ?? []
-          // 美化-04：格内最多显示 2 条，超出的折成「+N」——boardui 月历的做法。
-          // 格子只有约 30px 宽，再多就会把数字挤没。
-          const shown = tags.slice(0, 2)
-          const more = tags.length - shown.length
+          const has = markedDays.has(key)
           return (
             <button
               key={day}
               type="button"
-              className={`cal-day ${key === todayKey ? 'today' : ''} ${key === selected ? 'selected' : ''} ${
-                tags.length > 0 ? 'has-tag' : ''
-              }`}
+              className={`cal-day ${key === todayKey ? 'today' : ''} ${key === selected ? 'selected' : ''}`}
               aria-label={`选择 ${viewMonth + 1} 月 ${day} 日`}
               onClick={() => onSelect(key)}
             >
-              <span className="cal-num">{day}</span>
-              {tags.length > 0 && (
-                <span className="cal-tags">
-                  {shown.map((t, ti) => (
-                    <span key={ti} className="cal-tag" title={`${t.time ? t.time + ' ' : ''}${t.text}`}>
-                      {t.time && <b>{t.time}</b>}
-                      {t.text}
-                    </span>
-                  ))}
-                  {more > 0 && <span className="cal-more">+{more}</span>}
-                </span>
-              )}
-              {tags.length > 0 && <i className="cal-mark" />}
+              {day}
+              {has && <i className="cal-mark" />}
             </button>
           )
         })}
@@ -1651,23 +1611,9 @@ function SchedulePanel(): React.JSX.Element {
 
   // 今天（本地时区），用于「待办只在今天混排」与过期判定
   const todayKey = localDayKey()
-  // 美化-04：日历格内直接显示当天安排（时间 + 标题），按时间排好。
-  // 只列日程，不把待办塞进格子——待办没有日期归属，塞进去会误导「今天有 5 件事」。
-  const tagsByDay = useMemo(() => {
-    const map = new Map<string, CalTag[]>()
-    const byDay = [...items].sort((a, b) => {
-      if (a.time && b.time) return a.time.localeCompare(b.time)
-      if (a.time) return -1
-      if (b.time) return 1
-      return a.createdAt - b.createdAt
-    })
-    for (const it of byDay) {
-      const arr = map.get(it.day)
-      if (arr) arr.push({ time: it.time, text: it.text })
-      else map.set(it.day, [{ time: it.time, text: it.text }])
-    }
-    return map
-  }, [items])
+  // 日历上「有安排」的日子：只用来画底部小蓝点，格子里不放文字。
+  // 2026-11-11 用户实机反馈：格内小标签会把那一行撑高、破坏对齐，改回只标一个点。
+  const markedDays = useMemo(() => new Set<string>(items.map((it) => it.day)), [items])
   // 选中日当天的日程（按 done / 时间排序）
   const dayItems = items.filter((it) => it.day === selDay)
   const schedSorted = [...dayItems].sort((a, b) => {
@@ -1686,7 +1632,7 @@ function SchedulePanel(): React.JSX.Element {
   return (
     <div className="sched-split">
       {/* 左栏：月历 */}
-      <MonthCalendar selected={selDay} onSelect={setSelDay} tagsByDay={tagsByDay} />
+      <MonthCalendar selected={selDay} onSelect={setSelDay} markedDays={markedDays} />
       {/* 右栏：当日安排 */}
       <div className="sched-day">
         <div className="sched-day-head">

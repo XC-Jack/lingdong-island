@@ -1,14 +1,15 @@
 // e2e-beautify-04.mjs —— 界面美化 4 项（SPEC-beautify-04-batch）断言
 //
 // 覆盖：
-//   N1-N4  通知页：未读蓝点按已读水位出现 / 点「已读」后消失 / 组条与会话条有「打开」按钮
+//   N1-N4  通知页：未读蓝点按已读水位出现 / 点「已读」后消失 / 蓝点落在条目最右端 / 不再有「打开」按钮
 //   T1-T6  待办页：头部完成度圆环存在、周长达标、dashoffset 随完成比例变化、.todo-count 文本仍是 n/m、
 //          底部进度条 fill 的 scaleX 随比例变化、0% 时宽度为 0
-//   C1-C5  日程页：今天实心高亮（与选中日不同）、格内最多 2 条标签、超出显示 +N 且数字正确、
-//          标签文本含时间、aria-label 仍是「选择 M 月 D 日」
+//   C1-C8  日程页：今天实心高亮、格内不再有标签（用户 2026-11-11 要求改回只用一个点）、
+//          有安排的日子有一个可见蓝点、所有格子等高对称、日期数字仍是格子文本、aria-label 不变
 //
 // 前置：data 在 .tmp/e2e-userdata（isolate-userdata 重定向 APPDATA）；
-//       通知来自真实系统通知库，若库里没有任何通知，N1-N4 会 skip 并写明原因（不算失败）。
+//       通知来自真实系统通知库，若库里没有任何通知，N1/N2 会 skip 并写明原因（不算失败）。
+//       2026-11-11 用户实机反馈后本脚本改了断言：删「打开」按钮、蓝点放最右、日历只标点不塞标签。
 // 用法：node scripts/e2e-beautify-04.mjs
 import { spawn, execSync } from './isolate-userdata.mjs'
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'node:fs'
@@ -48,6 +49,14 @@ function localDay(d) {
 }
 const day0 = new Date()
 const todayKey = localDay(day0)
+// 本月内另一个「有安排但不是今天」的日子：用来验证非今天的格子也只靠一个蓝点（C5）。
+// 先试 +2 天，若跨月就退回 -2 天，保证落在同一个月历里。
+const day2 = (() => {
+  const plus2 = new Date(day0.getTime() + 2 * 24 * 3600 * 1000)
+  if (plus2.getMonth() === day0.getMonth()) return plus2
+  return new Date(day0.getTime() - 2 * 24 * 3600 * 1000)
+})()
+const day2Key = localDay(day2)
 const m = day0.getMonth() + 1
 const d = day0.getDate()
 
@@ -76,7 +85,8 @@ function writePrefs() {
   )
 }
 
-// 今天 3 条日程（其中 2 条带时间）+ 1 条待办：完成度 0/4，日历格内应 2 标签 + 「+1 更多」
+// 今天 3 条日程（其中 2 条带时间）+ 1 条 2 天后的日程 + 1 条待办：
+// 完成度 0/4；日历上今天与 2 天后各应有一个蓝点，格内不再有标签。
 writeFileSync(
   SCHEDULE_JSON,
   JSON.stringify(
@@ -84,7 +94,8 @@ writeFileSync(
       items: [
         { id: 'b4-s1', text: 'b4-九点的会', day: todayKey, time: '09:00', done: false, reminded: true, createdAt: 1 },
         { id: 'b4-s2', text: 'b4-下午评审', day: todayKey, time: '14:30', done: false, reminded: true, createdAt: 2 },
-        { id: 'b4-s3', text: 'b4-晚上复盘', day: todayKey, time: null, done: false, reminded: true, createdAt: 3 }
+        { id: 'b4-s3', text: 'b4-晚上复盘', day: todayKey, time: null, done: false, reminded: true, createdAt: 3 },
+        { id: 'b4-s4', text: 'b4-两天后', day: day2Key, time: '10:00', done: false, reminded: true, createdAt: 4 }
       ]
     },
     null,
@@ -209,10 +220,24 @@ const main = async () => {
 
     const nstat = await islandEval(`(() => {
       const groups = [...document.querySelectorAll('.notify-list > .notify-group')]
+      const sides = [...document.querySelectorAll('.notify-side')]
+      // 蓝点必须是所在条目右侧那一列的最后一个子元素（用户 2026-11-11 要求「蓝点放最右」）
+      const unreadDots = [...document.querySelectorAll('.notify-unread')]
+      const dotsAtRightEdge = unreadDots.every((dot) => {
+        const parent = dot.parentElement
+        if (!parent || !parent.classList.contains('notify-side')) return false
+        if (parent.lastElementChild !== dot) return false
+        const pr = parent.getBoundingClientRect()
+        const dr = dot.getBoundingClientRect()
+        // 蓝点中心应在这一列右缘 8px 内
+        return Math.abs(dr.right - pr.right) <= 8
+      })
       return JSON.stringify({
         groups: groups.length,
-        unread: document.querySelectorAll('.notify-unread').length,
-        opens: document.querySelectorAll('.notify-open').length,
+        sides: sides.length,
+        unread: unreadDots.length,
+        dotsAtRightEdge,
+        opens: document.querySelectorAll('.notify-open, .notify-side button').length,
         empty: !!document.querySelector('.notify-empty')
       })
     })()`)
@@ -220,10 +245,10 @@ const main = async () => {
     if (ns.groups === 0) {
       skipped('N1 未读蓝点数量 = 未读条数', '系统通知库当前为空')
       skipped('N2 点「已读」后蓝点清零', '系统通知库当前为空')
-      skipped('N3 组条与会话条有「打开」按钮', '系统通知库当前为空')
     } else {
       ok('N1 未读蓝点数量 = 未读组数（水位 0 时全部未读）', ns.unread === ns.groups, `unread=${ns.unread} groups=${ns.groups}`)
-      ok('N3 每个组条一个「打开」按钮', ns.opens >= ns.groups, `opens=${ns.opens} groups=${ns.groups}`)
+      ok('N3 未读蓝点都在条目最右端（时间右边、无按钮跟着）', ns.dotsAtRightEdge === true, `dots=${ns.unread} rightEdge=${ns.dotsAtRightEdge}`)
+      ok('N4 条目右侧不再有「打开」按钮（用户要求去掉）', ns.opens === 0, `buttons=${ns.opens}`)
 
       await islandEval(`(() => { const b = document.querySelector('.shelf-toolbar [aria-label="全部标为已读"]'); if (b) b.click(); return 'ok' })()`)
       await sleep(1200)
@@ -306,22 +331,28 @@ const main = async () => {
       const cell = cells.find((b) => b.getAttribute('aria-label') === label)
       if (!cell) return JSON.stringify({ found: false })
       const cs = getComputedStyle(cell)
-      const tags = [...cell.querySelectorAll('.cal-tag')]
-      const more = cell.querySelector('.cal-more')
       const num = cell.querySelector('.cal-num')
-      // 找一个「选中但非今天」的格子作对比
-      const sel = cells.find((b) => b.classList.contains('selected') && !b.classList.contains('today'))
+      const mark = cell.querySelector('.cal-mark')
+      const markCs = mark ? getComputedStyle(mark) : null
+      // 对称性：所有可见格子的高度必须一致（用户 2026-11-11 反馈「今天那行被撑高」）
+      const heights = cells.map((b) => Math.round(b.getBoundingClientRect().height))
+      const minH = Math.min(...heights)
+      const maxH = Math.max(...heights)
+      // 找另一个「有安排但不是今天」的格子，确认它也只靠蓝点表达
+      const other = cells.find((b) => b !== cell && b.querySelector('.cal-mark'))
       return JSON.stringify({
         found: true,
         today: cell.classList.contains('today'),
         selected: cell.classList.contains('selected'),
         bg: cs.backgroundColor,
-        tagCount: tags.length,
-        tagTexts: tags.map((t) => t.textContent.trim()),
-        hasBoldTime: tags.some((t) => !!t.querySelector('b')),
-        more: more ? more.textContent.trim() : null,
-        numText: num ? num.textContent.trim() : null,
-        firstText: cell.textContent.trim().slice(0, 3),
+        tagCount: cell.querySelectorAll('.cal-tag, .cal-tags, .cal-more').length,
+        markCount: cell.querySelectorAll('.cal-mark').length,
+        markVisible: !!(mark && markCs && markCs.display !== 'none' && parseFloat(markCs.width) > 0),
+        numText: num ? num.textContent.trim() : cell.textContent.trim(),
+        cellText: cell.textContent.trim(),
+        minH, maxH,
+        allHeightsEqual: maxH - minH <= 1,
+        otherMarked: !!other,
         ariaOk: cell.getAttribute('aria-label') === label
       })
     })()`)
@@ -335,11 +366,12 @@ const main = async () => {
       const a = parts.length > 3 ? parts[3] : 1
       return a >= 0.8
     })(), `bg=${cv.bg}`)
-    ok('C3 格内最多 2 条标签（3 条日程 → 2 个标签）', cv.tagCount === 2, `tags=${cv.tagCount}`)
-    ok('C4 超出的折成「+1」', cv.more === '+1', `more=${cv.more}`)
-    ok('C5 标签里带时间（09:00 / 14:30 有 <b>）', cv.hasBoldTime === true, JSON.stringify(cv.tagTexts))
-    ok('C6 日期数字仍在该格文本最前面（e2e 靠 startsWith 找格子）', cv.numText === String(d), `num=${cv.numText} first=${cv.firstText}`)
-    ok('C7 aria-label 保持「选择 M 月 D 日」', cv.ariaOk === true)
+    ok('C3 格内不再有日程标签（用户要求改回只用一个点）', cv.tagCount === 0, `tags=${cv.tagCount}`)
+    ok('C4 有安排的日子该格有一个可见的蓝点', cv.markCount === 1 && cv.markVisible === true, `mark=${cv.markCount} visible=${cv.markVisible}`)
+    ok('C5 其它有安排的日子同样有点', cv.otherMarked === true, `otherMarked=${cv.otherMarked}`)
+    ok('C6 所有日历格等高对称（不因今天有任务被撑高）', cv.allHeightsEqual === true, `min=${cv.minH} max=${cv.maxH}`)
+    ok('C7 日期数字仍是该格文本（e2e 靠 startsWith 找格子）', cv.numText === String(d) && cv.cellText === String(d), `num=${cv.numText} text=${cv.cellText}`)
+    ok('C8 aria-label 保持「选择 M 月 D 日」', cv.ariaOk === true)
 
     console.log(`\nE2E BEAUTIFY-04: ${fail === 0 ? 'PASS' : 'FAIL'}（${pass} 过 / ${fail} 败 / ${skip} 跳过）`)
   } finally {
