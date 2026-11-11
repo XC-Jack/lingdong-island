@@ -21,17 +21,17 @@ import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
  * 可能不被合成器画出（实机截屏五轮验证：横幅 DOM/窗口尺寸全对但屏幕无像素）。
  * 常驻透明区靠 Windows 透明窗口 per-pixel 命中测试：透明像素点击自动穿透到下层窗口。
  */
-const COLLAPSED_WIN_HEIGHT = 88
+const COLLAPSED_WIN_HEIGHT = 66
 /** 收起态宽度上下限（防过窄/过宽） */
-const COLLAPSED_MIN_W = 150
-const COLLAPSED_MAX_W = 320
+const COLLAPSED_MIN_W = 113
+const COLLAPSED_MAX_W = 240
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
-let collapsedWidth = 190
+let collapsedWidth = 143
 /** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
-const EXPANDED_MIN = { width: 420, height: 220 }
-const EXPANDED_MAX = { width: 720, height: 420 }
+const EXPANDED_MIN = { width: 315, height: 165 }
+const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的，默认值给个合理初始） */
-let expandedSize = { width: 560, height: 300 }
+let expandedSize = { width: 420, height: 225 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
 /** 过渡动画时长（毫秒）。用户实测 220ms 太急，调到 500ms（US-038 验收反馈，用户嫌 320 仍快） */
