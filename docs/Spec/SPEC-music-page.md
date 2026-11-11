@@ -93,6 +93,9 @@
 | 2026-11-11 | 回归 `node scripts/e2e-head-order.mjs` | **PASS 14 过 / 0 败** | — |
 | 2026-11-11 | 回归 `node scripts/e2e-pages-custom.mjs` | **PASS 6 项通过** | — |
 | 2026-11-11 | 回归 `e2e-export.mjs`、`e2e-bell-notify.mjs`、`e2e-shelf-view-pref.mjs`、`e2e-exit-and-shelf-view.mjs` | 全 PASS（bell-notify 15 过 / 0 败） | — |
+| 2026-11-11 | 打包装机 | `release/灵动岛 Setup 0.1.0.exe` 122108600 B（17:17:44）静默装到 `D:\软件\灵动岛\`；装机 `resources/app.asar` 9215990 B、SHA256 `8C9BB1030B110204A14E9CE70A69204D0685F5D4DB931E4A36513F5FF15CF22A`（上一版 `26C73E76…C9C757`） | — |
+| 2026-11-11 | 从装机 asar 抽出 `out/main/index.js` 核对（`npx asar extract`） | 81825 B；`@($sessions)[$idx]` **命中 2 处**、裸索引 `$s = $sessions[$idx]` **0 处** —— 装进去的确实是修好的版本 | — |
+| 2026-11-11 | 装机版多会话验证（`.tmp/verify-installed-multi.mjs`，用 `.tmp/multi-session-probe.ps1` 造场景） | **PASS 6 过 / 0 败**：场景 `SESSIONS=3`，`i=0 bare=obj`（PotPlayer）、`i=1 bare=NULL wrapped=obj status=Playing`、`i=2 bare=NULL wrapped=obj`——正在播放的确实在索引 1；装机版 `musicGet()` 返回 `{"active":true,"playing":true,"app":"powershell.exe","position":6,"duration":30}`，不是被暂停的 PotPlayer、不是空态 | 假会话用静音 wav 无元数据，故 `title` 为空是预期 |
 | 2026-11-11 | 桥接脚本单测（`.tmp/test-fix.mjs` + `fix-candidate.ps1`） | 读到真实会话 `{"active":true,"title":"世界上根本没有这种夜露_BV1FKpP6NEcq.mp4","position":32.2,"duration":364.2,"playing":true,"app":"PotPlayerMini64.exe"}`；`toggle` 回 `{"ok":true}` 且 `playing` 真翻转 | — |
 
 ### 开发过程中修掉的三个真实缺陷（供验收复核）
@@ -113,4 +116,7 @@
 
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
 |---|---|---|---|---|
-| 待填 | | | | |
+| 2026-11-11 第一轮 | `verifier-music`（未参与实现的独立会话） | `e557daf` | 12 条：9 ✅ / 1 ⚠️（第 2 条 e2e 不可作依据）/ 1 ❌（验收记录待填）；第 11 条 SPEC 未勾但验收方实测通过 | **不通过，阻断 2 条** |
+| 2026-11-11 第一轮阻断项 | 同上，报告 `.tmp/独立验收-e557daf.md` | | **B1（产品缺陷）** `src/main/smtcScript.ts:93`/`:117` 裸索引 `$sessions[$idx]` 只在 `[0]` 有效，`[1]` 起回 `$null` → 多会话时恒空态；**B2（e2e 假绿）** `scripts/e2e-music.mjs:176` 把「本机真没会话」与「有会话但读不到」都走 `skip()`，且脚本失败时退出码仍为 0 | |
+| 2026-11-11 第一轮已修复 | Lead | `0935273` | B1：两处改 `@($sessions)[$idx]`，订正写反的注释，未知命令不再吐两条 ack；B2：新增独立 `countSessions()` 判「有会话却读不到」为失败（M2a0）、末尾 `process.exit(failed>0?1:0)`、`startApp` 改轮询 CDP 就绪；新增 `scripts/e2e-music-session.mjs` 多会话回归并用负对照证明有判别力（裸索引 5 过 5 败 → 修好 10 过 0 败） | 待第二轮复验 |
+| 2026-11-11 第一轮不阻断项处理 | Lead | `0935273` | 未知命令双 ack 已修、空 `catch` 补说明、SPEC 第 6 条勾选口径已明确、`docs/状态.md` 过期表述已改、装机版已重打（含 B1 修复） | |
