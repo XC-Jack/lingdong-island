@@ -6,6 +6,11 @@
   padding: 0;
 }
 
+/* 整体迷你化（2026-11-11 用户要求「各个界面整体比例小一点，迷你一点」，SPEC-island-compact）。
+   一处 zoom 等比缩小整棵子树，字号/图标/内边距/圆角全部跟着缩，不用逐条改两千多行里的具体像素值。
+   注意必须挂在 .app 上、不能挂 html：挂 html 时视口 CSS 宽度跟着缩小（实测 innerWidth 190→114），
+   而渲染层量出来的岛宽是缩小后的 142，比视口还宽 → 岛被横向裁掉。挂 .app 时视口不变、只有内容缩。
+   主进程的窗口尺寸上下限同步按 0.75 收缩，窗口边缘仍紧贴岛边缘。 */
 html,
 body,
 #root {
@@ -25,6 +30,9 @@ body {
 
 /* 窗口是矩形，但视觉上只画中间那一块 */
 .app {
+  /* 注意：不要写成 calc(100% / 0.75)。zoom 元素里的百分比是相对父级「换算到本元素缩放坐标系」后的宽度
+     解析的（父级 316 → 100% = 421 布局 px），再除以 0.75 会变成 562，比窗口宽一倍，
+     岛在其中居中就跑到窗口右边被裁（实测岛左沿 53、右沿 368 > 窗口 316）。保持 100% 正好。 */
   width: 100%;
   height: 100%;
   display: flex;
@@ -33,6 +41,11 @@ body {
   /* 横幅锚点：.collapsed-banner 挂在 .app 下（island 的兄弟节点），相对整个窗口定位
      （不能挂 island 内——island overflow:hidden 会把超出胶囊边界的横幅整个裁掉） */
   position: relative;
+  /* 整体迷你化（2026-11-11 用户要求「各个界面整体比例小一点，迷你一点」，SPEC-island-compact）：
+     一处 zoom 等比缩小整棵子树，字号/图标/内边距/圆角全部跟着缩，不用逐条改两千多行里的像素值。
+     必须挂 .app 上、不能挂 html：挂 html 时视口 CSS 宽度也一起缩（实测 innerWidth 190→114），
+     而量出来的岛宽还是 142，比视口宽 → 横向被裁。挂这里只缩内容，视口尺寸不变。 */
+  zoom: 0.75;
 }
 
 .island {
@@ -53,10 +66,17 @@ body {
   min-height: 0;
   /* panel-body 是 align-items:flex-start（子项默认取内容高度，可超出容器被窗口裁掉）；
      align-self:stretch 把本块压回 panel-body 的实际高度，列表超长时让 .todo-list 自己滚（US-037）。
-     只影响垂直方向，各页水平 max-content 布局不受影响。 */
+     只影响垂直方向。 */
   align-self: stretch;
   display: flex;
   flex-direction: column;
+  /* 2026-11-11：岛改成固定宽度后，flex 子项默认 min-width:auto 会让宽内容（日程页的
+     日历+列表）顶出岛右缘被 overflow:hidden 裁掉。加 min-width:0 允许被压窄，
+     超出的部分由各自内部处理（列表省略号 / 内部滚动）。 */
+  min-width: 0;
+  /* 宽度跟随岛内可用宽度；以前靠 max-content 撑开是因为岛宽按内容自适应，
+     现在岛宽固定，撑开只会溢出。 */
+  width: 100%;
 }
 
 /* 置物架/通知页：内容宽度自适应，但工具条必须贴岛右缘（与头部右侧对齐），
@@ -82,14 +102,15 @@ body {
 }
 
 .island.expanded {
-  /* 宽高随内容自然撑开（参照视频各页按内容收紧），上限由主进程 clamp */
+  /* 固定尺寸（2026-11-11 用户要求「不希望添加任务会拉伸界面，通知页和待办页也一样」）。
+     原来是 width/height: max-content + min/max 区间，内容多了岛就长高、日程页还比别的页宽 100px，
+     翻页和加条目时整块跟着跳。现在各页统一尺寸，内容超出就在列表内部滚动。
+     布局 px（zoom 0.75 之后视觉 330×189）；主进程 EXPANDED_MIN/MAX 与 expandedSize 按此同步。 */
   flex-shrink: 0;
-  width: max-content;
-  min-width: 420px;
-  max-width: 720px;
-  height: max-content;
-  min-height: 220px;
-  max-height: 420px;
+  /* 高度 320 而不是按 0.75 等比（252）：日程页日历要放表头 + 6 行日期 + 内边距，
+     252 布局 px 下日历底部会被裁掉。320 是实测「日历刚好完整显示（calCH=calSH=203）」的最小值。 */
+  width: 470px;
+  height: 320px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -551,11 +572,9 @@ body {
 
 /* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。
    绝对定位挂头部右下，不参与 flex 流（width:100% 参流会把标题挤竖排） */
+/* 2026-11-11：岛缩到 0.75 后头部变矮，原先 absolute + top:100% 会把「圆环 + n/m」
+   压到下方输入框上（用户截图可见 0/9 盖住＋按钮）。改成头部内的正常流，排在自启开关左边。 */
 .todo-stat {
-  position: absolute;
-  right: 2px;
-  top: 100%;
-  margin-top: 3px;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1507,23 +1526,29 @@ body {
 
 /* ---------- 日程页 ---------- */
 
-/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局） */
+/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局）
+   2026-11-11 用户要求各页尺寸统一、不随内容拉伸，所以这里改成按容器宽度分配
+   （原来 width:max-content 会把岛撑到 416，比别的页宽 100px，翻页时整块跳）。 */
 .sched-split {
   display: flex;
-  gap: 14px;
+  gap: 12px;
   align-items: stretch;
-  width: max-content;
+  width: 100%;
   /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
   min-height: 0;
+  /* 2026-11-11：岛固定宽度后，窄屏下日历(204)+右栏(168)+间距(12) 仍比可用宽度略宽，
+     给左栏加收缩权限，避免整体顶出岛右缘被裁。 */
+  min-width: 0;
 }
 
 /* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
 .sched-day {
   flex: 1;
-  min-width: 252px;
+  min-width: 168px;
   display: flex;
   flex-direction: column;
   min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
+  min-width: 0;
 }
 
 .sched-day-head {
@@ -1549,7 +1574,7 @@ body {
 /* 月历 */
 .cal {
   flex: none;
-  width: 232px;
+  width: 204px;
   display: flex;
   flex-direction: column;
   gap: 4px;

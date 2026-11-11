@@ -2390,16 +2390,21 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded, scheduleCollapse])
 
-  // 翻页（‹ ›）：在被启用的页面里循环（US-032 裁剪后跳过被裁页）；
-  // page 4（页面管理面板）不在轮播集合里，从它翻页先回到第一个启用页
+  // 翻页（‹ ›）：在被启用的页面里逐页走，**到头就停住、不循环**
+  // （2026-11-11 用户实机反馈「一直点左边的切换界面的按键会一直重复…就是一直在第一页和最后一页循环」，
+  //  要求改成不循环。原先用 `% list.length` 取模，点到最后会跳回第一页。）
+  // 注意：这里原来还有一条 `if (p === 4) return list[0]`——那是「page 4 = 页面管理面板」时代的守卫，
+  // 页面管理搬进设置窗口后 4 变成了音乐页，这条残留导致翻到音乐页就被弹回第一页。
   const flipPage = useCallback((dir: 1 | -1) => {
     setPage((p) => {
       const list = enabledPagesRef.current
       if (list.length === 0) return 0
-      if (p === 4) return list[0]
       // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
       let idx = list.indexOf(p)
       if (idx === -1) idx = 0
+      // 2026-11-11 用户确认：要循环翻页 —— 第一页按左回到最后一页、最后一页按右回到第一页。
+      // （上一版改成「到头停住」是因为把「翻到音乐页就弹回第一页」当成循环语义理解的，
+      //   那其实是残留守卫的 bug，已在下面 useEffect 处删掉；循环本身是用户想要的行为。）
       return list[(idx + dir + list.length) % list.length]
     })
   }, [])
@@ -2408,12 +2413,11 @@ export default function App(): React.JSX.Element {
   const enabledPagesRef = useRef(enabledPages)
   enabledPagesRef.current = enabledPages
 
-  // 当前页被裁掉时自动跳到第一个保留页（US-032）；页面管理面板(page 4)不受影响
+  // 当前页被裁掉时自动跳到第一个保留页（US-032）
+  // 2026-11-11 修：原来写 `if (p >= 4) return p`，那是「page 4 = 页面管理面板」时代的豁免——
+  // 页面管理搬走后 4 是音乐页，这行会让「用户裁掉音乐页」时仍然停在音乐页。现在音乐页也照常裁。
   useEffect(() => {
-    setPage((p) => {
-      if (p >= 4) return p
-      return enabledPages.includes(p) ? p : (enabledPages[0] ?? 0)
-    })
+    setPage((p) => (enabledPages.includes(p) ? p : (enabledPages[0] ?? 0)))
   }, [enabledPages])
 
   // 设置窗口改了偏好（SPEC-settings-shell）→ 岛上立刻跟上。
