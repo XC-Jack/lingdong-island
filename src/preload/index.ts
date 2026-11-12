@@ -149,6 +149,17 @@ const api = {
     ipcRenderer.send('pet:show-menu')
   },
   /**
+   * 右键菜单里点了某个动作之后，主进程把它推回来播（SPEC-deskpet-action 第二支）。
+   * 返回取消订阅函数。
+   */
+  onPetAction(cb: (a: 'laugh' | 'roll') => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, a: 'laugh' | 'roll'): void => cb(a)
+    ipcRenderer.on('pet:action', h)
+    return () => {
+      ipcRenderer.removeListener('pet:action', h)
+    }
+  },
+  /**
    * 音乐页（SPEC-music-page / US-031）：读当前播放快照。
    * 首次调用会懒启动主进程里的常驻 PowerShell 桥接（约 50MB），
    * 所以只在渲染层真的要显示音乐页时才调。

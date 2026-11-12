@@ -906,6 +906,123 @@ try {
       ok('P9h-7 大笑素材是两行 sprite sheet（单行会超 WebP 16383px 单边上限被截断）',
         frms === 108 && cols === 54 && Math.ceil(frms / cols) === 2 && laughSize > 500 * 1024,
         JSON.stringify({ 帧数: frms, 列数: cols, 行数: Math.ceil(frms / cols), 字节: laughSize }))
+
+      // ========== P9i 第二支动作「打滚」（SPEC-deskpet-action，2026-11-12 第六轮）==========
+      //
+      // 用户原话「就做挥手打滚」。挥手那段素材里根本没有（视频只有站立/大笑/倒地打滚），
+      // 所以这一轮只落了打滚：82 帧、24 列 × 4 行、每格 165×220。
+      //
+      // 触发入口放右键菜单，不做鼠标手势——「打滚」没有自然的手势能表达，
+      // 硬塞成双击/长按会跟拖动、转身把手抢事件。
+      const colsNow = () => petEval(`document.querySelector('.pet-photo-action')?.dataset.actionCols || ''`)
+      const framesNow = () => petEval(`document.querySelector('.pet-photo-action')?.dataset.actionFrames || ''`)
+
+      /** 让主进程往宠物窗口 send 一个动作（模拟右键菜单那一项被点击） */
+      const pushAction = (a) =>
+        mainEval(`(()=>{
+          const { BrowserWindow } = require('electron');
+          const w = BrowserWindow.getAllWindows().find(x => (x.webContents.getURL() || '').includes('pet.html'));
+          if (!w) throw new Error('没有宠物窗口');
+          w.webContents.send('pet:action', ${JSON.stringify(a)});
+          return 'ok'
+        })()`)
+
+      // 先切回原图皮肤（P9h-6 把它换成了胶囊）
+      await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="photo"]').click(), 'ok')`)
+      await waitForPrefs((p) => p.petSkin === 'photo', 8000, '落盘 petSkin=photo')
+      await sleep(600)
+
+      // 等上一段（P9h-6 在胶囊皮肤上点的那一下）的笑播完再开始。
+      // 注意：胶囊皮肤没有动作素材、不渲染动作层，但 `PetWindowApp` 的动作状态机
+      // 照旧会把它设成 'laugh' 并挂 7.2 秒定时器——所以这里必须等，不能只看
+      // 「DOM 里没有 .pet-photo-action」就认为没在播（第一次就是这么假红的）。
+      for (let i = 0; i < 45 && (await actionNow()) !== 'idle'; i++) await sleep(200)
+
+      ok('P9i-0 打滚之前是 idle', (await actionNow()) === 'idle',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      // 计时：打滚 82 帧 / 15fps ≈ 5.47 秒，比大笑的 7.2 秒短。
+      // 这条能抓住「复位定时器写成一个大笑专用的常量」这种错——
+      // 那样打滚会播完 5.47 秒后还空站 1.7 秒才回 idle。
+      const rollStart = Date.now()
+      await pushAction('roll')
+      await sleep(250)
+      ok('P9i-1 右键菜单那条通道能把「打滚」推进窗口（data-pet-action 变 roll）',
+        (await actionNow()) === 'roll',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      ok('P9i-2 打滚用的是它自己的素材参数（24 列 / 82 帧，不是大笑的 54 列 / 108 帧）',
+        (await colsNow()) === '24' && (await framesNow()) === '82',
+        JSON.stringify({ 列数: await colsNow(), 帧数: await framesNow() }))
+
+      const rollFrames = []
+      for (let i = 0; i < 6; i++) {
+        const f = await frameNow()
+        if (f !== '' && rollFrames[rollFrames.length - 1] !== f) rollFrames.push(f)
+        await sleep(200)
+      }
+      ok('P9i-3 打滚的帧在持续推进（不是卡在第一帧）',
+        rollFrames.length >= 4,
+        JSON.stringify({ 采样到的帧号: rollFrames }))
+
+      // 构图：打滚的格子比大笑宽（165 vs 158 的格宽比），但两者都必须
+      // 与站姿层水平居中、底边一致，否则播放时会「跳到半空」或者左右偏。
+      //
+      // 这条必须放在「等它回 idle」之前：动作层在 idle 时整个从 DOM 移除，
+      // 等完了再来量只会读到 null（无意义的假红）。
+      const rollAlign = await petEval(`(()=>{
+        const stand = document.querySelector('.pet-photo-layer.is-on');
+        const sheet = document.querySelector('.pet-photo-action-sheet');
+        const grp = document.querySelector('.pet-photo-action');
+        if (!stand || !sheet || !grp) return '';
+        const n = (el, a) => Number(el.getAttribute(a));
+        const sx = n(stand, 'x'), sy = n(stand, 'y'), sw = n(stand, 'width'), sh = n(stand, 'height');
+        const cols = Number(grp.dataset.actionCols);
+        const frames = Number(grp.dataset.actionFrames);
+        const w = n(sheet, 'width') / cols;
+        const h = n(sheet, 'height') / Math.ceil(frames / cols);
+        return JSON.stringify({
+          站姿中心: +(sx + sw / 2).toFixed(2), 站姿底: +(sy + sh).toFixed(2),
+          动作格宽: +w.toFixed(2), 动作格高: +h.toFixed(2)
+        })
+      })()`)
+      const rg = rollAlign ? JSON.parse(rollAlign) : null
+      ok('P9i-5 打滚的格宽按它自己的素材比例算（165/220，比大笑的 158/220 宽）',
+        !!rg && Math.abs(rg.动作格宽 - (rg.动作格高 * 165) / 220) <= 0.5 && rg.动作格高 > 0,
+        JSON.stringify({ 实测: rg, 期望格宽: rg ? +((rg.动作格高 * 165) / 220).toFixed(2) : null }))
+
+      // 等它自己回 idle，并核对耗时落在打滚的时长附近（4.5~6.8 秒），
+      // 而不是大笑的 7.2 秒。
+      let rollBack = false
+      for (let i = 0; i < 40; i++) {
+        if ((await actionNow()) === 'idle') {
+          rollBack = true
+          break
+        }
+        await sleep(200)
+      }
+      const rollElapsed = Date.now() - rollStart
+      ok('P9i-4 打滚按自己的时长复位（约 5.5 秒，明显短于大笑的 7.2 秒）',
+        rollBack && rollElapsed >= 4500 && rollElapsed <= 6800,
+        JSON.stringify({ 回到idle: rollBack, 耗时毫秒: rollElapsed, 打滚应约: 5467, 大笑是: 7200 }))
+
+      // 素材硬事实：82 帧排 24 列 4 行、3960×880，文件 > 300 KB。
+      const rollFile = join(ROOT, 'src', 'renderer', 'src', 'assets', 'pet', 'bean-roll.webp')
+      const rollSize = existsSync(rollFile) ? statSync(rollFile).size : 0
+      const rollCols = Number((photoSrc.match(/ROLL_COLS\s*=\s*(\d+)/) || [])[1])
+      const rollFrms = Number((photoSrc.match(/ROLL_FRAMES\s*=\s*(\d+)/) || [])[1])
+      ok('P9i-6 打滚素材是 82 帧 24 列 4 行，且文件确实落盘了',
+        rollCols === 24 && rollFrms === 82 && Math.ceil(rollFrms / rollCols) === 4 && rollSize > 300 * 1024,
+        JSON.stringify({ 帧数: rollFrms, 列数: rollCols, 行数: Math.ceil(rollFrms / rollCols), 字节: rollSize }))
+
+      // 菜单接线：两项都要既有标签、又有 send，不能只加标签。
+      const petWinSrc = readFileSync(join(ROOT, 'src', 'main', 'petWindow.ts'), 'utf8')
+      ok('P9i-7 右键菜单里有「打个滚」且它 send 的是 roll',
+        /label:\s*'打个滚'/.test(petWinSrc) && /send\('pet:action',\s*'roll'\)/.test(petWinSrc),
+        JSON.stringify({
+          有标签: /label:\s*'打个滚'/.test(petWinSrc),
+          有send: /send\('pet:action',\s*'roll'\)/.test(petWinSrc)
+        }))
     }
 
     // 换回胶囊，别把测试值留在偏好里

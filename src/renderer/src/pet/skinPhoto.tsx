@@ -6,6 +6,7 @@ import frontUrl from '../assets/pet/bean-photo.png'
 import sideUrl from '../assets/pet/bean-photo-side.png'
 import backUrl from '../assets/pet/bean-photo-back.png'
 import laughUrl from '../assets/pet/bean-laugh.webp'
+import rollUrl from '../assets/pet/bean-roll.webp'
 
 /**
  * 皮肤 3：原图版（`skinPhoto`）。用户 2026-11-12 12:44 发来的参考图，抠成透明底后用。
@@ -114,6 +115,53 @@ const ACTION_CELL_RATIO = 158 / 220
 /** 播完一整支动作要多久（108 / 15 = 7.2 秒），调用方按这个值定时复位 */
 export const ACTION_DURATION_MS = Math.round((ACTION_FRAMES / ACTION_FPS) * 1000)
 
+/* ===== 打滚动作（SPEC-deskpet-action 第二支） =====
+ *
+ * 素材同样来自用户那段视频，取 12.0–18.4 秒「倒地 → 打滚 → 起身」这 5 秒，
+ * 15fps 抽 96 帧，去掉结尾 14 帧重复的站姿，留 82 帧。
+ *
+ * 为什么参数跟大笑不一样、不能共用一套常量：
+ * ① 格宽不同——打滚是躺着的，画面变宽变矮，按并集包围盒算出来是 165×220 而不是 158×220；
+ * ② 列数不同——82 帧排 24 列 × 4 行（3960×880），一行放不下（82×165=13530 虽没超上限，
+ *    但 4000 宽以内的图解码更快，这里选了更方正的排法）；
+ * ③ 播放时同时改 x 和 y，跟大笑那套两行平移是同一套逻辑，只是格子尺寸不同。
+ */
+const ROLL_COLS = 24
+const ROLL_FRAMES = 82
+const ROLL_CELL_RATIO = 165 / 220
+
+/** 一支动作的素材参数：格子数、帧数、格宽比、图源 */
+interface ActionSpec {
+  cols: number
+  frames: number
+  /** 每格宽高比 = 格宽 / 220 */
+  cellRatio: number
+  src: string
+}
+
+/**
+ * 动作 → 素材。想加第三支动作就在这里加一行，别的地方不用动。
+ *
+ * 播放帧率统一用 `ACTION_FPS`（15，与原片抽帧一致），所以两支动作的时长
+ * 分别是 108/15=7.2 秒和 82/15≈5.5 秒，各自按帧数算，不用单独配。
+ */
+const ACTION_SPECS: Record<Exclude<PetAction, 'idle'>, ActionSpec> = {
+  laugh: { cols: ACTION_COLS, frames: ACTION_FRAMES, cellRatio: ACTION_CELL_RATIO, src: laughUrl },
+  roll: { cols: ROLL_COLS, frames: ROLL_FRAMES, cellRatio: ROLL_CELL_RATIO, src: rollUrl }
+}
+
+/**
+ * 一支动作要播多久（毫秒）。
+ *
+ * 为什么导出成函数而不是常量：现在有两支动作、时长不同（7.2 秒 vs 5.5 秒），
+ * 调用方必须按实际那支去定时，否则打滚会被 7.2 秒的定时器多挂 1.7 秒空站。
+ */
+export function actionDurationMs(action: PetAction): number {
+  if (action === 'idle') return 0
+  const spec = ACTION_SPECS[action]
+  return Math.round((spec.frames / ACTION_FPS) * 1000)
+}
+
 /**
  * 按动作状态推进帧号。
  *
@@ -128,13 +176,14 @@ function useActionFrame(action: PetAction): number {
       setFrame(0)
       return
     }
+    const spec = ACTION_SPECS[action]
     setFrame(0)
     let f = 0
     const timer = window.setInterval(() => {
       f += 1
-      // 推到最后定格，由调用方按 `ACTION_DURATION_MS` 复位 action；
+      // 推到最后定格，由调用方按时长复位 action；
       // 这里自己复位会和调用方的定时器抢，出现「最后一帧闪回第一帧」。
-      if (f >= ACTION_FRAMES) {
+      if (f >= spec.frames) {
         window.clearInterval(timer)
         return
       }
@@ -212,17 +261,19 @@ function Full({ mood, action = 'idle' }: { mood: PetMood; action?: PetAction }):
   const frame = useActionFrame(action)
   // 同一套皮肤可能在同一个文档里被渲染多次（设置页的预览 + 缩略图），
   // clipPath 的 id 撞了浏览器只会认第一个，用 useId 保证唯一。
-  const clipId = `pet-laugh-${useId().replace(/:/g, '')}`
+  const clipId = `pet-action-${useId().replace(/:/g, '')}`
   const front = VIEWS[0]
-  /** 动作格子在画布里的尺寸：高度跟站姿图一致，宽度按素材比例算 */
-  const actW = IMG_H * ACTION_CELL_RATIO
-  const actX = (VIEW - actW) / 2
   const acting = action !== 'idle'
+  /** 当前这支动作的素材参数；idle 时没有素材，用大笑那套占位只为算几何（反正不渲染） */
+  const spec = acting ? ACTION_SPECS[action] : ACTION_SPECS.laugh
+  /** 动作格子在画布里的尺寸：高度跟站姿图一致，宽度按素材比例算 */
+  const actW = IMG_H * spec.cellRatio
+  const actX = (VIEW - actW) / 2
   /** sprite sheet 铺开后的整体尺寸（按列数 × 行数算，不是按总帧数） */
-  const sheetW = actW * ACTION_COLS
-  const sheetH = IMG_H * Math.ceil(ACTION_FRAMES / ACTION_COLS)
-  const cellCol = frame % ACTION_COLS
-  const cellRow = Math.floor(frame / ACTION_COLS)
+  const sheetW = actW * spec.cols
+  const sheetH = IMG_H * Math.ceil(spec.frames / spec.cols)
+  const cellCol = frame % spec.cols
+  const cellRow = Math.floor(frame / spec.cols)
 
   return (
     <svg
@@ -286,10 +337,16 @@ function Full({ mood, action = 'idle' }: { mood: PetMood; action?: PetAction }):
           `preserveAspectRatio="none"` 是因为宽高我们已经按素材比例算准了，
           交给浏览器再「保持比例」反而会因为浮点舍入差出 1px 的缝。 */}
       {acting && (
-        <g className="pet-photo-action" clipPath={`url(#${clipId})`} data-action-layer={action}>
+        <g
+          className="pet-photo-action"
+          clipPath={`url(#${clipId})`}
+          data-action-layer={action}
+          data-action-cols={spec.cols}
+          data-action-frames={spec.frames}
+        >
           <image
             className="pet-photo-action-sheet"
-            href={laughUrl}
+            href={spec.src}
             x={actX - cellCol * actW}
             y={PAD_TOP - cellRow * IMG_H}
             width={sheetW}

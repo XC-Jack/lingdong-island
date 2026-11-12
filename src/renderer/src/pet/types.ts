@@ -26,8 +26,11 @@ export type PetMood = 'idle' | 'happy' | 'sleepy' | 'surprised'
  * 播动作时又把情绪覆盖掉，笑完忘了它本来是困的。
  *
  * `idle` 表示「没有动作在播」，不是一种动作。
+ *
+ * 2026-11-12 追加 `roll`（打滚）：用户要「挥手 + 打滚」，但原视频里没有挥手这段，
+ * 只有倒地打滚那 5 秒能切出来，所以先落了一支。
  */
-export type PetAction = 'idle' | 'laugh'
+export type PetAction = 'idle' | 'laugh' | 'roll'
 
 /** 尺寸档：见上方注释 */
 export type PetSize = 'tiny' | 'full'
