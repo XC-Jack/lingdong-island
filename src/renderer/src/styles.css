@@ -413,6 +413,18 @@ body {
   }
 }
 
+/* ---------- 桌宠皮肤外壳（SPEC-deskpet-skin） ---------- */
+
+/* 皮肤包装层：inline 元素会让 svg 底部多出一条基线空隙，撑高收起态条高，所以用 flex。
+   这里只管布局，尺寸各自归位——岛里的 22px 由既有的 .collapsed-pet 决定，
+   设置窗口的大尺寸版由 settings.css 决定（两个窗口各自加载自己的样式，不互相污染）。 */
+.pet-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
 /* ---------- 展开态 ---------- */
 
 .panel-head {

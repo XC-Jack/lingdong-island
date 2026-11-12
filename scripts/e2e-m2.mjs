@@ -45,7 +45,27 @@ async function main() {
     })
     const val = (r) => r?.result?.value
 
+    /**
+     * 轮询等到表达式为真再往下走。
+     *
+     * 为什么必须等：CDP 的 page target 出现 ≠ React 已经把岛渲染出来。
+     * 实测（2026-11-12）从拿到 target 到 `.collapsed-pet` 真的挂载上可以差
+     * 几百毫秒到 2 秒多，起手立刻 evaluate 会读到 breathe=false / eyes=0，
+     * 这不是产品问题，是脚本抢跑（同为 e2e-notify 的 dots=0 那个坑）。
+     */
+    const waitFor = async (expr, { timeoutMs = 15000, label = '' } = {}) => {
+      const t0 = Date.now()
+      let last
+      while (Date.now() - t0 < timeoutMs) {
+        last = val(await evalJs(expr))
+        if (last) return last
+        await sleep(200)
+      }
+      throw new Error(`等到超时：${label || expr}（最后读到 ${JSON.stringify(last)}）`)
+    }
+
     // [1] idle 态：呼吸动画类存在，两颗圆眼睛
+    await waitFor(`!!document.querySelector('.collapsed-pet')`, { label: '岛仔挂载' })
     const idle = JSON.parse(val(await evalJs(
       `JSON.stringify({breathe: !!document.querySelector('.collapsed-pet'), eyes: document.querySelectorAll('.pet-eye').length, happy: !!document.querySelector('.pet-happy')})`
     )))

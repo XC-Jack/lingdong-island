@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, PetSkinId, PetMode } from '../shared/types'
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand }
 
@@ -353,6 +353,10 @@ export interface PrefsShape {
   shelfView?: 'lg' | 'md' | 'sm' | 'list'
   /** 音乐页一次性补入标记（SPEC-music-page）；老用户升级后补过就置 true，不再补第二次 */
   musicIntro?: boolean
+  /** 桌宠皮肤 id（SPEC-deskpet-skin）；缺失=默认 capsule，保持升级前的老形象 */
+  petSkin?: PetSkinId
+  /** 桌宠出现模式（SPEC-deskpet-skin）；缺失=island */
+  petMode?: PetMode
 }
 contextBridge.exposeInMainWorld('island', api)
 

@@ -101,6 +101,24 @@ function killApp() {
   try { execSync('taskkill /IM electron.exe /T /F', { stdio: 'ignore' }) } catch { /* 无进程 */ }
 }
 
+/**
+ * 等到 React 首帧真的把岛挂上再往下走。
+ *
+ * 为什么不能只 sleep：实测（2026-11-12）本机从起进程到 `.island.collapsed` 出现要 4.7 秒，
+ * 固定 sleep(3500) 会让断言读到空 DOM（`["__no-collapsed"]` / prefs 还没回填成 undefined），
+ * 看起来像功能坏了，实际是脚本抢跑。
+ */
+async function waitReady() {
+  const t0 = Date.now()
+  while (Date.now() - t0 < 15000) {
+    try {
+      if (await cdpEval(`!!document.querySelector('.island.collapsed')`)) return
+    } catch { /* CDP 还没就绪 */ }
+    await sleep(200)
+  }
+  throw new Error('等岛挂载超时')
+}
+
 async function startApp() {
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE // 宿主注入会把 electron 跑成纯 Node，秒退
@@ -109,7 +127,8 @@ async function startApp() {
     env,
     stdio: 'ignore'
   })
-  await sleep(3500) // 等窗口出现 + mount + prefsGet 回填 + 电量/网络快照
+  await sleep(1200)
+  await waitReady()
   return child
 }
 
