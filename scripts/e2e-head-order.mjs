@@ -69,6 +69,70 @@ const cdpEval = (expr) => evalOnTarget(expr, false)
 /** 设置窗口（页面管理面板在这里） */
 const settingsEval = (expr) => evalOnTarget(expr, true)
 
+// ---------- 条件等待（替代固定 sleep，见 SPEC-fix-head-order-flake） ----------
+/**
+ * 只查一次 CDP target 列表，不重试。
+ *
+ * 为什么需要它：evalOnTarget 内部有「40 次 × 500ms」的重试，用来等窗口出现很好用，
+ * 但用来判断「窗口是不是已经关掉」就变成 20 秒的假等待，而且失败时报的是
+ * `no settings target` 这种看不出在等什么的信息。关窗判断必须走这个裸查询。
+ */
+async function hasSettingsTarget() {
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json()
+    return list.some((t) => t.type === 'page' && IS_SETTINGS(t))
+  } catch {
+    return false // CDP 端口还没起，等价于「没有」
+  }
+}
+
+/** 等设置窗口出现（present=true）或彻底消失（present=false） */
+async function waitForSettings(present, timeoutMs, label) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < timeoutMs) {
+    if ((await hasSettingsTarget()) === present) return
+    await sleep(50)
+  }
+  throw new Error(`等「${label}」超时（${timeoutMs}ms）`)
+}
+
+/** 等设置窗口里某个表达式为真（窗口暂时不在视为「还没就绪」，继续等） */
+async function waitUntil(expr, { timeoutMs = 8000, gapMs = 100, label = expr } = {}) {
+  const t0 = Date.now()
+  let last
+  while (Date.now() - t0 < timeoutMs) {
+    if (await hasSettingsTarget()) {
+      try {
+        last = await evalOnTarget(expr, true)
+        if (last) return last
+      } catch (e) {
+        last = '异常：' + (e?.message ?? e)
+      }
+    } else {
+      last = '设置窗口还没出现'
+    }
+    await sleep(gapMs)
+  }
+  throw new Error(`等「${label}」超时（${timeoutMs}ms），最后观察到：${JSON.stringify(last)}`)
+}
+
+/** 等 prefs.json 满足条件（点勾选框 → 主进程落盘是异步的，不能只靠 sleep） */
+async function waitForPrefs(pred, timeoutMs, label) {
+  const t0 = Date.now()
+  let last
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const p = readPrefs()
+      last = p?.pagesCustom?.collapsed
+      if (pred(p)) return p
+    } catch (e) {
+      last = '读 prefs 失败：' + (e?.message ?? e)
+    }
+    await sleep(50)
+  }
+  throw new Error(`等「${label}」超时（${timeoutMs}ms），最后观察到 collapsed=${JSON.stringify(last)}`)
+}
+
 // ---------- Inspector（主进程） ----------
 async function mainEval(expr) {
   for (let i = 0; i < 40; i++) {
@@ -209,15 +273,50 @@ const READ_COLLAPSED_ORDER = `(() => {
   return found.map((f) => f.k)
 })()`
 
+/**
+ * 点「页面管理」里时钟那一行的勾选框，并等 prefs 真的落盘。
+ *
+ * 原来只 `settingsEval(点)` + `sleep(700)`，两个问题：
+ * ①点击表达式找不到元素时返回 `'no-cb'`，而调用方从不看返回值 —— 没点到也当点到了，
+ *   于是下一条断言读到的还是旧值，报出来像「功能坏了」，其实是脚本没点到；
+ * ②落盘是 IPC → 主进程写文件，700ms 是拍脑袋的，冷缓存/慢机可能不够。
+ * 现在返回 `'no-cb'` 直接抛错（把静默失败变成显式失败），落盘改成轮询。
+ */
+async function clickClockCheckbox(expectClock) {
+  const ret = await settingsEval(
+    `(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`
+  )
+  if (ret !== 'ok') throw new Error(`点时钟勾选框失败：返回 ${JSON.stringify(ret)}（选择器没匹配到元素）`)
+  await waitForPrefs((p) => p?.pagesCustom?.collapsed?.clock === expectClock, 8000,
+    `prefs 里 clock 变成 ${expectClock}`)
+}
+
 /** 打开「页面管理」（SPEC-settings-shell 起在独立设置窗口里） */
 async function openPanel() {
   await cdpEval(`(window.island.openSettings('pages'), 'ok')`)
-  await sleep(1500)
+  // 等 target 出现 + 面板真渲染出时钟那一行，不再盲等 1500ms
+  await waitForSettings(true, 15000, '设置窗口出现')
+  await waitUntil(`!!document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]')`, {
+    timeoutMs: 10000,
+    label: '页面管理面板渲染出时钟行'
+  })
 }
-/** 关闭设置窗口 */
+/**
+ * 关闭设置窗口。
+ *
+ * 原来是 `settingsEval(closeSettings)` + `sleep(1000)` 就算关完了。问题有两个：
+ * ①`settings:close` 是 `ipcMain.on`（不是 handle），渲染层 send 完拿不到回执，
+ *   所以 settingsEval 返回 ok 只代表「请求发出去了」，不代表窗口关了；
+ * ②窗口真销毁是异步的，慢机/冷缓存下可能超过 1000ms，于是下一次 settingsEval
+ *   抛 `no settings target` —— 这就是偶发失败的形状（2026-11-12 实测：正常 12–15ms，
+ *   但失败时是「窗口在两次操作之间自己没了」）。
+ * 现在改成显式等 target 消失，慢就多等，快就立刻走。
+ */
 async function closePanel() {
-  await settingsEval(`(window.island.closeSettings(), 'ok')`)
-  await sleep(1000)
+  if (await hasSettingsTarget()) {
+    await settingsEval(`(window.island.closeSettings(), 'ok')`)
+  }
+  await waitForSettings(false, 10000, '设置窗口关闭')
 }
 
 let child = null
@@ -271,8 +370,7 @@ try {
   child = await startApp()
   {
     await openPanel()
-    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
-    await sleep(700)
+    await clickClockCheckbox(false)
     ok('H2a 取消勾选时钟写进 prefs.json',
       readPrefs()?.pagesCustom?.collapsed?.clock === false,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
@@ -284,8 +382,7 @@ try {
       JSON.stringify(head.infoOrder))
 
     await openPanel()
-    await settingsEval(`(() => { const cb = document.querySelector('.pm-row[data-comp="clock"] input[type=checkbox]'); if (!cb) return 'no-cb'; cb.click(); return 'ok' })()`)
-    await sleep(700)
+    await clickClockCheckbox(true)
     ok('H2c 重新勾选写回 true', readPrefs()?.pagesCustom?.collapsed?.clock === true,
       JSON.stringify(readPrefs()?.pagesCustom?.collapsed))
 
