@@ -6,6 +6,7 @@ import PageManagerSection, {
   normalizePagesCustom,
   type PagesCustom
 } from './PageManagerSection'
+import DeskPetSection from './DeskPetSection'
 
 /**
  * 设置窗口的根组件（SPEC-settings-shell）。
@@ -39,6 +40,20 @@ const NAV: { key: SettingsSection; label: string; icon: () => ReactElement }[] =
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3">
         <rect x="2" y="3" width="12" height="10" rx="1.6" />
         <path d="M6 3v10" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
+    key: 'pet',
+    label: '桌宠',
+    icon: () => (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3">
+        <path
+          d="M8 3.4c2.6 0 4.2 1.9 4.2 4.4 0 .5.1.9.2 1.4.4 1.7-.6 3.1-1.8 3.4-1.4.4-3.8.4-5.2 0-1.2-.3-2.2-1.7-1.8-3.4.1-.5.2-.9.2-1.4 0-2.5 1.6-4.4 4.2-4.4Z"
+          strokeLinejoin="round"
+        />
+        <circle cx="6.5" cy="7.6" r="1.05" fill="currentColor" stroke="none" />
+        <circle cx="9.5" cy="7.6" r="1.05" fill="currentColor" stroke="none" />
       </svg>
     )
   },
@@ -288,6 +303,11 @@ export default function SettingsApp(): ReactElement {
               <div className="set-card set-card-plain">
                 <PageManagerSection pagesCustom={pagesCustom} onChange={changePages} />
               </div>
+            </section>
+          ) : section === 'pet' ? (
+            <section className="set-page">
+              <h2 className="set-page-title">桌宠</h2>
+              <DeskPetSection />
             </section>
           ) : (
             <section className="set-page">

@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { PET_MODES, PET_SKIN_IDS } from '../shared/types'
+import type { PetMode, PetSkinId } from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -26,6 +28,13 @@ interface PrefsShape {
    * 以后不再补。缺字段视为「还没补过」。
    */
   musicIntro?: boolean
+  /**
+   * 桌宠皮肤（SPEC-deskpet-skin）。缺失 = 用默认 `capsule`（升级前的老形象），
+   * 而不是落盘写死 capsule——这样以后改默认皮肤，老用户跟着变。
+   */
+  petSkin?: PetSkinId
+  /** 桌宠出现模式（SPEC-deskpet-skin）。缺失 = `island`（只在岛里，现有行为） */
+  petMode?: PetMode
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -91,6 +100,25 @@ function normalizeShelfView(v: unknown): string | undefined {
   return v === 'lg' || v === 'md' || v === 'sm' || v === 'list' ? v : undefined
 }
 
+/**
+ * 校验桌宠皮肤 id（SPEC-deskpet-skin）。
+ * 白名单而不是「是字符串就收」：prefs.json 是明文文件，用户手改出
+ * `petSkin: "不存在的皮肤"` 时渲染层会拿到一个查不到的 id，必须在这里挡掉回落默认，
+ * 否则岛仔会渲染成空白（看起来像「宠物不见了」）。
+ */
+function normalizePetSkin(v: unknown): PetSkinId | undefined {
+  return typeof v === 'string' && (PET_SKIN_IDS as readonly string[]).includes(v)
+    ? (v as PetSkinId)
+    : undefined
+}
+
+/** 校验桌宠模式（SPEC-deskpet-skin）：同样白名单；未实现的模式也允许存，只是不生效 */
+function normalizePetMode(v: unknown): PetMode | undefined {
+  return typeof v === 'string' && (PET_MODES as readonly string[]).includes(v)
+    ? (v as PetMode)
+    : undefined
+}
+
 function load(): PrefsShape {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as PrefsShape
@@ -103,6 +131,10 @@ function load(): PrefsShape {
     // 这里丢了标记，下一次任何偏好写入就会把「已补过音乐页」的事实抹掉，
     // 用户手动关掉的音乐页会再次冒出来。
     if (parsed.musicIntro === true) out.musicIntro = true
+    const ps = normalizePetSkin(parsed.petSkin)
+    if (ps) out.petSkin = ps
+    const pm = normalizePetMode(parsed.petMode)
+    if (pm) out.petMode = pm
     return out
   } catch {
     return { ...EMPTY }
@@ -170,10 +202,12 @@ export function setupPrefsStore(): void {
     const data = load()
     // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
     const before = JSON.stringify(data)
-    const { pagesCustom, shelfView, musicIntro } = (payload ?? {}) as {
+    const { pagesCustom, shelfView, musicIntro, petSkin, petMode } = (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
       musicIntro?: unknown
+      petSkin?: unknown
+      petMode?: unknown
     }
     const pc = normalizePagesCustom(pagesCustom)
     if (pc) data.pagesCustom = pc
@@ -185,6 +219,12 @@ export function setupPrefsStore(): void {
       if (musicIntro) data.musicIntro = true
       else delete data.musicIntro
     }
+    const ps = normalizePetSkin(petSkin)
+    if (ps) data.petSkin = ps
+    else if (petSkin !== undefined) delete data.petSkin
+    const pm = normalizePetMode(petMode)
+    if (pm) data.petMode = pm
+    else if (petMode !== undefined) delete data.petMode
     save(data)
     // 只在真正有变化时广播：prefs:set 的调用方常带「乐观更新」，无变化广播会让
     // 另一端把自己刚点的东西又写一遍（视觉上闪一下）

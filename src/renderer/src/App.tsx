@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Todo, ShelfItem, MusicState, MusicCommand } from '../../shared/types'
+import Pet from './pet/Pet'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -315,56 +316,12 @@ const IcoClock = (): React.JSX.Element => (
   </IconSvg>
 )
 
-/** 岛仔：一只简单的黑胶囊宠物。idle 时呼吸+眨眼，happy 时弯眼+微笑+弹跳+星星 */
-function Pet({ mood }: { mood: 'idle' | 'happy' }): React.JSX.Element {
-  const happy = mood === 'happy'
-  return (
-    <svg
-      className={`collapsed-pet ${happy ? 'pet-happy' : ''}`}
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <rect x="1" y="4" width="22" height="16" rx="8" fill="#4b2ea8" />
-      {happy ? (
-        <>
-          {/* 开心：眼睛弯成 ^，嘴角上扬 */}
-          <path
-            className="pet-eye"
-            d="M7 12.6q2-2.6 4 0"
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-          <path
-            className="pet-eye"
-            d="M13 12.6q2-2.6 4 0"
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-          <path
-            d="M9.5 15.8q2.5 2.2 5 0"
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-          <path
-            d="M19 2.4l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"
-            fill="#ffd45e"
-          />
-        </>
-      ) : (
-        <>
-          <circle className="pet-eye" cx="9" cy="12" r="1.9" fill="#ffffff" />
-          <circle className="pet-eye" cx="15" cy="12" r="1.9" fill="#ffffff" />
-        </>
-      )}
-    </svg>
-  )
-}
+/**
+ * 岛仔（桌宠）已搬到 `./pet/`（SPEC-deskpet-skin）：
+ * 形象画法按「皮肤」拆分，`App.tsx` 只负责决定尺寸、情绪和用哪套皮肤。
+ * 原来这里的内联 `<Pet>` 原样搬进了 `pet/skinCapsule.tsx`，岛上长相不变。
+ */
+
 
 /** 待办面板：今天要做什么（今天的日程 + 待办混排） + 勾选 + 增 + 删 + 改（双击编辑） + 完成度 n/m
  *  US-033：待办页与「今天」同步——只列今天的日程，明天/昨天不出现，新增的内容存为今天的日程 */
@@ -1987,6 +1944,10 @@ export default function App(): React.JSX.Element {
   // Wi-Fi 快照（收起态 US-005）；null = 读不到，不显示图标
   const [wifi, setWifi] = useState<WifiSnapshot | null>(null)
   const [mood, setMood] = useState<'idle' | 'happy'>('idle')
+  // 桌宠皮肤（SPEC-deskpet-skin）：默认胶囊（升级前的老形象），mount 后从 prefs 回填。
+  // 为什么不和 pagesCustom 合成一个 state：皮肤改动是「设置页单选」，频率与页面裁剪不同，
+  // 且它只影响一处渲染，单独一份更好读。
+  const [petSkin, setPetSkin] = useState<string>('capsule')
   const [page, setPage] = useState(0)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
@@ -2000,7 +1961,10 @@ export default function App(): React.JSX.Element {
     window.island
       .prefsGet()
       .then((prefs) => {
-        if (!alive || pagesCustomDirty.current) return
+        if (!alive) return
+        // 皮肤不受 pagesCustomDirty 影响（是另一份偏好），先无条件应用
+        if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
+        if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
       })
@@ -2424,6 +2388,8 @@ export default function App(): React.JSX.Element {
   // 现在岛只负责接收偏好广播，把勾选/顺序的变化同步过来（不用重启，也不用重新打开面板）。
   useEffect(() => {
     const off = window.island.onPrefsChanged((prefs) => {
+      // 皮肤：设置页改完立刻换脸，不走 dirty 判断（它是独立的偏好项）
+      if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -2521,7 +2487,7 @@ export default function App(): React.JSX.Element {
         ) : null
       }
       case 'pet':
-        return <Pet key="pet" mood={mood} />
+        return <Pet key="pet" skin={petSkin} mood={mood} size="tiny" />
       case 'clock':
         return (
           <span key="clock" className="collapsed-clock">

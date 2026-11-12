@@ -22,6 +22,16 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           settings: resolve('src/renderer/settings.html')
+        },
+        output: {
+          // 两个入口共用 React：不显式分组时，Rollup 会把共享包按「第一个引用它的模块」命名，
+          // 于是产物里出现一个叫 Pet-xxxx.js 的 587 kB 文件（实际是 react-dom），
+          // 打开看的人会以为是桌宠资源。这里固定叫 vendor，大小和归属一眼能对上。
+          //
+          // 注意：本项目用 rolldown-vite，`manualChunks` 只接受函数形式，
+          // 传对象会直接报 `TypeError: manualChunks is not a function`（实测）。
+          manualChunks: (id: string) =>
+            /node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id) ? 'vendor' : undefined
         }
       }
     },

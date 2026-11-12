@@ -43,9 +43,30 @@ export interface ShelfRevealResult {
 
 /**
  * 设置窗口的左导航分区（SPEC-settings-shell）。
- * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、focus=专注·喝水（占位）
+ * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、
+ * focus=专注·喝水（占位）、pet=桌宠（SPEC-deskpet-skin）
  */
-export type SettingsSection = 'general' | 'pages' | 'focus'
+export type SettingsSection = 'general' | 'pages' | 'focus' | 'pet'
+
+/**
+ * 可选的桌宠皮肤 id（SPEC-deskpet-skin）。
+ *
+ * 为什么放在 shared 而不是渲染层：主进程 prefsStore 要在落盘前校验这个值
+ * （`prefs:set` 收到的 payload 是渲染层传来的任意值），主进程 import 不到渲染层的
+ * 皮肤模块，所以 id 清单必须落在两边都能引用的 shared 里。
+ * 新增皮肤时要同时改这里和 `src/renderer/src/pet/index.tsx` 的清单。
+ * ⚠️ 已落盘的 id 不能改：改了等于所有用户的选择静默丢失。
+ */
+export const PET_SKIN_IDS = ['capsule', 'bean'] as const
+export type PetSkinId = (typeof PET_SKIN_IDS)[number]
+
+/**
+ * 桌宠出现模式（SPEC-deskpet-skin）。
+ * island=只在岛里（现有行为）、window=独立小窗口（未做）、free=自由走动（未做）。
+ * 暂只实现 island；另外两个存下来但不生效，设置页里显示成「还没做」。
+ */
+export const PET_MODES = ['island', 'window', 'free'] as const
+export type PetMode = (typeof PET_MODES)[number]
 
 /** 设置窗口「常规」页要显示的本机信息 */
 export interface AppInfo {

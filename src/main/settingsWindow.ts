@@ -20,7 +20,7 @@ let settingsWindow: BrowserWindow | null = null
 let pendingSection: SettingsSection | null = null
 
 function isValidSection(v: unknown): v is SettingsSection {
-  return v === 'general' || v === 'pages' || v === 'focus'
+  return v === 'general' || v === 'pages' || v === 'focus' || v === 'pet'
 }
 
 /** 主进程告诉设置窗口切到哪个分区（导航点击是渲染层自己切的，这里只处理菜单直达） */
