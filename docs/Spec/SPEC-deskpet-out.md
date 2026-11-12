@@ -87,8 +87,9 @@
 | 2026-11-12 | `node scripts/e2e-head-order.mjs` | PASS（14 过 / 0 败） | — |
 | 2026-11-12 | `node scripts/e2e-collapse-order.mjs` | PASS（22 过 / 0 败） | — |
 | 2026-11-12 | `node scripts/e2e-settings-shell.mjs` | PASS（51 过 / 0 败） | — |
+| 2026-11-12 | 用户实测反馈后修尺寸漂移 + 重抠图片，全套重跑 | `e2e-deskpet-out` PASS（34 过 / 0 败）；`e2e-deskpet` 33/0；`e2e-m2` PASS；`e2e-head-order` 14/0；`e2e-collapse-order` 22/0；`e2e-settings-shell` 51/0 | 见 7.3 |
 
-### 7.1 实现过程中实测到的两个真 bug（已修）
+### 7.1 实现过程中实测到的三个真 bug（已修）
 
 **① 拖动松手被吞（`PetWindowApp.tsx`）**
 首版用 `const [pressed, setPressed] = useState(false)` 同时管「视觉反馈」和「在不在拖」。
@@ -102,6 +103,31 @@ e2e 的 P9a 就是抓这个的：首跑报 `等「落盘 petWindowPos」超时�
 合成事件（e2e 里用 `dispatchEvent(new PointerEvent(...))`）的 `pointerId` 没有对应的活动指针，
 `setPointerCapture` 会抛 `NotFoundError`，把后面的逻辑整段打断。包了 try/catch，
 捕获失败不影响拖动本身（主进程照样跟光标）。
+
+**③ 窗口越拖越大（`src/main/petWindow.ts`，用户实测发现）**
+用户反馈「我按着它，他会一直变大，然后往下移动」。
+**根因（[实测] `.tmp/probe-pet-creep.mjs`）**：拖动定时器每 16ms 调一次 `w.setPosition(x, y)`。
+`setPosition` 只给坐标不给尺寸，在 125% 缩放下 Electron 每次都要做 DIP↔物理像素换算，
+换算的余数被并进窗口尺寸，于是每调一次长 1px。五种写法各调 200 次对照：
+
+| 写法 | 200 次后尺寸 |
+|---|---|
+| `setPosition(x, y)`（原实现） | 191×191 → **391×391** |
+| `setBounds({x, y, width, height})` | 191×191 → **191×191** |
+| `setPosition` 后跟 `setSize` | 391×391（`setPosition` 之后 `setSize` 也被吃掉） |
+| 每 3 次 `setPosition` 再锁尺寸 | 391×391（同上） |
+| `getBounds` 后 `setBounds` 锁死尺寸 | 191×191 |
+
+**修法**：改用 `w.setBounds({ x, y, width: PET_WIN_W, height: PET_WIN_H })`。
+尺寸涨的时候左上角不动、底边往下走，所以用户看到的是「一直变大**还往下跑**」——
+其实位置是对的，是底边在长。
+**回归测试**：e2e 新增 P9c，按住 1.2 秒采样 6 次，判据是「按住期间尺寸波动 max−min ≤ 1」。
+**负对照（[实测]）**：把修复临时退回 `setPosition` 后跑 e2e →
+`✗ P9c —— {"按住期间采样":[[203,203],[211,211],[218,218],[226,226],[234,234],[241,241]],"波动":[38,38]}`
+（1.2 秒涨 38px），恢复正常后 PASS。这条断言确实能抓到这个 bug。
+
+**注**：`190×190` 设进去 `getBounds()` 读回 `191×191` 是 125% 缩放下 DIP↔物理像素的**正常取整**，
+不是 bug；透明窗口的取整值有时会抖到 194，所以 P9c 的判据不能拿「按住前」做基准，只能看按住期间的波动。
 
 ### 7.2 e2e 脚本自身踩的坑（不是产品问题，但会假红）
 

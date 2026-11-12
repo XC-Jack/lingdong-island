@@ -62,7 +62,7 @@ function createPetWindow(): BrowserWindow {
     backgroundColor: '#00000000',
     hasShadow: false,
     resizable: false,
-    // 关键：movable 保持 true，主进程 setPosition 才生效；
+    // 关键：movable 保持 true，主进程 setBounds 才生效；
     // 但用户拖不动它——因为系统标题栏不存在，拖动全靠我们自己算（见 petDragStart）。
     movable: true,
     minimizable: false,
@@ -165,7 +165,15 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
       const nx = dragOrigin.win.x + (now.x - dragOrigin.cursor.x)
       const ny = dragOrigin.win.y + (now.y - dragOrigin.cursor.y)
       const clamped = clampPetPos({ x: nx, y: ny }, PET_WIN_W, PET_WIN_H)
-      w.setPosition(clamped.x, clamped.y)
+      // 用 setBounds 而不是 setPosition，必须带尺寸——这不是风格选择，是修 bug。
+      //
+      // 实测（2026-11-12）：本机 125% 缩放，连续调 200 次 setPosition，
+      // 窗口从 191×191 一路长到 391×391。原因是 setPosition 只给坐标，
+      // Electron 每次都得在 DIP 和物理像素之间换算，换算的余数被并进尺寸里，
+      // 于是每动一次长 1px。拖动定时器 16ms 一轮，按住不动都会一直变大；
+      // 尺寸涨的时候左上角不动、底边往下走，看起来就是「一直变大还往下跑」。
+      // 同一个探针里 setBounds 显式带 width/height，200 次后尺寸纹丝不动。
+      w.setBounds({ x: clamped.x, y: clamped.y, width: PET_WIN_W, height: PET_WIN_H })
     }, 16)
   })
 

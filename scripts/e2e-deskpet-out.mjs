@@ -389,6 +389,47 @@ try {
       JSON.stringify({ recorded: p.petWindowPos, bounds: before }))
   }
 
+  // ========== P9c 按住期间窗口不能变大（回归：2026-11-12 修的 setPosition 尺寸漂移） ==========
+  {
+    // 这条是用户报的「按住它就一直变大、还往下移动」bug 的回归测试。
+    // 根因：拖动定时器每 16ms 调一次 w.setPosition(x, y)，而 setPosition 只给坐标，
+    // 在 125% 缩放下 Electron 每次都要做 DIP↔物理像素换算，余数被并进窗口尺寸，
+    // 于是每调一次长 1px。实测 200 次从 191×191 长到 391×391。
+    // 修法：改用 setBounds 并显式带上 width/height。
+    //
+    // 判据只看「按住期间自己的波动」（max - min），不跟按住前的值比：
+    // 本机 125% 缩放下，190×190 设进去读回来可能是 191 或 194，这个取整本身就不稳定。
+    // 而漂移的特征是持续单调增长——按住 1.2 秒约 75 次调用，若没修就是 +75px，一眼可辨。
+    await petEval(`(()=>{
+      const el = document.querySelector('.petwin');
+      el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, isPrimary: true }));
+      return 'ok'
+    })()`)
+
+    const samples = []
+    for (let i = 0; i < 6; i++) {
+      await sleep(200)
+      const b = await petBounds()
+      if (!b.none) samples.push([b.width, b.height])
+    }
+
+    await petEval(`(()=>{
+      const el = document.querySelector('.petwin');
+      el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 1, isPrimary: true }));
+      return 'ok'
+    })()`)
+    await sleep(300)
+
+    const ws = samples.map((s) => s[0])
+    const hs = samples.map((s) => s[1])
+    const growW = Math.max(...ws) - Math.min(...ws)
+    const growH = Math.max(...hs) - Math.min(...hs)
+
+    ok('P9c 按住 1.2 秒窗口尺寸没有持续变大（setPosition 尺寸漂移回归）',
+      samples.length >= 4 && growW <= 1 && growH <= 1,
+      JSON.stringify({ 按住期间采样: samples, '波动(宽,高)': [growW, growH], 说明: '未修时这里会是 +70 以上' }))
+  }
+
   // ========== P10 重启 → 回到记录的位置 ==========
   {
     const recorded = readPrefs().petWindowPos
