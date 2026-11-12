@@ -475,6 +475,46 @@ try {
       worst <= 0.5,
       JSON.stringify({ 各相位冲出量: overflows, 最大冲出: worst, 说明: '未修时峰值冲出约 4.6px' }))
 
+    // ========== P9e 四视图转身（2026-11-12 新增：正面/侧左/背面/侧右） ==========
+    {
+      // 三张抠图（正面 310×515、侧面 230×521、背面 322×518）原始高度差很多，
+      // 按「统一图片高度」摆位才对得上，否则转身时会一抽一抽地长高。
+      // 这里量两件事：四层都在且等高；data-turn-view 真的会按顺序轮换。
+      const layers = JSON.parse(await waitPetExpr(`(()=>{
+        const ls = [...document.querySelectorAll('.pet-photo-layer')];
+        if (ls.length !== 4) return '';
+        return JSON.stringify(ls.map((l) => {
+          const b = l.getBoundingClientRect();
+          return { k: l.dataset.layer, h: +b.height.toFixed(1), y: +b.y.toFixed(1) };
+        }))
+      })()`, { label: '四视图层就位' }))
+
+      ok('P9e-1 原图皮肤有四个视图层（正面/侧左/背面/侧右）',
+        layers.map((l) => l.k).join(',') === 'front,side-l,back,side-r',
+        JSON.stringify(layers.map((l) => l.k)))
+
+      const hs = layers.map((l) => l.h)
+      const ys = layers.map((l) => l.y)
+      ok('P9e-2 四个视图等高（差 ≤ 1px，转身时不会忽高忽低）',
+        Math.max(...hs) - Math.min(...hs) <= 1,
+        JSON.stringify({ 各层高: hs, 差: +(Math.max(...hs) - Math.min(...hs)).toFixed(1) }))
+      ok('P9e-3 四个视图脚底对齐（顶边 y 一致）',
+        Math.max(...ys) - Math.min(...ys) <= 1,
+        JSON.stringify({ 各层顶边: ys }))
+
+      // 手动触发一次转身（平时 22 秒才转一圈，等不起），采 2 秒内的视图序列
+      await petEval(`(window.dispatchEvent(new Event('pet:turn')), 'ok')`)
+      const seq = []
+      for (let i = 0; i < 34; i++) {
+        const v = await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+        if (v && seq[seq.length - 1] !== v) seq.push(v)
+        await sleep(60)
+      }
+      ok('P9e-4 转身按 正面→侧左→背面→侧右→正面 轮换',
+        seq.join(',') === 'front,side-l,back,side-r,front',
+        JSON.stringify({ 序列: seq, 说明: 'TURN_STEP_MS=260，四步约 1.05 秒' }))
+    }
+
     // 换回胶囊，别把测试值留在偏好里
     await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petSkin === 'capsule', 8000, '落盘 petSkin=capsule')

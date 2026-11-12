@@ -88,6 +88,16 @@ body,
   animation: petwin-photo-breathe 3.6s ease-in-out infinite;
 }
 
+/* 四视图转身（SPEC-deskpet-turn）：四层叠着，只有当前那层不透明。
+   设置页和这个窗口各有一份 CSS，规则要同步改两处。 */
+.pet-photo-layer {
+  opacity: 0;
+  transition: opacity 170ms linear;
+}
+.pet-photo-layer.is-on {
+  opacity: 1;
+}
+
 @keyframes petwin-photo-breathe {
   0%,
   100% {
