@@ -502,7 +502,9 @@ try {
         Math.max(...ys) - Math.min(...ys) <= 1,
         JSON.stringify({ 各层顶边: ys }))
 
-      // 手动触发一次转身（平时 22 秒才转一圈，等不起），采 2 秒内的视图序列
+      // 整圈转身（`pet:turn`）：留给 e2e 与以后的「点它一下」动作。
+      // 自动转身已在 2026-11-12 第二轮删掉（用户嫌 22 秒转一次怪），
+      // 所以这里必须显式触发，不能等。
       await petEval(`(window.dispatchEvent(new Event('pet:turn')), 'ok')`)
       const seq = []
       for (let i = 0; i < 34; i++) {
@@ -510,9 +512,68 @@ try {
         if (v && seq[seq.length - 1] !== v) seq.push(v)
         await sleep(60)
       }
-      ok('P9e-4 转身按 正面→侧左→背面→侧右→正面 轮换',
+      ok('P9e-4 整圈转身按 正面→侧左→背面→侧右→正面 轮换',
         seq.join(',') === 'front,side-l,back,side-r,front',
         JSON.stringify({ 序列: seq, 说明: 'TURN_STEP_MS=260，四步约 1.05 秒' }))
+
+      // ========== P9f 鼠标拖动转身（用户第二轮要求的功能） ==========
+      //
+      // 用户原话「我希望我可以用鼠标来让它转身，22 秒转一次感觉很怪」。
+      // 这里不真移鼠标（CDP 做不到跨窗口的 screenX），而是派发带 screenX 的
+      // PointerEvent 走真实处理路径——`onPointerMove` 读的就是 `e.screenX`。
+      //
+      // 注意：窗口会跟着光标走，`clientX` 全程不变，只有 `screenX` 在动。
+      // 所以合成事件里必须给 screenX 赋值，给 clientX 是测不出来的。
+      const facingAfter = async (dx) => {
+        await petEval(`(()=>{
+          const el = document.querySelector('.petwin');
+          const down = new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: 500 });
+          el.dispatchEvent(down);
+          el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: ${500 + dx} }));
+          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: ${500 + dx} }));
+          return 'ok'
+        })()`)
+        await sleep(120)
+        return petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+      }
+
+      // 往右拖 110px = 顺时针四分之一圈 = 露出右脸（side-r 在 VIEWS 里是下标 3）
+      ok('P9f-1 往右拖一格露出右脸（顺时针）',
+        (await facingAfter(110)) === 'side-r',
+        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+
+      // 再往右拖一格 = 转半圈 = 背面
+      ok('P9f-2 再往右拖一格转到背面',
+        (await facingAfter(110)) === 'back',
+        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+
+      // 往左拖两格 = 从背面转回正面
+      ok('P9f-3 往左拖两格转回正面',
+        (await facingAfter(-220)) === 'front',
+        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+
+      // 少拖一点（半格不到）不该换面——防止手抖就转
+      await petEval(`(window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: 0 })), 'ok')`)
+      await sleep(100)
+      ok('P9f-4 拖不到半格不动（避免手抖就转）',
+        (await facingAfter(50)) === 'front',
+        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+
+      // 双击转回正面：拖歪了想让它重新面对你
+      await petEval(`(window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: 2 })), 'ok')`)
+      await sleep(100)
+      await petEval(`(document.querySelector('.petwin').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })), 'ok')`)
+      await sleep(150)
+      ok('P9f-5 双击转回正面',
+        (await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)) === 'front',
+        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+
+      // 自动转身真的没了：等 3 秒，视图不该自己变（旧版 3 秒时必定转身）
+      const idleView = await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+      await sleep(3000)
+      ok('P9f-6 没人碰它的时候不会自己转身（自动节拍已删）',
+        (await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)) === idleView,
+        JSON.stringify({ 等待前: idleView, 等待后: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
     }
 
     // 换回胶囊，别把测试值留在偏好里

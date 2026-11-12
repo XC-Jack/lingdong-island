@@ -25,6 +25,11 @@ import backUrl from '../assets/pet/bean-photo-back.png'
  * 用户想要 3D，评估后选了成本低一档的做法：用正面 / 侧左 / 背面 / 侧右四张图
  * 依次切换，看起来像在转身。不是真 3D，但比一张静图有生气得多。
  *
+ * 怎么触发（2026-11-12 第二轮，用户原话「我希望我可以用鼠标来让它转身，
+ * 22 秒转一次感觉很怪」）：**只由鼠标拖动驱动，没有自动转身了**。
+ * 用户按住它往右拖，它就向右转过一格；拖得越远转得越多，松手停在当前那一面。
+ * 一只没人碰却自己在那儿演的木偶，比静止更像死物——这是删掉定时的理由。
+ *
  * 为什么四张图都按「同一高度、水平居中」摆：三张图是分三次抠的，各自的
  * 宽高比不同（310×515 / 230×521 / 322×518）。如果强行塞进同一个方框会拉变形，
  * 只统一高度、宽度按比例算，体型比例才跟原图一致。
@@ -70,43 +75,46 @@ const VIEWS: ViewDef[] = [
   { key: 'side-r', src: sideUrl, ratio: RATIO_SIDE, mirror: true }
 ]
 
-/** 每一格停多久（毫秒）。太快看不清，太慢像卡住 */
+/** 每一格停多久（毫秒）。只在「整圈转身」被显式触发时用（e2e 与以后的点击动作） */
 const TURN_STEP_MS = 260
-/**
- * 转完一圈之后歇多久再转。
- *
- * 为什么要歇：一直转就成了陀螺，看着累。22 秒是试出来的——短到能感觉到
- * 「它活着」，长到不会让人分心。改成 0 就是一直转。
- */
-const TURN_GAP_MS = 22000
 
-/** 从当前视图开始转一圈：1 → 2 → 3 → 回到 0 */
+/** 整圈的顺序：正面 → 侧左 → 背面 → 侧右 → 回正面（值为 `VIEWS` 的下标） */
 const TURN_ORDER = [1, 2, 3, 0]
 
 /**
- * 转身节拍器。
+ * 转身状态的两种驱动方式。
  *
- * 为什么用 state 而不是 CSS 关键帧：四张图各自的可见时长不一样（正面停得最久），
- * 用 CSS 得写四组关键帧再对齐时间轴，改一次数值要同步改四处。
- * 用 state 就是「现在是第几格」，切换一格渲染一次，一眼能看懂。
+ * 2026-11-12 用户反馈「22 秒转一次感觉很怪」，要求改成"用鼠标拖动来转身"。
+ * 于是自动转身整个删掉了 —— 一只没人碰却自己在演的木偶，比静止更像死物。
+ * 现在只剩两条路进来：
  *
- * 为什么监听 `pet:turn` 事件：e2e 不能等 22 秒。这个事件也留给以后的交互复用
- * （比如点它一下让它转个身）。它只是内部约定，没有写进 Preload 的对外 API。
+ * 1. `pet:turn-abs`（detail 是 `VIEWS` 的下标）：跟鼠标拖动挂钩，由
+ *    `PetWindowApp` 按横向位移算出该摆哪一面。这是主用法。
+ * 2. `pet:turn`：从当前面转一整圈。留给 e2e，也留给以后「点它一下」之类的动作。
+ *
+ * 用 window 事件而不是 props：`PetSkin` 接口是 `Full(props: { mood })`，
+ * 三套皮肤共用；为了一个只有原图皮肤需要的东西去改公共接口，另外两套也得跟着签名，
+ * 不划算。事件是内部约定，没有写进 Preload 的对外 API。
  */
 function useTurnStep(): number {
   const [step, setStep] = useState(0)
 
   useEffect(() => {
-    // 这里**故意不**看 prefers-reduced-motion。
-    //
-    // 常规做法是尊重它（系统开了「关闭动画」就别动），但那说的是装饰性动效——
-    // 页面切换、菜单弹出那种，晃一下纯属干扰。
-    // 桌宠转身不是装饰，它是这个形象唯一的存在感：不动就是一张贴图。
-    // 而且本机实测这个开关是开着的（minAnimate=0），照规矩尊重它等于功能直接消失，
-    // 用户会以为坏了。真要让用户能关，应该做成设置项，跟系统开关解耦。
-
+    // 这里没有 prefers-reduced-motion 的判断：现在转身只在用户拖它的时候发生，
+    // 是「动作本身」而不是装饰性动效，属于用户主动的操作反馈，不该被系统开关吞掉。
     let cancelled = false
     let timers: number[] = []
+
+    const onAbs = (e: Event): void => {
+      const v = (e as CustomEvent<number>).detail
+      if (typeof v !== 'number' || !Number.isFinite(v)) return
+      const i = Math.round(v)
+      if (i < 0 || i >= VIEWS.length) return
+      // 整圈进行到一半时被拖动打断：先取消剩下的格子，否则拖完又被自动转回去
+      timers.forEach((t) => window.clearTimeout(t))
+      timers = []
+      setStep(i)
+    }
 
     const runTurn = (): void => {
       timers.forEach((t) => window.clearTimeout(t))
@@ -117,19 +125,14 @@ function useTurnStep(): number {
       )
     }
 
-    const onTurn = (): void => runTurn()
-    window.addEventListener('pet:turn', onTurn)
-    // 开着就先转一圈：等 22 秒才动，用户会以为这是个静态图。
-    // 第一次给 3 秒，让人先看清正脸，再动。
-    const first = window.setTimeout(runTurn, 3000)
-    const gap = window.setInterval(runTurn, TURN_GAP_MS)
+    window.addEventListener('pet:turn-abs', onAbs)
+    window.addEventListener('pet:turn', runTurn)
 
     return () => {
       cancelled = true
       timers.forEach((t) => window.clearTimeout(t))
-      window.clearTimeout(first)
-      window.clearInterval(gap)
-      window.removeEventListener('pet:turn', onTurn)
+      window.removeEventListener('pet:turn-abs', onAbs)
+      window.removeEventListener('pet:turn', runTurn)
     }
   }, [])
 
