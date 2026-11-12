@@ -43,6 +43,15 @@ body,
   cursor: grabbing;
 }
 
+/* 去掉键盘焦点环（2026-11-12 用户反馈「一右键就多出来一个边框」）。
+   根节点是 role="button" + tabIndex={0}，右键时它的父级拿到焦点，
+   浏览器默认给 :focus-visible 画一圈 outline——在透明窗口里就是一圈方框，
+   看起来像桌宠被框住了。这个窗口没有键盘操作，焦点环没有意义。 */
+.petwin:focus,
+.petwin:focus-visible {
+  outline: none;
+}
+
 /* 皮肤包装层：铺满窗口，让里面的 SVG 撑满。
    与 styles.css 的 .pet-wrap 同源（那边只管 inline-flex 布局，尺寸归各处自己定）。 */
 .petwin .pet-wrap {

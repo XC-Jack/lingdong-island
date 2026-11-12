@@ -1025,6 +1025,100 @@ try {
         }))
     }
 
+    // ========== P9j 右键不再多出一圈边框（焦点环）==========
+    //
+    // 用户原话（2026-11-12）：「我一右键就会多出来一个边框」。
+    // 截图实测：那圈线是 238×313 物理像素的矩形，正好等于宠物窗口 190×250 DIP × DPR 1.25；
+    // 线色 (229,151,0)，本机 DWM 强调色是 0xFFD47800 → RGB(212,120,0)。
+    // 矩形贴合窗口 + 用系统强调色 = Chromium 的 :focus-visible 焦点环。
+    //
+    // 修法是 `.petwin:focus, .petwin:focus-visible { outline: none }`（petwin.css）。
+    // 下面这三条里，P9j-3 是关键：它证明「删掉这条规则，焦点环就真的出现」，
+    // 否则只断言「现在没有」属于假绿——把 CSS 整段删掉也能过。
+    {
+      // 让根节点进入 :focus-visible。脚本 focus() 不够（Chromium 认定那是鼠标交互），
+      // 必须派发一次真实的 Tab 键。
+      const tab = async () => {
+        const pages = await listTargets()
+        const page = pages.find(MATCH.pet)
+        if (!page) throw new Error('no pet target')
+        const ws = new WebSocket(page.webSocketDebuggerUrl)
+        await new Promise((res, rej) => {
+          const timer = setTimeout(() => rej(new Error('cdp timeout')), 15000)
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: `(document.querySelector('.petwin').blur(), 'ok')`, returnByValue: true } }))
+          }
+          ws.onmessage = (ev) => {
+            const m = JSON.parse(ev.data)
+            if (m.id === 1) {
+              ws.send(JSON.stringify({ id: 2, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, text: '\t' } }))
+            }
+            if (m.id === 2) {
+              ws.send(JSON.stringify({ id: 3, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 } }))
+            }
+            if (m.id === 3) { clearTimeout(timer); ws.close(); res() }
+          }
+          ws.onerror = rej
+        })
+      }
+
+      const focusState = () => petEval(`(() => {
+        const el = document.querySelector('.petwin')
+        if (!el) return JSON.stringify({ err: 'no .petwin' })
+        const cs = getComputedStyle(el)
+        return JSON.stringify({
+          focus: el.matches(':focus'),
+          focusVisible: el.matches(':focus-visible'),
+          outlineStyle: cs.outlineStyle,
+          outlineColor: cs.outlineColor,
+          outlineWidth: cs.outlineWidth,
+        })
+      })()`).then((s) => (typeof s === 'string' ? JSON.parse(s) : s))
+
+      const cssSrc = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'petwin', 'petwin.css'), 'utf8')
+
+      // P9j-1 源码层面：本意就是「这个窗口不要键盘焦点环」
+      ok('P9j-1 petwin.css 里给 .petwin 关掉了 focus 焦点环',
+        /\.petwin:focus[^{]*\{[^}]*outline:\s*none/.test(cssSrc),
+        JSON.stringify({ 找到规则: /\.petwin:focus[^{]*\{[^}]*outline:\s*none/.test(cssSrc) }))
+
+      // P9j-2 运行时层面：真的进到 :focus-visible 时，computed outline 必须是 none
+      await tab()
+      await sleep(400)
+      const on = await focusState()
+      ok('P9j-2 拿到键盘焦点时计算样式里 outline 是 none（真出现在界面上才是边框）',
+        on.focusVisible === true && on.outlineStyle === 'none',
+        JSON.stringify({ 拿到焦点: on.focus, 焦点可见: on.focusVisible, 描边样式: on.outlineStyle, 颜色: on.outlineColor }))
+
+      // P9j-3 负对照：把那几条规则从文档里删掉，焦点环应该立刻回来。
+      // 这一步是防止「CSS 写错了但恰好没触发」这种假绿。
+      const del = await petEval(`(() => {
+        let n = 0
+        for (const sheet of Array.from(document.styleSheets)) {
+          let rules
+          try { rules = sheet.cssRules } catch { continue }
+          for (let i = rules.length - 1; i >= 0; i--) {
+            const sel = rules[i].selectorText || ''
+            if (sel.includes('.petwin') && sel.includes(':focus')) {
+              try { sheet.deleteRule(i); n++ } catch {}
+            }
+          }
+        }
+        return String(n)
+      })()`)
+      await tab()
+      await sleep(400)
+      const off = await focusState()
+      ok('P9j-3 删掉那条规则后焦点环真的会出现（证明修复不是摆设）',
+        Number(del) > 0 && off.outlineStyle !== 'none' && /229|212/.test(String(off.outlineColor)),
+        JSON.stringify({
+          删掉的规则数: del,
+          描边样式: off.outlineStyle,
+          描边颜色: off.outlineColor,
+          说明: '本机强调色 0xFFD47800 → RGB(212,120,0)，Chromium 用强调色画焦点环'
+        }))
+    }
+
     // 换回胶囊，别把测试值留在偏好里
     await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petSkin === 'capsule', 8000, '落盘 petSkin=capsule')

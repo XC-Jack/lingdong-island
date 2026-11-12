@@ -270,3 +270,110 @@ P9h-1 触发的那次笑要 7.2 秒才结束。第一版把「拖一把不该触
 **未验证**：①打滚播起来真人看是什么观感（尤其躺下变宽后 190 宽的窗口够不够，
 现在按 140 单位高度换算下来格宽约 105，窗口内左侧居中，理论不裁）②两支动作连着点会不会有手感问题
 （代码上会先清旧定时器，但没真人试）。
+
+### 7.10 打滚「身体残缺」+ 三张皮肤的白缝 + 右键多出边框（第七轮，用户实测反馈后修）
+
+用户 2026-11-12 原话：「我一右键就会多出来一个边框；还有就是打滚扣的不好，身体有残缺；
+我现在又发现了一个之前没发现的，截图二，就是原版的图片上手部和手和肚皮的夹缝都有一点白色背景没扣好；
+还有就是我刚刚截图，灵动岛没有信息提示弹出」。前三条本轮已处理，第四条另行排查。
+
+**（一）打滚「身体残缺」= 阴影泛洪顺着肚皮高光咬进身体**
+
+不是帧被裁，也不是连通块被切。逐项排除过的：82 帧逐帧查贴边（只有 3~27px 的边缘细条）、
+`alpha>0.5` 连通块无一帧出现第二个 >50px 的块、内部透明洞 0 像素、
+用 `(ch>35)|(mn<200)` 判严前景只被抠掉 0.05%、封闭背景块 ≥40px 的 0 个。
+
+真因在阴影判据：
+```python
+passable = bg | ((ch < SHADOW_CHROMA_MAX) & (mn > SHADOW_MIN_FLOOR) & (mn < SHADOW_MIN_CEIL))
+reach = flood(passable)
+```
+它从四边泛洪，会**顺着肚皮上缘「亮且低彩度」的高光一路咬进身体**。帧 046 被吃掉的非背景像素
+**4663 个**（RGB 中位 `[235,224,211]`），第二大的块 **600px 就在 `x220–342 y374–403`**，
+成品上正是「像被啃掉一口」的缺口。修法是给阴影判据加**地面带限制**：
+```python
+SHADOW_BAND = 70
+fg_ys = np.nonzero(~bg)[0]
+band_top = max(0, int(fg_ys.max()) - SHADOW_BAND) if len(fg_ys) else 0
+shadow_ok[:band_top, :] = False   # 只允许贴着角色最低点往上 70 行以内当阴影
+```
+效果：帧 046「非背景却透明」**5748 → 4522**、帧 030 **6121 → 4827**。
+
+**（二）白 halo = 透明区还留着纯白 RGB**
+
+`cut()` 只对 `0.02<alpha<0.995` 的窄带去污染，**alpha 更小的像素 RGB 仍是原图的纯白**；
+`resize(..., LANCZOS)` 是逐通道插值、非预乘 alpha，白就被混进边缘。
+修法是新增 `fill_transparent(rgb, alpha, r=7, iters=3)`：把透明区的 RGB 迭代填成邻域身体色，
+再缩放就没有白可混。**预乘 alpha 缩放这条路走过、不能用**——实测白边像素从 0 涨到 161。
+
+**（三）三张原图皮肤的「夹缝白」**
+
+先量：`bean-photo.png` 里「不透明且 min>235 & chroma<20」只有 **7px**（`x36–272 y338–343`，
+正是左右手与肚皮之间那两条缝）；侧图、背图都是 0。把这几点放大到 12× 对照原图，
+确认原图腋下本身就是一条白缝（手臂与肚子之间背景透出），不是抠坏了。
+
+修法是 `.tmp/niwa/carve_photo_holes.py`，判据**只看绝对颜色，不跟背景比**：
+```python
+HOLE_MIN_CHANNEL = 230   # min 通道
+HOLE_CHROMA_MAX  = 25    # chroma
+MAX_HOLE         = 300   # 奶白肚皮 7000+，靠这条兜一层
+```
+第一版拿「与透明区背景中位色的差 < 6」当判据，只挖到 2 像素就收工——
+因为成品 PNG 的透明区虽然 alpha=0，RGB 却还留着**身体黄**（算出来 bgc=[245,219,111]），
+真正的白缝离它 126，全被挡在门外。改判据后：正面挖 **10px**、背面挖 **3px**、侧图 0。
+
+**（四）右键多出的那圈边框 = Chromium 焦点环**
+
+用户截图（m03690）里那圈线量出来是 `x30..267 / y36..348`，正好 **238×313 物理像素**，
+等于宠物窗口 190×250 DIP × `devicePixelRatio 1.25`；线的颜色 **(229,151,0)**，
+而本机 `HKCU\Software\Microsoft\Windows\DWM\AccentColor = 0xFFD47800` → RGB(212,120,0)。
+**矩形严丝合缝贴合窗口 + 用系统强调色画 = Chromium 自 100 版起的 `:focus-visible` 焦点环。**
+
+修法（`src/renderer/src/petwin/petwin.css`）：
+```css
+.petwin:focus,
+.petwin:focus-visible {
+  outline: none;
+}
+```
+**为什么该关掉**：这个窗口没有键盘操作，焦点环没有意义；而且它是无边框透明窗口，
+环一出来就等于给桌宠套了个方框。
+
+**验证手法（值得记）**：脚本里 `el.focus()` 不会让 `:focus-visible` 为真（Chromium 认为那是
+鼠标交互），**必须用 CDP 派发一次真实的 Tab 键**。负对照也不能用 `<style>` 注入
+（`pet.html` 的 CSP 会拦），要走 CSSOM 的 `sheet.deleteRule`。实测三轮：
+
+| 轮次 | 状态 | 边框 |
+|---|---|---|
+| 原始（未激活） | `focus=false focusVisible=false outlineStyle=none` | 无 |
+| 真鼠标点一下让窗口激活 | 同上 | 无 |
+| **删掉 CSS 那条规则 + Tab** | `focusVisible=true outlineStyle=auto outlineColor=rgb(229,151,0)` | **出现**（琥珀色边框计数 top48/bot113/left76） |
+
+第三轮的颜色 `rgb(229,151,0)` 与用户截图里 `(229,151,0)` **逐位相同**，这是「就是它」的硬证据。
+
+**全量复检**：`bean-roll.webp` 3960×880 / 82 帧 / 每格 165×220 / WebP q84 /
+**343328 B**；整张 sheet 严格白残留 **3px**、边缘亮带（halo 指标）**0px**。
+三张皮肤：正面 130918 B、背面 112981 B、侧面不变 98175 B。
+
+**e2e 新增 P9j 三条**（`scripts/e2e-deskpet-out.mjs`）：
+- `P9j-1` 源码断言 `petwin.css` 里有 `.petwin:focus { outline: none }`
+- `P9j-2` 派发 Tab 后 `:focus-visible` 为真且 computed `outlineStyle === 'none'`
+- `P9j-3` **负对照**：`deleteRule` 删掉那条规则后焦点环真的回来，且颜色匹配 `229|212`
+
+**为什么 P9j-3 必不可少**：只断言「现在没有边框」属于假绿——把整段 CSS 删掉也能过。
+必须有「删掉它就红」的对照，这条断言才有判别力。
+
+**验证（[实测]）**：`npm run typecheck` EXIT=0、`npm run build` EXIT=0
+（`bean-roll-BN8i1gt5.webp 343.32 kB`、`bean-photo-B6LBFDhs.png 130.91 kB`、
+`bean-photo-back-Bok3ErUR.png 112.98 kB`）；`e2e-deskpet-out` **PASS（72 过 / 0 败）**；
+回归 `e2e-deskpet` 33/0、`e2e-head-order` 14/0、`e2e-collapse-order` 22/0、
+`e2e-settings-shell` 51/0。
+
+**回归里踩的一个坑**：`e2e-m2` 首次 FAIL「岛仔挂载超时」。根因不是代码——
+`.tmp/e2e-userdata/lingdong-island/prefs.json` 里 `petMode` 停在 `window`（上一批 e2e 留下的），
+岛仔按设计不渲染。把该值改回 `island` 后立刻 PASS。
+**教训**：共享隔离目录的 e2e 之间会互相污染 `petMode`，跑完整套要么顺序固定、要么跑前重置。
+
+**未验证**：①打滚修完后真人在深色桌面上看还有没有观感问题
+②三张皮肤各挖掉 10/3 像素后边缘有没有变得不自然（量太小，肉眼看不出）
+③「灵动岛没有信息提示弹出」这一条本轮完全没查。
