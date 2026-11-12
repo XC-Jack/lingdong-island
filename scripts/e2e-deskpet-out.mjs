@@ -581,15 +581,44 @@ try {
         if (!r) return JSON.stringify({ 存在: false });
         const cs = getComputedStyle(r);
         const b = r.getBoundingClientRect();
-        return JSON.stringify({ 存在: true, 不透明度: cs.opacity, 宽: Math.round(b.width), 高: Math.round(b.height), 底部: Math.round(b.bottom) })
+        // 当前正在显示的那一张图（拿到它的矩形，用来判断图标有没有压到宠物身上）
+        const on = document.querySelector('.pet-photo-layer.is-on') || document.querySelector('.pet-full');
+        const ib = on ? on.getBoundingClientRect() : null;
+        return JSON.stringify({
+          存在: true,
+          不透明度: cs.opacity,
+          宽: Math.round(b.width),
+          高: Math.round(b.height),
+          底部: Math.round(b.bottom),
+          左: Math.round(b.left),
+          右: Math.round(b.right),
+          顶: Math.round(b.top),
+          宠物左: ib ? Math.round(ib.left) : null,
+          宠物右: ib ? Math.round(ib.right) : null,
+          宠物底: ib ? Math.round(ib.bottom) : null
+        })
       })()`)
       const rotor = JSON.parse(rotorInfo)
       ok('P9f-1 底部有旋转图标，且鼠标不在宠物身上时不可见（opacity 0）',
         rotor.存在 === true && Number(rotor.不透明度) === 0,
         rotorInfo)
-      ok('P9f-2 旋转图标落在宠物底部（不是飘在别处）',
-        rotor.存在 === true && rotor.宽 > 0 && rotor.高 > 0 && rotor.底部 >= 180,
-        JSON.stringify({ 底部: rotor.底部, 宽: rotor.宽, 说明: '窗口约 190 高，图标底边应贴近底边' }))
+
+      // 2026-11-12 用户反馈「图标在往下移，有点遮住脚了」。
+      // 原先是 `left:50%; bottom:4px` 居中贴底，那个位置正好压在两只脚中间偏下。
+      // 所以这条断言不能只测「在底部」，必须同时测「没压到宠物轮廓」——
+      // 只看底部位置的话，压着脚的那个版本照样全绿，等于没测。
+      const overlapX = rotor.左 !== null && rotor.宠物左 !== null
+        ? Math.min(rotor.右, rotor.宠物右) - Math.max(rotor.左, rotor.宠物左)
+        : 0
+      ok('P9f-2 旋转图标在窗口下半部，且没有压在宠物身上（不遮脚）',
+        rotor.存在 === true && rotor.宽 > 0 && rotor.高 > 0 &&
+          rotor.底部 >= 180 && overlapX <= 0,
+        JSON.stringify({
+          图标: { 左: rotor.左, 右: rotor.右, 顶: rotor.顶, 底部: rotor.底部 },
+          宠物: { 左: rotor.宠物左, 右: rotor.宠物右, 底: rotor.宠物底 },
+          水平重叠: overlapX,
+          说明: '水平重叠 > 0 就是在挡脚；旧版 left:50%/bottom:4px 会重叠约 22px'
+        }))
 
       // 「鼠标碰到桌宠时图标才显现」——hover 才淡入。
       //
