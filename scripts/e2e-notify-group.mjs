@@ -70,18 +70,23 @@ try {
   ok('G2 堆叠组带计数徽标', g2.has && g2.n > 1, `badge=${g2.has ? g2.n : '无'}`)
 
   // G3 点击最大组展开 → 会话子组出现
-  const appOfMax = await cdpEval(`(() => {
-    let best = null, bestN = 0
-    for (const li of document.querySelectorAll('.notify-list > .notify-group')) {
-      const b = li.querySelector(':scope > .notify-body .notify-badge')
+  // 2026-11-12 修：同时返回「最大组是第几个」，G5b 要用同一个组收起。
+  // 原来 G5b 点的是 `.notify-list > .notify-group`（第一个组）而不是刚展开的那个，
+  // 等于又展开了一个新组 → threads 从 13 变 14，断言必错（这是脚本 bug，不是产品 bug）。
+  const g3pre = await cdpEval(`(() => {
+    let best = -1, bestN = 0
+    const groups = document.querySelectorAll('.notify-list > .notify-group')
+    for (let i = 0; i < groups.length; i++) {
+      const b = groups[i].querySelector(':scope > .notify-body .notify-badge')
       const n = b ? Number(b.textContent) : 1
-      if (n > bestN) { bestN = n; best = li }
+      if (n > bestN) { bestN = n; best = i }
     }
-    if (!best) return null
-    const btn = best.querySelector(':scope > .notify-body')
-    btn.dispatchEvent(new MouseEvent('click', {bubbles:true}))
-    return bestN
+    if (best < 0) return null
+    groups[best].querySelector(':scope > .notify-body').dispatchEvent(new MouseEvent('click', {bubbles:true}))
+    return { n: bestN, idx: best }
   })()`)
+  const appOfMax = g3pre?.n ?? null
+  const maxIdx = g3pre?.idx ?? 0
   await sleep(400)
   const g3 = await cdpEval(`(() => {
     const threads = document.querySelectorAll('.notify-thread').length
@@ -117,8 +122,8 @@ try {
   const g5a = await cdpEval(`document.querySelectorAll('.notify-leaf').length`)
   ok('G5a 再点会话收起条目', g5a === 0, `leaves=${g5a}`)
 
-  // G5b 再点组条目 → thread 消失
-  await cdpEval(`document.querySelector('.notify-list > .notify-group > .notify-body').dispatchEvent(new MouseEvent('click', {bubbles:true}))`)
+  // G5b 再点组条目 → thread 消失（必须是刚刚 G3 展开的那个组）
+  await cdpEval(`document.querySelectorAll('.notify-list > .notify-group')[${maxIdx}]?.querySelector(':scope > .notify-body')?.dispatchEvent(new MouseEvent('click', {bubbles:true})); 1`)
   await sleep(400)
   const g5b = await cdpEval(`document.querySelectorAll('.notify-thread').length`)
   ok('G5b 再点组收起子组', g5b === 0, `threads=${g5b}`)

@@ -55,14 +55,19 @@ function parseToastXml(xml: string): { title: string; body: string } {
   return { title: texts[0], body: texts.slice(1).join(' ') }
 }
 
-/** 抽 toast XML 的 launch 属性（点击通知时系统分发的深链），URL 解码；无属性/解码失败返回 null */
+/** 抽 toast XML 的 launch 属性（点击通知时系统分发的深链）；无属性/解码失败返回 null
+ *  2026-11-12 修：先解 XML 实体再 URL 解码。原来只做 decodeURIComponent，导致
+ *  ScreenSketch 这类把 `&` 写成 `&amp;` 的应用拿到的深链是
+ *  `ms-screensketch:edit?&amp;filePath=...`，交给 shell.openExternal 是坏 URI。
+ *  顺序必须是「实体 → 百分号」：反过来 `&amp;` 里的 % 不受影响，但含 %26 的值会被二次解码。 */
 function parseToastLaunch(xml: string): string | null {
   const m = xml.match(/\blaunch="([^"]*)"/)
   if (!m) return null
+  const unescaped = decodeEntities(m[1])
   try {
-    return decodeURIComponent(m[1]) || null
+    return decodeURIComponent(unescaped) || null
   } catch {
-    return m[1] || null // 解码失败就用原始值（个别应用不做 URL 编码）
+    return unescaped || null // 解码失败就用原始值（个别应用不做 URL 编码）
   }
 }
 

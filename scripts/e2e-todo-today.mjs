@@ -98,8 +98,30 @@ async function collapse(wsUrl) {
 
 /** 点分页圆点切页（0=待办 1=置物架 2=通知 3=日程） */
 async function gotoPage(wsUrl, index) {
+  // 圆点顺序由 pagesCustom.pages 决定，不能假设「第 index 个圆点 = 第 index 号页面」。
+  // 先读出这个圆点自己的 aria-label（格式「跳到第 N 页：日程」），再按它等标题切过去。
+  const ariaLabel = await cdp(wsUrl, `document.querySelectorAll('.dot')[${index}]?.getAttribute('aria-label') ?? ''`)
+  const label = ariaLabel.includes('：') ? ariaLabel.split('：').pop() : ''
   await cdp(wsUrl, `document.querySelectorAll('.dot')[${index}].click(); 1`)
-  await sleep(500)
+  // 2026-11-12 修：点圆点只保证 state 切了，React 渲染 + page-fade 动画还要再一帧。
+  // 原来固定 500ms 在慢机器上不够，A7 一进页就点 `.sched-time-btn` 时元素还没挂上，
+  // 抛 `TypeError: Cannot read properties of undefined (reading 'querySelectorAll')`
+  // （下一句拿 `.time-pop-col` 的下标 [0]）。改成等面板标题真的切过去再返回。
+  // 注意：五个页面的根节点都叫 `.todo-panel`，不能靠根类名区分，只能看 `.panel-title`。
+  const t0 = Date.now()
+  while (Date.now() - t0 < 8000) {
+    try {
+      const cur = await cdp(wsUrl, `document.querySelector('.panel-title')?.textContent ?? ''`)
+      if (label ? cur === label : cur.length > 0) {
+        await sleep(120) // 给 page-fade 一帧，避免刚切完就点
+        return
+      }
+    } catch {
+      /* 页面还在渲染 */
+    }
+    await sleep(150)
+  }
+  throw new Error(`gotoPage(${index}) 超时：标题没变成「${label}」`)
 }
 
 const listTexts = `Array.from(document.querySelectorAll('.todo-panel .todo-item .todo-text')).map(e => e.textContent)`
