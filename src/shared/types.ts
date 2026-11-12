@@ -57,7 +57,7 @@ export type SettingsSection = 'general' | 'pages' | 'focus' | 'pet'
  * 新增皮肤时要同时改这里和 `src/renderer/src/pet/index.tsx` 的清单。
  * ⚠️ 已落盘的 id 不能改：改了等于所有用户的选择静默丢失。
  */
-export const PET_SKIN_IDS = ['capsule', 'bean'] as const
+export const PET_SKIN_IDS = ['capsule', 'bean', 'photo'] as const
 export type PetSkinId = (typeof PET_SKIN_IDS)[number]
 
 /**
