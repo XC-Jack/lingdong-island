@@ -572,3 +572,86 @@ div.pm-row[draggable='true'] {
   line-height: 1.55;
   color: rgba(242, 243, 245, 0.42);
 }
+
+/* ===== 原图皮肤（SPEC-deskpet-photo） =====
+   图是静态照片，没有骨架，所以动画只能整体做：
+   呼吸作用在图本身（锚点在脚底，缩放时脚不动、身体上下起伏），影子反向变淡，
+   两者错开 0.4s 才有「身体在动、影子还在地上」的层次。
+   这套样式只影响设置窗口；以后独立小窗口用同一份规则时要搬去 styles.css。 */
+
+.pet-photo-img {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: pet-photo-breathe 3.6s ease-in-out infinite;
+}
+@keyframes pet-photo-breathe {
+  0%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  50% {
+    transform: scaleY(1.025) scaleX(0.995);
+  }
+}
+
+.pet-photo-shadow {
+  transform-box: fill-box;
+  transform-origin: center center;
+  animation: pet-photo-shadow-pulse 3.6s ease-in-out infinite;
+}
+@keyframes pet-photo-shadow-pulse {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.22;
+  }
+  50% {
+    transform: scaleX(0.96);
+    opacity: 0.17;
+  }
+}
+
+/* 开心：整只弹一下（照片没法换表情，只能靠运动表达） */
+.pet-photo-happy .pet-photo-img {
+  animation: pet-photo-hop 0.42s ease-in-out 3;
+}
+@keyframes pet-photo-hop {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  35% {
+    transform: translateY(-6%) scaleY(0.97);
+  }
+  70% {
+    transform: translateY(0) scaleY(1.03);
+  }
+}
+
+/* 困：变暗一点、呼吸放慢 */
+.pet-photo-sleepy .pet-photo-img {
+  animation: pet-photo-breathe 5.2s ease-in-out infinite;
+  filter: brightness(0.88) saturate(0.9);
+}
+
+/* 惊讶：整只一缩一弹 */
+.pet-photo-surprised .pet-photo-img {
+  animation: pet-photo-startle 0.28s ease-out 1;
+}
+@keyframes pet-photo-startle {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.94, 1.05);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 缩略图里不要动：44px 下弹跳只会显得在抖 */
+.pet-set-skin-thumb .pet-photo-img,
+.pet-set-skin-thumb .pet-photo-shadow {
+  animation: none;
+}

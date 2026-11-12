@@ -2,6 +2,7 @@ import type { PetSkinId } from '../../../shared/types'
 import type { PetSkin } from './types'
 import capsule from './skinCapsule'
 import bean from './skinBean'
+import photo from './skinPhoto'
 
 /**
  * 皮肤清单（SPEC-deskpet-skin）。
@@ -13,7 +14,7 @@ import bean from './skinBean'
  *
  * 数组顺序就是设置页里的展示顺序；第一项是「默认皮肤」，`petSkin` 缺失时用它。
  */
-const PET_SKINS: PetSkin[] = [capsule, bean]
+const PET_SKINS: PetSkin[] = [capsule, bean, photo]
 
 /** 默认皮肤：prefs 里没有 petSkin（老用户升级）时用它，保证不换脸 */
 export const DEFAULT_PET_SKIN: PetSkinId = 'capsule'

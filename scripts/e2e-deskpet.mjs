@@ -4,7 +4,7 @@
  *
  * D1 老用户升级：prefs.json 里没有 petSkin → 岛仔仍是紫胶囊（不换脸），且不写死回文件
  * D2 prefs 里手改成不存在的皮肤 id → 岛仔回落默认胶囊，不渲染成空白
- * D3 设置窗口左导航有「桌宠」项，点进去有 160px 大预览 + 两套皮肤选项
+ * D3 设置窗口左导航有「桌宠」项，点进去有 160px 大预览 + 三套皮肤选项
  * D4 在设置页选「黄豆小怪兽」→ prefs.json 落盘 petSkin=bean → 岛仔立刻换脸（不重启）
  * D5 换肤后岛仔几何不变：.collapsed-pet 存在、仍是 22×22、.pet-eye 恰好 2 个
  *   （这三条是 e2e-m2 / e2e-head-order / e2e-collapse-order 的既有硬依赖，换肤不许弄坏）
@@ -188,7 +188,7 @@ try {
     const nav = await settingsEval(`Array.from(document.querySelectorAll('.set-nav-item')).map(e => e.textContent.trim())`)
     ok('D3a 左导航有「桌宠」项', Array.isArray(nav) && nav.some((s) => s.includes('桌宠')), JSON.stringify(nav))
     const skinCount = await settingsEval(`document.querySelectorAll('.pet-set-skin').length`)
-    ok('D3b 桌宠分区列出两套皮肤', skinCount === 2, `实际 ${skinCount}`)
+    ok('D3b 桌宠分区列出三套皮肤（胶囊 / 矢量黄豆 / 原图）', skinCount === 3, `实际 ${skinCount}`)
     const previewSize = await settingsEval(
       `(()=>{const e=document.querySelector('.pet-set-preview .pet-full'); if(!e) return 'none'; const r=e.getBoundingClientRect(); return Math.round(r.width)+'x'+Math.round(r.height)})()`
     )
@@ -274,6 +274,53 @@ try {
     const after = readPrefs()
     ok('D8c 点禁用档位不产生任何写入', clickDisabled === 'clicked' && after.petMode === 'island' && after.petSkin === before,
       `petMode=${JSON.stringify(after.petMode)} petSkin=${JSON.stringify(after.petSkin)}`)
+  }
+
+  // ========== D9 原图皮肤：大尺寸用照片本人，22px 仍用矢量简版 ==========
+  {
+    await openSettings('pet')
+    const chosen = await settingsEval(
+      `(document.querySelector('.pet-set-skin[data-skin-id="photo"]').click(), 'ok')`
+    )
+    await sleep(900)
+    ok('D9a 设置页能选中「我的原图」', chosen === 'ok')
+    const onDisk = readPrefs()
+    ok('D9b 选原图后落盘 petSkin=photo', onDisk.petSkin === 'photo', `实际 ${JSON.stringify(onDisk.petSkin)}`)
+    const skin = await waitPetSkin('photo')
+    ok('D9c 岛仔立刻换成原图皮肤的简版（不重启）', skin === 'photo', `实际 ${skin}`)
+
+    // 照片本体在设置窗口里真的解码出来了：只查 DOM 存在会被「坏图占位」骗过去，
+    // 所以量 <image> 的实际绘制尺寸，并确认它引用的地址能取到字节。
+    const imgInfo = JSON.parse(await settingsEval(`(()=>{
+      const el = document.querySelector('.pet-set-preview .pet-photo-img');
+      if (!el) return JSON.stringify({none:true});
+      const r = el.getBoundingClientRect();
+      return JSON.stringify({href: el.getAttribute('href') || el.href?.baseVal || '',
+        w: Math.round(r.width), h: Math.round(r.height)})
+    })()`))
+    ok('D9d 大预览里画的是照片（.pet-photo-img 存在且有实际尺寸）',
+      !imgInfo.none && imgInfo.w > 40 && imgInfo.h > 40, JSON.stringify(imgInfo))
+    ok('D9e 照片地址指向打包进来的资源（不是空串或外链）',
+      typeof imgInfo.href === 'string' && /bean-photo[^/]*\.png/.test(imgInfo.href), String(imgInfo.href))
+
+    // 岛里那 22px 仍必须是矢量简版：位图缩到 22px 只剩一团黄，
+    // 且 .pet-eye 必须是 2 个（e2e-m2 的硬依赖）。
+    const tiny = JSON.parse(await islandEval(`(()=>{
+      const e = document.querySelector('.collapsed-pet');
+      if (!e) return JSON.stringify({none:true});
+      return JSON.stringify({tag: e.tagName.toLowerCase(),
+        eyes: document.querySelectorAll('.pet-eye').length,
+        hasImg: !!document.querySelector('.collapsed-pet image')})
+    })()`))
+    ok('D9f 岛里的 22px 仍是矢量画法（不是把照片缩到 22px）',
+      tiny.tag === 'svg' && tiny.hasImg === false, JSON.stringify(tiny))
+    ok('D9g 原图皮肤下 .pet-eye 仍是 2 个（眨眼动画与 e2e-m2 依赖）', tiny.eyes === 2, JSON.stringify(tiny))
+
+    // 换回胶囊，别把用户的 prefs 留在测试值上
+    await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
+    await sleep(700)
+    const back = await waitPetSkin('capsule')
+    ok('D9h 换回胶囊正常', back === 'capsule', `实际 ${back}`)
   }
 
   await closeSettings()
