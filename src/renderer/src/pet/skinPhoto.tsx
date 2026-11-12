@@ -109,8 +109,8 @@ const ACTION_COLS = 54
 const ACTION_FRAMES = 108
 /** 播放帧率，与原片一致（原片 30fps 拍摄，抽帧时降到 15fps，这里按 15 播） */
 const ACTION_FPS = 15
-/** 素材每格的宽高比（159×220），用来算它在画布里的宽度 */
-const ACTION_CELL_RATIO = 159 / 220
+/** 素材每格的宽高比（158×220），用来算它在画布里的宽度 */
+const ACTION_CELL_RATIO = 158 / 220
 /** 播完一整支动作要多久（108 / 15 = 7.2 秒），调用方按这个值定时复位 */
 export const ACTION_DURATION_MS = Math.round((ACTION_FRAMES / ACTION_FPS) * 1000)
 
