@@ -27,6 +27,7 @@ body,
 
 /* 整个窗口就是「宠物本体」，没有边距——命中区域要尽量大，用户才抓得住 */
 .petwin {
+  position: relative;
   width: 100%;
   height: 100%;
   display: flex;
@@ -58,7 +59,57 @@ body,
   -webkit-user-drag: none;
 }
 
-/* ---------- 眨眼（矢量皮肤用）---------- */
+/* ---------- 底部旋转把手（2026-11-12 第三轮，用户要求）---------- */
+
+/**
+ * 用户原话：「我希望桌宠的下面有一个旋转的图标，按住它拖动鼠标可以旋转，
+ * 平时碰到桌宠时图标才显现」。
+ *
+ * 为什么把「移动」和「转身」分成两个把手：合成一个手势时，把宠物从屏幕这头
+ * 拖到那头，路上它会转好几圈，摆到目标位置时朝向是随机的——那不是用户要的。
+ *
+ * 平时 opacity: 0（完全看不见但不影响命中），鼠标碰到窗口才淡入。
+ * 注意别用 `visibility: hidden` 或 `pointer-events: none` 做隐藏——
+ * 那样把手就没法被「碰到」了，永远显不出来。
+ */
+.pet-rotor {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 半透明深色底：压在亮黄身体上也能看清，压在桌面上也不突兀 */
+  background: rgba(28, 26, 22, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  /* 平时藏起来，鼠标进来才出现 */
+  opacity: 0;
+  transition: opacity 140ms linear, background 140ms linear;
+  cursor: grab;
+  /* 拖动时别让浏览器把它当图片拖出幽灵 */
+  -webkit-user-drag: none;
+}
+
+/* 鼠标碰到宠物（任意位置）把手就显形 */
+.petwin:hover .pet-rotor {
+  opacity: 1;
+}
+
+/* 正在转：加深底色 + 换抓取光标，用户才知道「抓住了」 */
+.pet-rotor.rotating {
+  opacity: 1;
+  background: rgba(28, 26, 22, 0.72);
+  cursor: grabbing;
+}
+
+/* 窗口失焦时也别让把手一直亮着（alt-tab 回来时别像是卡住了） */
+.petwin:not(:hover) .pet-rotor:not(.rotating) {
+  opacity: 0;
+}
 
 .pet-eye {
   transform-origin: center 12px;

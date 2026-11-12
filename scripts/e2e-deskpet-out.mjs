@@ -187,6 +187,44 @@ async function workArea() {
   ))
 }
 
+/**
+ * 把真实光标挪动 (dx, dy) 像素。
+ *
+ * 为什么必须动真光标：拖动的位移是**主进程**每 16ms 读
+ * `screen.getCursorScreenPoint()` 跟光标起点比出来的，不是渲染层算的。
+ * 只派发 pointerdown 而不挪光标，主进程算出的位移恒为 0，窗口纹丝不动——
+ * 那样测「能不能拖走」永远是一条假绿。
+ *
+ * 用 Windows 原生 `SetCursorPos`（user32），不引额外依赖。
+ * 注意主进程读回的单位是物理像素（实测 125% 缩放下与 Windows
+ * `Cursor.Position` 完全一致），所以这里的 dx/dy 也按物理像素给。
+ */
+async function moveCursorBy(dx, dy) {
+  execSync(
+    `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms;` +
+      `Add-Type -AssemblyName System.Drawing;` +
+      `$p=[System.Windows.Forms.Cursor]::Position;` +
+      `[System.Windows.Forms.Cursor]::Position=New-Object System.Drawing.Point(($p.X+${dx}),($p.Y+${dy}))"`,
+    { stdio: 'ignore' }
+  )
+}
+
+/**
+ * 把真实光标挪到屏幕绝对坐标 (x, y)。
+ *
+ * 用途：验「把手平时看不见」时必须让光标**不在**宠物窗口上——
+ * 只要光标悬在窗口上，`.petwin:hover` 就会让把手淡入成 opacity 1，
+ * 那条断言会随用户当前鼠标位置随机红绿（假失败最难查）。
+ */
+async function setCursor(x, y) {
+  execSync(
+    `powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms;` +
+      `Add-Type -AssemblyName System.Drawing;` +
+      `[System.Windows.Forms.Cursor]::Position=New-Object System.Drawing.Point(${x},${y})"`,
+    { stdio: 'ignore' }
+  )
+}
+
 // ---------- 启停 ----------
 function killApp() {
   try { execSync('taskkill /IM electron.exe /T /F', { stdio: 'ignore' }) } catch { /* 无进程 */ }
@@ -516,64 +554,167 @@ try {
         seq.join(',') === 'front,side-l,back,side-r,front',
         JSON.stringify({ 序列: seq, 说明: 'TURN_STEP_MS=260，四步约 1.05 秒' }))
 
-      // ========== P9f 鼠标拖动转身（用户第二轮要求的功能） ==========
+      // ========== P9f 底部旋转把手转身（用户第三轮要求的功能） ==========
       //
-      // 用户原话「我希望我可以用鼠标来让它转身，22 秒转一次感觉很怪」。
+      // 用户原话「我希望桌宠的下面有一个旋转的图标，按住它拖动鼠标可以旋转，
+      // 平时碰到桌宠时图标才显现」。
+      //
+      // 2026-11-12 第三轮起：**移动和转身拆成两个把手**。
+      // 按住身体 (.petwin) = 挪位置；按住底部图标 (.pet-rotor) = 原地转身。
+      // 所以下面派发事件的元素从 `.petwin` 改成了 `.pet-rotor`。
+      //
       // 这里不真移鼠标（CDP 做不到跨窗口的 screenX），而是派发带 screenX 的
-      // PointerEvent 走真实处理路径——`onPointerMove` 读的就是 `e.screenX`。
+      // PointerEvent 走真实处理路径——`onRotorMove` 读的就是 `e.screenX`。
       //
       // 注意：窗口会跟着光标走，`clientX` 全程不变，只有 `screenX` 在动。
       // 所以合成事件里必须给 screenX 赋值，给 clientX 是测不出来的。
-      const facingAfter = async (dx) => {
+      const viewNow = () => petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+
+      // 把手存在且默认不可见（opacity 0）——「平时碰到桌宠时图标才显现」
+      //
+      // 先把真实光标挪到屏幕左上角：只要光标悬在宠物窗口上，`.petwin:hover`
+      // 就会让把手淡入成 opacity 1，这条断言会随用户当前鼠标位置随机红绿。
+      await setCursor(2, 2)
+      await sleep(300)
+      const rotorInfo = await petEval(`(()=>{
+        const r = document.querySelector('.pet-rotor');
+        if (!r) return JSON.stringify({ 存在: false });
+        const cs = getComputedStyle(r);
+        const b = r.getBoundingClientRect();
+        return JSON.stringify({ 存在: true, 不透明度: cs.opacity, 宽: Math.round(b.width), 高: Math.round(b.height), 底部: Math.round(b.bottom) })
+      })()`)
+      const rotor = JSON.parse(rotorInfo)
+      ok('P9f-1 底部有旋转图标，且鼠标不在宠物身上时不可见（opacity 0）',
+        rotor.存在 === true && Number(rotor.不透明度) === 0,
+        rotorInfo)
+      ok('P9f-2 旋转图标落在宠物底部（不是飘在别处）',
+        rotor.存在 === true && rotor.宽 > 0 && rotor.高 > 0 && rotor.底部 >= 180,
+        JSON.stringify({ 底部: rotor.底部, 宽: rotor.宽, 说明: '窗口约 190 高，图标底边应贴近底边' }))
+
+      // 「鼠标碰到桌宠时图标才显现」——hover 才淡入。
+      //
+      // 为什么用源码断言而不是运行时读样式：CDP 的合成事件不会真的移动系统光标，
+      // 也就不会触发 `:hover`（`:hover` 由浏览器合成器按真实指针位置算）。
+      // 这里只能确认规则在、且用的不是 `pointer-events: none` 那种会让把手
+      // 永远碰不到的写法——那样「显现」永远不发生，是最容易写错的地方。
+      const petwinCss = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'petwin', 'petwin.css'), 'utf8')
+      const hoverRule = /\.petwin:hover \.pet-rotor\s*\{[^}]*opacity:\s*1/.test(petwinCss)
+      const rotorBaseOpacity = /\.pet-rotor\s*\{[^}]*opacity:\s*0/.test(petwinCss)
+      const noPointerEventsNone = /\.pet-rotor\s*\{[^}]*pointer-events:\s*none/.test(petwinCss)
+      ok('P9f-3 把手只在 hover 时显现（平时 opacity 0，悬停变 1）',
+        hoverRule && rotorBaseOpacity,
+        JSON.stringify({ 悬停规则: hoverRule, 基础透明: rotorBaseOpacity }))
+      ok('P9f-4 把手没有禁用指针事件（否则永远碰不到、也就永远不显现）',
+        noPointerEventsNone === false,
+        noPointerEventsNone ? '禁用了 pointer-events，hover 永远不会触发' : 'ok')
+
+      const rotorTurn = async (dx) => {
         await petEval(`(()=>{
-          const el = document.querySelector('.petwin');
-          const down = new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: 500 });
-          el.dispatchEvent(down);
-          el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: ${500 + dx} }));
-          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 1, isPrimary: true, screenX: ${500 + dx} }));
+          const el = document.querySelector('.pet-rotor');
+          el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 2, isPrimary: true, screenX: 500 }));
+          el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: 0, pointerId: 2, isPrimary: true, screenX: ${500 + dx} }));
+          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 2, isPrimary: true, screenX: ${500 + dx} }));
           return 'ok'
         })()`)
         await sleep(120)
-        return petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+        return viewNow()
       }
 
       // 往右拖 110px = 顺时针四分之一圈 = 露出右脸（side-r 在 VIEWS 里是下标 3）
-      ok('P9f-1 往右拖一格露出右脸（顺时针）',
-        (await facingAfter(110)) === 'side-r',
-        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-5 按住旋转图标往右拖一格，露出右脸（顺时针）',
+        (await rotorTurn(110)) === 'side-r',
+        JSON.stringify({ 实际: await viewNow() }))
 
       // 再往右拖一格 = 转半圈 = 背面
-      ok('P9f-2 再往右拖一格转到背面',
-        (await facingAfter(110)) === 'back',
-        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-6 再往右拖一格，转到背面',
+        (await rotorTurn(110)) === 'back',
+        JSON.stringify({ 实际: await viewNow() }))
 
       // 往左拖两格 = 从背面转回正面
-      ok('P9f-3 往左拖两格转回正面',
-        (await facingAfter(-220)) === 'front',
-        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-7 往左拖两格，转回正面',
+        (await rotorTurn(-220)) === 'front',
+        JSON.stringify({ 实际: await viewNow() }))
 
       // 少拖一点（半格不到）不该换面——防止手抖就转
       await petEval(`(window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: 0 })), 'ok')`)
       await sleep(100)
-      ok('P9f-4 拖不到半格不动（避免手抖就转）',
-        (await facingAfter(50)) === 'front',
-        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-8 拖不到半格不动（避免手抖就转）',
+        (await rotorTurn(50)) === 'front',
+        JSON.stringify({ 实际: await viewNow() }))
 
-      // 双击转回正面：拖歪了想让它重新面对你
+      // **关键回归**：按住把手时不能同时把窗口拖走。
+      // 这是拆分两个把手的全部意义——转个身却把宠物拖着跑，是最容易写错的地方
+      // （忘了 stopPropagation 就会这样，而且看起来像「窗口在乱跳」）。
+      const posBefore = await petBounds()
+      await petEval(`(()=>{
+        const el = document.querySelector('.pet-rotor');
+        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 2, isPrimary: true, screenX: 500 }));
+        return 'ok'
+      })()`)
+      await sleep(700)
+      await petEval(`(()=>{
+        const el = document.querySelector('.pet-rotor');
+        el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 2, isPrimary: true, screenX: 500 }));
+        return 'ok'
+      })()`)
+      await sleep(300)
+      const posAfter = await petBounds()
+      ok('P9f-9 按住旋转图标不会把窗口拖走（两个把手互不干扰）',
+        !posBefore.none && !posAfter.none &&
+          Math.abs(posBefore.x - posAfter.x) <= 2 && Math.abs(posBefore.y - posAfter.y) <= 2,
+        JSON.stringify({ 转之前: posBefore, 转之后: posAfter }))
+
+      // 但按住**身体**仍然要能拖走窗口（别把原来的功能弄丢了）
+      const posDragBefore = await petBounds()
+      await petEval(`(()=>{
+        const el = document.querySelector('.petwin');
+        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 3, isPrimary: true, screenX: 500 }));
+        return 'ok'
+      })()`)
+      await moveCursorBy(60, 40)
+      await sleep(600)
+      await petEval(`(()=>{
+        const el = document.querySelector('.petwin');
+        el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, pointerId: 3, isPrimary: true, screenX: 560 }));
+        return 'ok'
+      })()`)
+      await sleep(300)
+      const posDragAfter = await petBounds()
+      ok('P9f-10 按住身体仍然能把窗口拖走（原功能没被拆坏）',
+        !posDragBefore.none && !posDragAfter.none &&
+          (Math.abs(posDragAfter.x - posDragBefore.x) >= 10 || Math.abs(posDragAfter.y - posDragBefore.y) >= 10),
+        JSON.stringify({ 拖之前: posDragBefore, 拖之后: posDragAfter }))
+
+      // 双击转回正面：转歪了想让它重新面对你
       await petEval(`(window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: 2 })), 'ok')`)
       await sleep(100)
       await petEval(`(document.querySelector('.petwin').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })), 'ok')`)
       await sleep(150)
-      ok('P9f-5 双击转回正面',
-        (await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)) === 'front',
-        JSON.stringify({ 实际: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-11 双击转回正面', (await viewNow()) === 'front', JSON.stringify({ 实际: await viewNow() }))
 
       // 自动转身真的没了：等 3 秒，视图不该自己变（旧版 3 秒时必定转身）
-      const idleView = await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)
+      const idleView = await viewNow()
       await sleep(3000)
-      ok('P9f-6 没人碰它的时候不会自己转身（自动节拍已删）',
-        (await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`)) === idleView,
-        JSON.stringify({ 等待前: idleView, 等待后: await petEval(`document.querySelector('.pet-full')?.dataset.turnView || ''`) }))
+      ok('P9f-12 没人碰它的时候不会自己转身（自动节拍已删）',
+        (await viewNow()) === idleView,
+        JSON.stringify({ 等待前: idleView, 等待后: await viewNow() }))
+
+      // ========== P9g 右键菜单里的「出岛」入口 ==========
+      //
+      // 用户原话「还有就是给右键添加一个出岛，不然每次都要点设置」。
+      // 菜单是系统原生的、点了就弹，e2e 没法真的去点它（popup 不在 CDP 视野里），
+      // 所以这里分两层：
+      //   1. 源码断言：两个标签都在，且分别把 petMode 写成 window / island
+      //      （和 P14a 查 skipTaskbar 是同一个套路：Electron 没有运行时 getter）；
+      //   2. 行为断言：直接走 patchPrefs 的同一路径，确认切过去窗口真的开/关
+      //      （P5 / P12 已经在测，这里只补「菜单那一层没接错」）。
+      const menuSrc = readFileSync(join(ROOT, 'src', 'main', 'index.ts'), 'utf8')
+      const hasOutItem = menuSrc.includes("label: '让桌宠出岛…'") && menuSrc.includes("patchPrefs({ petMode: 'window' })")
+      const hasBackItem = menuSrc.includes("label: '让桌宠回到岛里'") && menuSrc.includes("patchPrefs({ petMode: 'island' })")
+      ok('P9g-1 右键菜单有「让桌宠出岛…」且它把 petMode 写成 window', hasOutItem,
+        '菜单项与 patchPrefs 调用必须成对出现，只加标签不接线等于没做')
+      ok('P9g-2 右键菜单有「让桌宠回到岛里」且它把 petMode 写成 island', hasBackItem,
+        '已经出去了就该显示收回，一个开关比两个入口省事')
     }
 
     // 换回胶囊，别把测试值留在偏好里
