@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import type { JSX } from 'react'
-import type { PetMood, PetSkin } from './types'
+import type { PetAction, PetMood, PetSkin } from './types'
 import bean from './skinBean'
 import frontUrl from '../assets/pet/bean-photo.png'
 import sideUrl from '../assets/pet/bean-photo-side.png'
 import backUrl from '../assets/pet/bean-photo-back.png'
+import laughUrl from '../assets/pet/bean-laugh.webp'
 
 /**
  * 皮肤 3：原图版（`skinPhoto`）。用户 2026-11-12 12:44 发来的参考图，抠成透明底后用。
@@ -81,6 +82,70 @@ const TURN_STEP_MS = 260
 /** 整圈的顺序：正面 → 侧左 → 背面 → 侧右 → 回正面（值为 `VIEWS` 的下标） */
 const TURN_ORDER = [1, 2, 3, 0]
 
+/* ===== 大笑动作（SPEC-deskpet-action） =====
+ *
+ * 素材来自用户给的参考视频（「奶蛙」大笑那段），流程见 SPEC：
+ * ffmpeg 抽 108 帧 → 抠背景 → 统一舞台缩放到 220 高 → 拼成 sprite sheet
+ * （WebP q84，108 格，744 KB）。
+ *
+ * 为什么是「一张图 + 平移」而不是 108 个文件或 GIF：
+ * 108 个 PNG 合计 3.4 MB、108 个 WebP 约 923 KB，拼成一张只要 744 KB；
+ * 而且一张图只解码一次，逐帧切换不会因为「新图还没解码」闪白。
+ *
+ * 为什么排成两行而不是一行：单行 108 格是 108 × 159 = 17172 px 宽，
+ * 超过 WebP 单边 16383 px 的上限，编码器会直接截断。所以折成 54 列 × 2 行
+ * （8586×440），播放时同时改 x 和 y。
+ *
+ * 为什么用 JS 逐帧推而不是 CSS steps() 动画：
+ * ① 帧数一变就要重写 keyframes，参数是硬编码在 CSS 里的；
+ * ② 两行布局没法用 background-position 的单轴平移表达；
+ * ③ e2e 只能靠截图判「有没有在动」，而 `data-action-frame` 能直接读当前第几帧。
+ * 代价是一秒 15 次 setState，对这个尺寸的组件可以忽略。
+ */
+
+/** sprite sheet 的列数（超过这个数就换行） */
+const ACTION_COLS = 54
+/** 总帧数 = 原片这段的全部帧，不抽稀——抽稀会把笑的动作节奏改快 */
+const ACTION_FRAMES = 108
+/** 播放帧率，与原片一致（原片 30fps 拍摄，抽帧时降到 15fps，这里按 15 播） */
+const ACTION_FPS = 15
+/** 素材每格的宽高比（158×220），用来算它在画布里的宽度 */
+const ACTION_CELL_RATIO = 158 / 220
+/** 播完一整支动作要多久（108 / 15 = 7.2 秒），调用方按这个值定时复位 */
+export const ACTION_DURATION_MS = Math.round((ACTION_FRAMES / ACTION_FPS) * 1000)
+
+/**
+ * 按动作状态推进帧号。
+ *
+ * 为什么帧号放在这个文件而不是调用方：素材的格数与节奏是这套皮肤的私事，
+ * 调用方只需要说「播 `laugh`」，什么时候推到最后一格、多久一轮，皮肤自己知道。
+ */
+function useActionFrame(action: PetAction): number {
+  const [frame, setFrame] = useState(0)
+
+  useEffect(() => {
+    if (action === 'idle') {
+      setFrame(0)
+      return
+    }
+    setFrame(0)
+    let f = 0
+    const timer = window.setInterval(() => {
+      f += 1
+      // 推到最后定格，由调用方按 `ACTION_DURATION_MS` 复位 action；
+      // 这里自己复位会和调用方的定时器抢，出现「最后一帧闪回第一帧」。
+      if (f >= ACTION_FRAMES) {
+        window.clearInterval(timer)
+        return
+      }
+      setFrame(f)
+    }, 1000 / ACTION_FPS)
+    return () => window.clearInterval(timer)
+  }, [action])
+
+  return frame
+}
+
 /**
  * 转身状态的两种驱动方式。
  *
@@ -139,21 +204,36 @@ function useTurnStep(): number {
   return step
 }
 
-function Full({ mood }: { mood: PetMood }): JSX.Element {
+function Full({ mood, action = 'idle' }: { mood: PetMood; action?: PetAction }): JSX.Element {
   const happy = mood === 'happy'
   const sleepy = mood === 'sleepy'
   const surprised = mood === 'surprised'
   const step = useTurnStep()
+  const frame = useActionFrame(action)
+  // 同一套皮肤可能在同一个文档里被渲染多次（设置页的预览 + 缩略图），
+  // clipPath 的 id 撞了浏览器只会认第一个，用 useId 保证唯一。
+  const clipId = `pet-laugh-${useId().replace(/:/g, '')}`
   const front = VIEWS[0]
+  /** 动作格子在画布里的尺寸：高度跟站姿图一致，宽度按素材比例算 */
+  const actW = IMG_H * ACTION_CELL_RATIO
+  const actX = (VIEW - actW) / 2
+  const acting = action !== 'idle'
+  /** sprite sheet 铺开后的整体尺寸（按列数 × 行数算，不是按总帧数） */
+  const sheetW = actW * ACTION_COLS
+  const sheetH = IMG_H * Math.ceil(ACTION_FRAMES / ACTION_COLS)
+  const cellCol = frame % ACTION_COLS
+  const cellRow = Math.floor(frame / ACTION_COLS)
 
   return (
     <svg
       className={`pet-full pet-photo ${happy ? 'pet-photo-happy' : ''} ${
         sleepy ? 'pet-photo-sleepy' : ''
-      } ${surprised ? 'pet-photo-surprised' : ''}`}
+      } ${surprised ? 'pet-photo-surprised' : ''} ${acting ? 'pet-photo-acting' : ''}`}
       viewBox={`0 0 ${VIEW} ${VIEW}`}
       data-turn-step={step}
       data-turn-view={VIEWS[step].key}
+      data-action={action}
+      data-action-frame={acting ? frame : -1}
       aria-hidden="true"
     >
       {/* 脚下的投影：图是平面照片，没有落地感，补一小片椭圆让它「站」在桌面上。
@@ -167,9 +247,18 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
         fill="#000000"
         opacity="0.22"
       />
+      <defs>
+        {/* 只露出当前这一格。不用 CSS 的 background-position，是因为在 SVG 里
+            直接用 clipPath 圈一块矩形最省事，也方便被 e2e 读到几何。 */}
+        <clipPath id={clipId}>
+          <rect x={actX} y={PAD_TOP} width={actW} height={IMG_H} />
+        </clipPath>
+      </defs>
       {/* 四层叠在一起，只有当前这一层不透明，其余的由 CSS 过渡淡入淡出。
           为什么四层都留在 DOM 里而不是只渲染一层：换图会闪一下（新图要解码），
-          叠着淡出淡入就没有空帧，看起来才是「转过去」而不是「切过去」。 */}
+          叠着淡出淡入就没有空帧，看起来才是「转过去」而不是「切过去」。
+          播动作时整组藏起来（CSS 里 `.pet-photo-acting` 那几条），
+          否则站姿和动作两个人会叠在同一块地方。 */}
       {VIEWS.map((v, i) => {
         const w = IMG_H * v.ratio
         const x = (VIEW - w) / 2
@@ -193,6 +282,22 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
           </g>
         )
       })}
+      {/* 动作层：整张 sprite sheet 铺开，按帧号往左/往上平移，只露 clipPath 圈出的那一格。
+          `preserveAspectRatio="none"` 是因为宽高我们已经按素材比例算准了，
+          交给浏览器再「保持比例」反而会因为浮点舍入差出 1px 的缝。 */}
+      {acting && (
+        <g className="pet-photo-action" clipPath={`url(#${clipId})`} data-action-layer={action}>
+          <image
+            className="pet-photo-action-sheet"
+            href={laughUrl}
+            x={actX - cellCol * actW}
+            y={PAD_TOP - cellRow * IMG_H}
+            width={sheetW}
+            height={sheetH}
+            preserveAspectRatio="none"
+          />
+        </g>
+      )}
     </svg>
   )
 }

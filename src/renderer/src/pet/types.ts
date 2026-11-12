@@ -16,6 +16,19 @@ import type { JSX } from 'react'
 /** 情绪：idle 平时（呼吸+眨眼），happy 被讨好时（弯眼+弹跳），sleepy 困（半闭眼），surprised 惊讶（睁大眼） */
 export type PetMood = 'idle' | 'happy' | 'sleepy' | 'surprised'
 
+/**
+ * 动作：一段有始有终的表演，播完自己结束（SPEC-deskpet-action）。
+ *
+ * 为什么跟 `PetMood` 分成两条轴而不是往 mood 里再加几档：
+ * mood 是**持续状态**（困着就一直困，直到有事件把它改回来），
+ * 动作是**一次性过渡**（笑四秒半就完了，前后都是站着）。
+ * 混在一起会出两种怪事：mood 变回 idle 时不知道「笑完了吗」；
+ * 播动作时又把情绪覆盖掉，笑完忘了它本来是困的。
+ *
+ * `idle` 表示「没有动作在播」，不是一种动作。
+ */
+export type PetAction = 'idle' | 'laugh'
+
 /** 尺寸档：见上方注释 */
 export type PetSize = 'tiny' | 'full'
 
@@ -29,6 +42,11 @@ export interface PetSkin {
   desc: string
   /** 22px 版：挂在岛里 */
   Tiny: (props: { mood: PetMood }) => JSX.Element
-  /** 大尺寸版：设置页预览 / 将来的独立小窗口 */
-  Full: (props: { mood: PetMood }) => JSX.Element
+  /**
+   * 大尺寸版：设置页预览 / 独立小窗口。
+   *
+   * `action` 是可选的：只有「我的原图」这套有动作素材，另外两套没实现也不用跟着签名。
+   * 没传或传 `'idle'` 就等于现在的样子。
+   */
+  Full: (props: { mood: PetMood; action?: PetAction }) => JSX.Element
 }

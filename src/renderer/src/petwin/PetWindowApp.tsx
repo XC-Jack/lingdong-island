@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import Pet from '../pet/Pet'
+import type { PetAction } from '../pet/types'
+import { ACTION_DURATION_MS } from '../pet/skinPhoto'
 
 /**
  * 桌宠独立小窗口的界面（SPEC-deskpet-out）。
@@ -27,12 +29,29 @@ import Pet from '../pet/Pet'
  * 两个意图各归各位。
  *
  * 图标平时藏在 hover 之后（`opacity: 0`），鼠标碰到宠物才淡入，不打扰观感。
+ *
+ * ===== 点一下 = 笑一次（2026-11-12 第五轮，SPEC-deskpet-action）=====
+ * 用户原话：「我们就先做动作出来，我先看看效果，先不去管什么怎么触发它，什么顺序」。
+ * 所以触发方式只做最简单的一种：**在它身上点一下**（按下到松手之间没有拖动）。
+ *
+ * 为什么必须判「没拖动」：按住身体是要把窗口拖走的（见上面），
+ * 如果松手一律算「点了一下」，那每挪一次位置它都会笑一场——吵，而且明显不对。
+ * 判据用屏幕坐标位移小于 `CLICK_SLOP_PX`，不用时间：手慢的用户按住两秒再松手
+ * 也算点击，这才是「点」的本意。
  */
 
 /** 横向拖多少像素转四分之一圈。110 是试出来的——再小一点挪一下就转到背面了 */
 const TURN_PX = 110
 /** 视角总数（正面 / 侧左 / 背面 / 侧右） */
 const VIEW_COUNT = 4
+
+/**
+ * 松手时位移小于这个值就算「点了一下」而不是「拖了一把」。
+ *
+ * 为什么要留余量而不是要求 0：鼠标按住不动也会有 1~2px 的抖动，
+ * 手抖一下就不算点击，用户会觉得「点了没反应」。4px 以内都当点击。
+ */
+const CLICK_SLOP_PX = 4
 
 /**
  * 把「转过的四分之一圈数」换算成 `skinPhoto` 里的视图下标。
@@ -73,6 +92,15 @@ export default function PetWindowApp(): JSX.Element {
   /** 当前该显示哪一面（给 e2e 和 aria 看的可读值） */
   const [facing, setFacing] = useState(0)
 
+  /** 正在播的动作（SPEC-deskpet-action）。`idle` = 没在播 */
+  const [action, setAction] = useState<PetAction>('idle')
+  /** 播完后复位用的定时器；重播/卸载时都要清，不然一次点击会多出一个定时器 */
+  const actionTimer = useRef<number | null>(null)
+  /** 按下时的屏幕坐标，用来判松手有没有拖动 */
+  const downAt = useRef({ x: 0, y: 0 })
+  /** 本次按下之后有没有真的拖动过（拖了就一定不算点击） */
+  const moved = useRef(false)
+
   useEffect(() => {
     let alive = true
     window.island
@@ -108,6 +136,8 @@ export default function PetWindowApp(): JSX.Element {
     e.preventDefault()
     dragging.current = true
     setPressed(true)
+    moved.current = false
+    downAt.current = { x: e.screenX, y: e.screenY }
     window.island.petDragStart()
     // 指针捕获：鼠标甩得快、移出窗口时仍能收到 pointerup，
     // 否则松手事件丢了会一直处于「拖动中」，窗口粘在鼠标上。
@@ -119,12 +149,59 @@ export default function PetWindowApp(): JSX.Element {
     }
   }
 
-  const endDrag = (): void => {
+  /** 身体上的移动：只用来记「拖过了没有」，窗口位移由主进程跟光标负责 */
+  const onBodyMove = (e: React.PointerEvent): void => {
+    if (!dragging.current || moved.current) return
+    // 同样必须用 screenX/screenY：窗口跟着光标走，clientX 几乎不变
+    const dx = Math.abs(e.screenX - downAt.current.x)
+    const dy = Math.abs(e.screenY - downAt.current.y)
+    if (dx > CLICK_SLOP_PX || dy > CLICK_SLOP_PX) moved.current = true
+  }
+
+  const endDrag = (e?: React.PointerEvent): void => {
     if (!dragging.current) return
     dragging.current = false
     setPressed(false)
     window.island.petDragEnd()
+    // 松手时再看一眼最终位移：快速拖拽可能一帧 pointermove 都没派发，
+    // 只看 moved 会把它误判成点击（拖完窗口它笑一下，很怪）。
+    if (e) {
+      const dx = Math.abs(e.screenX - downAt.current.x)
+      const dy = Math.abs(e.screenY - downAt.current.y)
+      if (dx > CLICK_SLOP_PX || dy > CLICK_SLOP_PX) moved.current = true
+    }
+    if (!moved.current) playAction('laugh')
   }
+
+  // ---------- 动作播放（SPEC-deskpet-action） ----------
+  /**
+   * 播一支动作，播完自动回到 `idle`。
+   *
+   * 为什么定时器要存在 ref 里并先清掉旧的：连点两下时，第二下如果不清，
+   * 第一下的复位定时器会在第二下播到一半时把动作掐掉，看起来像「播到一半卡住」。
+   */
+  const playAction = (next: PetAction): void => {
+    if (actionTimer.current !== null) {
+      window.clearTimeout(actionTimer.current)
+      actionTimer.current = null
+    }
+    if (next === 'idle') {
+      setAction('idle')
+      return
+    }
+    setAction(next)
+    actionTimer.current = window.setTimeout(() => {
+      actionTimer.current = null
+      setAction('idle')
+    }, ACTION_DURATION_MS)
+  }
+
+  // 窗口关掉时别忘了清定时器，不然会在已卸载的组件上 setState
+  useEffect(() => {
+    return () => {
+      if (actionTimer.current !== null) window.clearTimeout(actionTimer.current)
+    }
+  }, [])
 
   // ---------- 底部把手：拖动 = 转身 ----------
   const onRotorDown = (e: React.PointerEvent): void => {
@@ -165,7 +242,9 @@ export default function PetWindowApp(): JSX.Element {
       className={`petwin ${pressed ? 'dragging' : ''}`}
       data-pet-skin={skin}
       data-pet-facing={facing}
+      data-pet-action={action}
       onPointerDown={onPointerDown}
+      onPointerMove={onBodyMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       // 双击转回正面：转歪了想让它重新面对你，不用去设置里折腾
@@ -177,9 +256,9 @@ export default function PetWindowApp(): JSX.Element {
       }}
       role="button"
       tabIndex={0}
-      aria-label="桌宠，按住身体可拖动，按住底部图标左右拖动会让它转身，双击转回正面，右键打开菜单"
+      aria-label="桌宠，点一下会笑，按住身体可拖动，按住底部图标左右拖动会让它转身，双击转回正面，右键打开菜单"
     >
-      <Pet skin={skin} mood="idle" size="full" />
+      <Pet skin={skin} mood="idle" action={action} size="full" />
 
       {/* 底部旋转把手。平时 opacity:0，鼠标碰到宠物才出现（见 petwin.css）。
           单独做一个元素而不是复用手势：移动和转身是两个意图，混在一起会互相干扰。 */}

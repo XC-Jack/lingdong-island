@@ -666,3 +666,14 @@ div.pm-row[draggable='true'] {
 .pet-set-skin-thumb .pet-photo-shadow {
   animation: none;
 }
+
+/* ---------- 大笑动作（SPEC-deskpet-action，2026-11-12 第五轮） ----------
+   设置页只做「预览」，不播动作：这里的预览框是给用户挑皮肤的，
+   一进来就自己笑会抢走注意力。所以动作层在这个文件里只保证「不显示」，
+   真正的播放规则在 petwin.css 里。 */
+.pet-photo-acting .pet-photo-layer {
+  opacity: 0;
+}
+.pet-photo-action {
+  pointer-events: none;
+}
