@@ -374,6 +374,60 @@ MAX_HOLE         = 300   # 奶白肚皮 7000+，靠这条兜一层
 岛仔按设计不渲染。把该值改回 `island` 后立刻 PASS。
 **教训**：共享隔离目录的 e2e 之间会互相污染 `petMode`，跑完整套要么顺序固定、要么跑前重置。
 
+**（五）「灵动岛没有信息提示弹出」= 横幅发给了宠物窗口**
+
+不是通知库读不到，是**推给谁**错了。`src/main/notifyStore.ts:185` 与
+`src/main/clipboardStore.ts:75` 原来都写：
+
+```ts
+BrowserWindow.getAllWindows()[0]?.webContents.send('island:notify-arrived', it)
+```
+
+**假设「`[0]` 是岛窗口」，桌宠出岛后这个假设不成立。** 实测（`.tmp/probe-win-order.mjs`）：
+
+```
+[{"序号":0,"url":".../out/renderer/pet.html","visible":true,"标题":"灵动岛桌宠"},
+ {"序号":1,"url":".../out/renderer/index.html","visible":true,"标题":"灵动岛"}]
+```
+
+`pet.html` 先建，于是 `getAllWindows()[0]` 是宠物窗口——横幅事件全发给了一个
+根本不监听 `island:notify-arrived` / `island:code-arrived` 的窗口，岛上一个提示都不弹。
+这也解释了为什么用户是「出岛之后」才发现的。
+
+修法：新增 `src/main/islandWindowRef.ts`，显式登记 + 显式清空：
+
+```ts
+export function setIslandWindow(win: BrowserWindow | null): void
+export function getIslandWindow(): BrowserWindow | null   // 每次判 isDestroyed
+export function sendToIsland(channel: string, ...args: unknown[]): boolean
+```
+
+`index.ts` 的 `createWindow()` 里 `setIslandWindow(mainWindow)`，`closed` 回调里 `setIslandWindow(null)`；
+`notifyStore` 的两处（横幅推送 + 自家通知聚焦）与 `clipboardStore` 的验证码横幅都改走它。
+
+**为什么不用 URL 猜窗口**：开发版走 `loadURL(ELECTRON_RENDERER_URL)`、打包版走 `loadFile`，
+URL 形态不同（`http://localhost:5173/` vs `file:///.../index.html`），靠字符串匹配容易在某一侧漏掉。
+**为什么不用 `BrowserWindow.fromWebContents(event.sender)`**：这里是主进程主动推、没有调用方事件。
+
+**探针验证（`.tmp/probe-island-banner.mjs`，走剪贴板验证码这条路最易触发）**：
+往剪贴板写「验证码 735184」→ 等岛渲染层出现 `.collapsed-banner`。
+
+| 版本 | 结果 |
+|---|---|
+| 修后（`sendToIsland`） | **PASS 4/0**，横幅文字 `"验证码 735184"` |
+| 负对照（改回 `getAllWindows()[0]`） | **FAIL 2/1**，`✗ 异常：等超时：岛横幅出现` |
+
+**负对照是这条修复的全部意义**：不这么试一次，就只是「看起来改对了」。
+
+**e2e 新增 P9k 三条**（`scripts/e2e-deskpet-out.mjs`）：P9k-1 前情（出岛时确实有宠物窗口）、
+P9k-2 引用是显式登记而非 URL 匹配、P9k-3 两条横幅都走 `sendToIsland` 且源码里不再有
+`getAllWindows()[0]` 的横幅推送。→ `e2e-deskpet-out` **PASS（75 过 / 0 败）**。
+
+**未验证**：①真实系统通知（不是剪贴板验证码）到岛时横幅会不会弹——探针只验了验证码这条路，
+但两条路走同一个 `sendToIsland`，机制相同 ②用户当时是不是真的在等「截图」相关的提示
+（`notifyStore.ts:303` 有 `ScreenSketch: 'ms-screenclip:'`，Windows 截图工具会产生通知，
+但用户那边当时有没有产生通知、岛有没有读到他没给证据）。
+
 **未验证**：①打滚修完后真人在深色桌面上看还有没有观感问题
 ②三张皮肤各挖掉 10/3 像素后边缘有没有变得不自然（量太小，肉眼看不出）
-③「灵动岛没有信息提示弹出」这一条本轮完全没查。
+③「灵动岛没有信息提示弹出」的真实触发场景（见上条）。

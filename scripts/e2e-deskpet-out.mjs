@@ -1119,6 +1119,52 @@ try {
         }))
     }
 
+    // ========== P9k 桌宠出岛时，岛仍然能收到横幅事件 ==========
+    //
+    // 用户原话（2026-11-12）：「我刚刚截图，灵动岛没有信息提示弹出」。
+    // 根因不在通知库，在推送目标：`notifyStore` / `clipboardStore` 用
+    // `BrowserWindow.getAllWindows()[0]` 往渲染层推横幅，假设 [0] 是岛窗口。
+    // 桌宠出岛后实测顺序是 `[pet.html, index.html]`，[0] 变成宠物窗口，
+    // 横幅全发给了不监听 `island:notify-arrived` / `island:code-arrived` 的窗口。
+    // 修法是新增 `src/main/islandWindowRef.ts` 显式登记岛窗口。
+    //
+    // 这里守两件事：①主进程里那个登记引用指向的是 index.html 而不是 pet.html
+    // ②源码里不再有 `getAllWindows()[0]` 的横幅推送（防止以后改回去）。
+    {
+      const prevIdx = await mainEval(`(() => {
+        const { BrowserWindow } = require('electron')
+        const all = BrowserWindow.getAllWindows().map((w) => w.webContents.getURL())
+        return JSON.stringify({
+          count: all.length,
+          第一个: all[0] || '',
+          有岛: all.some((u) => u.includes('index.html')),
+          有宠物: all.some((u) => u.includes('pet.html')),
+        })
+      })()`).then((s) => (typeof s === 'string' ? JSON.parse(s) : s))
+
+      ok('P9k-1 前情：桌宠出岛时确实有宠物窗口，且它可能是 getAllWindows 的第一个',
+        prevIdx.有宠物 === true,
+        JSON.stringify(prevIdx))
+
+      const refSrc = readFileSync(join(ROOT, 'src', 'main', 'islandWindowRef.ts'), 'utf8')
+      const notifySrc = readFileSync(join(ROOT, 'src', 'main', 'notifyStore.ts'), 'utf8')
+      const clipSrc = readFileSync(join(ROOT, 'src', 'main', 'clipboardStore.ts'), 'utf8')
+
+      ok('P9k-2 岛窗口引用是显式登记的，靠 URL 猜会漏（开发版 loadURL / 打包版 loadFile）',
+        /setIslandWindow/.test(refSrc) && /getIslandWindow/.test(refSrc),
+        JSON.stringify({ 有set: /setIslandWindow/.test(refSrc), 有get: /getIslandWindow/.test(refSrc) }))
+
+      ok('P9k-3 通知与验证码两条横幅都走登记引用，不再用 getAllWindows()[0]',
+        /sendToIsland\('island:notify-arrived'/.test(notifySrc) &&
+          /sendToIsland\('island:code-arrived'/.test(clipSrc) &&
+          !/getAllWindows\(\)\[0\][\s\S]{0,40}island:(notify-arrived|code-arrived)/.test(notifySrc + clipSrc),
+        JSON.stringify({
+          通知走sendToIsland: /sendToIsland\('island:notify-arrived'/.test(notifySrc),
+          验证码走sendToIsland: /sendToIsland\('island:code-arrived'/.test(clipSrc),
+          还有getAllWindows写法: /getAllWindows\(\)\[0\][\s\S]{0,40}island:/.test(notifySrc + clipSrc)
+        }))
+    }
+
     // 换回胶囊，别把测试值留在偏好里
     await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petSkin === 'capsule', 8000, '落盘 petSkin=capsule')

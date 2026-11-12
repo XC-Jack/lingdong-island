@@ -1,9 +1,10 @@
-import { app, ipcMain, shell, BrowserWindow } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { existsSync, copyFileSync, rmSync, mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { appIcon, initIconCache } from './notifyIconStore'
+import { getIslandWindow, sendToIsland } from './islandWindowRef'
 
 /**
  * Windows 通知历史读取（wpndatabase）。
@@ -182,7 +183,9 @@ async function refresh(): Promise<NotifyItem[]> {
       if (it.order <= mark || it.order <= hidden) continue
       bannerSent.add(it.id)
       if (bannerSent.size > 500) bannerSent.clear() // 防长期驻留无限增长
-      BrowserWindow.getAllWindows()[0]?.webContents.send('island:notify-arrived', it)
+      // 用登记好的岛窗口，不要用 getAllWindows()[0]：桌宠切成「独立小窗口」后
+      // [0] 是 pet.html，横幅事件全发给宠物窗口，岛上一个提示都不弹（2026-11-12 用户实测）。
+      sendToIsland('island:notify-arrived', it)
     }
   } else {
     // 首轮：记录水位内已存在的 id，它们不算「新」
@@ -276,8 +279,8 @@ function launchUsable(launch: string | null): launch is string {
 function openSource(app_: string, launch: string | null): boolean {
   // 自家通知：聚焦灵动岛主窗口（没有独立窗口可开）
   if (app_ === 'lingdong-island') {
-    const { BrowserWindow } = require('electron') as typeof import('electron')
-    const win = BrowserWindow.getAllWindows()[0]
+    // 同上：不能取 getAllWindows()[0]，桌宠出岛后那个是宠物窗口
+    const win = getIslandWindow()
     if (win) {
       if (win.isMinimized()) win.restore()
       win.show()
