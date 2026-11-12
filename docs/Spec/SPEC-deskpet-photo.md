@@ -83,4 +83,17 @@
 
 ## 八、独立验收记录
 
-（待填写）
+**合并**：2026-11-12 14:15 合并回 `main`，合并提交 `a443108`（用户 2026-11-12 14:07 原话「行先合并」）。
+
+**[实测] 合并后在 `main` 上重跑**（不只是分支上跑）：
+- `npm run typecheck` EXIT=0
+- `npm run build` EXIT=0；产物含 `assets/bean-photo-CzElQFav.png 133.00 kB`、`vendor-DeLoXG_s.js 564.37 kB`、`Pet-CzXDhign.js 24.12 kB`、`index-DpDvFvYQ.js 103.92 kB`、`settings-_yQDcrWt.js 30.41 kB`
+- `node scripts/e2e-deskpet.mjs` **PASS 32 过 / 0 败**（D9a–D9h 全绿）
+- `node scripts/e2e-m2.mjs` **PASS**（`eyes=2`、`happy=true`、回 idle）
+- `node scripts/e2e-settings-shell.mjs` **PASS 51 过 / 0 败**
+- `node scripts/e2e-collapse-order.mjs` **PASS 22 过 / 0 败**
+- `node scripts/e2e-head-order.mjs` **PASS 14 过 / 0 败**（首次跑 11 过 1 败，`closePanel()` 报 `Error: no settings target`；连跑第三次全绿）
+
+**未做的**：独立上下文验收（`verifier` 会话）未开，本轮按「合并优先、验收攒批」处理；真机换肤手感、高 DPI 观感、四种动画真机观感仍 `[未验证]`。
+
+**`e2e-head-order` 偶发记录**（非本 SPEC 引入，供以后排查）：`scripts/e2e-head-order.mjs:219` 的 `closePanel()` 在设置窗口刚关闭时 CDP target 已消失，`evalOnTarget` 抛 `no settings target`。属既有脚本的关窗时序竞态，本轮未修。
