@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { PET_MODES, PET_SKIN_IDS } from '../shared/types'
-import type { PetMode, PetSkinId } from '../shared/types'
+import type { PetMode, PetSkinId, PetWindowPos } from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -35,6 +35,11 @@ interface PrefsShape {
   petSkin?: PetSkinId
   /** 桌宠出现模式（SPEC-deskpet-skin）。缺失 = `island`（只在岛里，现有行为） */
   petMode?: PetMode
+  /**
+   * 桌宠独立小窗口的位置（SPEC-deskpet-out）。缺失 = 首次出现时给默认位置（右下角）。
+   * 只记坐标不记显示器，越界时由 `clampPetPos` 拉回工作区。
+   */
+  petWindowPos?: PetWindowPos
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -119,6 +124,57 @@ function normalizePetMode(v: unknown): PetMode | undefined {
     : undefined
 }
 
+/**
+ * 校验桌宠窗口位置（SPEC-deskpet-out）。
+ *
+ * 只做「是不是两个有限数」的校验，**不做范围裁剪**：这里在 load 阶段调用，
+ * 而 `screen` 模块要等 app ready 之后才可用。越界统一交给 `clampPetPos()`，
+ * 在真正要开窗口时按当时的显示器布局算。
+ */
+function normalizePetWindowPos(v: unknown): PetWindowPos | undefined {
+  if (!v || typeof v !== 'object') return undefined
+  const raw = v as Partial<PetWindowPos>
+  if (typeof raw.x !== 'number' || typeof raw.y !== 'number') return undefined
+  if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return undefined
+  return { x: Math.round(raw.x), y: Math.round(raw.y) }
+}
+
+/**
+ * 把桌宠窗口坐标拉回「当前显示器工作区内」（SPEC-deskpet-out）。
+ *
+ * 为什么需要：坐标是绝对值，用户拔掉副屏、改分辨率、或者手改 prefs.json
+ * 都可能留下一个屏幕外的坐标。不 clamp 的话窗口开在看不见的地方，
+ * 用户会以为「桌宠丢了」且再也点不到它。
+ *
+ * 落在哪块屏：取离该坐标最近的显示器（`getDisplayNearestPoint`），
+ * 而不是主显示器——用户把宠物拖到副屏，重启后应该还在副屏。
+ */
+export function clampPetPos(pos: PetWindowPos, w: number, h: number): PetWindowPos {
+  let area: Electron.Rectangle
+  try {
+    area = screen.getDisplayNearestPoint({ x: pos.x, y: pos.y }).workArea
+  } catch {
+    // screen 不可用（理论上只在 ready 前）——退回主显示器，保证有值
+    area = screen.getPrimaryDisplay().workArea
+  }
+  return {
+    x: Math.round(Math.min(area.x + area.width - w, Math.max(area.x, pos.x))),
+    y: Math.round(Math.min(area.y + area.height - h, Math.max(area.y, pos.y)))
+  }
+}
+
+/**
+ * 首次出现时的默认位置：主显示器工作区右下角，留一点边距（SPEC-deskpet-out）。
+ * 选右下角是因为它离岛（贴顶居中）最远，不会一出现就叠在一起。
+ */
+export function defaultPetPos(w: number, h: number): PetWindowPos {
+  const { workArea } = screen.getPrimaryDisplay()
+  return {
+    x: Math.round(workArea.x + workArea.width - w - 24),
+    y: Math.round(workArea.y + workArea.height - h - 24)
+  }
+}
+
 function load(): PrefsShape {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as PrefsShape
@@ -135,6 +191,8 @@ function load(): PrefsShape {
     if (ps) out.petSkin = ps
     const pm = normalizePetMode(parsed.petMode)
     if (pm) out.petMode = pm
+    const pw = normalizePetWindowPos(parsed.petWindowPos)
+    if (pw) out.petWindowPos = pw
     return out
   } catch {
     return { ...EMPTY }
@@ -199,36 +257,92 @@ export function setupPrefsStore(): void {
   ipcMain.handle('prefs:get', (): PrefsShape => load())
 
   ipcMain.handle('prefs:set', (_e, payload: unknown): PrefsShape => {
-    const data = load()
-    // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
-    const before = JSON.stringify(data)
-    const { pagesCustom, shelfView, musicIntro, petSkin, petMode } = (payload ?? {}) as {
-      pagesCustom?: unknown
-      shelfView?: unknown
-      musicIntro?: unknown
-      petSkin?: unknown
-      petMode?: unknown
+    const data = applyPatch(payload)
+    if (data) {
+      broadcastPrefs(data)
+      // 主进程内部的订阅者也要收到（SPEC-deskpet-out：设置窗口把 petMode 改成 window 时，
+      // 宠物窗口的开关是主进程在管，只听渲染层广播收不到这次变化）。
+      emitPrefsWritten(data)
     }
-    const pc = normalizePagesCustom(pagesCustom)
-    if (pc) data.pagesCustom = pc
-    else if (pagesCustom !== undefined) delete data.pagesCustom // 显式传 pagesCustom 才动它，未传保持原值
-    const sv = normalizeShelfView(shelfView)
-    if (sv) data.shelfView = sv
-    else if (shelfView !== undefined) delete data.shelfView
-    if (typeof musicIntro === 'boolean') {
-      if (musicIntro) data.musicIntro = true
-      else delete data.musicIntro
-    }
-    const ps = normalizePetSkin(petSkin)
-    if (ps) data.petSkin = ps
-    else if (petSkin !== undefined) delete data.petSkin
-    const pm = normalizePetMode(petMode)
-    if (pm) data.petMode = pm
-    else if (petMode !== undefined) delete data.petMode
-    save(data)
-    // 只在真正有变化时广播：prefs:set 的调用方常带「乐观更新」，无变化广播会让
-    // 另一端把自己刚点的东西又写一遍（视觉上闪一下）
-    if (JSON.stringify(before) !== JSON.stringify(data)) broadcastPrefs(data)
-    return data
+    return load()
   })
+}
+
+/**
+ * 落盘一批偏好字段并返回新状态；**没有实际变化时返回 null**（SPEC-deskpet-out 抽出）。
+ *
+ * 为什么从 `prefs:set` 的处理函数里抽出来：主进程自己也要写偏好
+ * （宠物窗口拖动结束后记位置、点「回到岛里」把 petMode 改回去），
+ * 走不了 IPC。抽成一个函数，两条路都走同一份校验与落盘逻辑，
+ * 不会出现「渲染层写的能校验、主进程写的忘了校验」。
+ */
+function applyPatch(payload: unknown): PrefsShape | null {
+  const data = load()
+  // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
+  const before = JSON.stringify(data)
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos } = (payload ?? {}) as {
+    pagesCustom?: unknown
+    shelfView?: unknown
+    musicIntro?: unknown
+    petSkin?: unknown
+    petMode?: unknown
+    petWindowPos?: unknown
+  }
+  const pc = normalizePagesCustom(pagesCustom)
+  if (pc) data.pagesCustom = pc
+  else if (pagesCustom !== undefined) delete data.pagesCustom // 显式传 pagesCustom 才动它，未传保持原值
+  const sv = normalizeShelfView(shelfView)
+  if (sv) data.shelfView = sv
+  else if (shelfView !== undefined) delete data.shelfView
+  if (typeof musicIntro === 'boolean') {
+    if (musicIntro) data.musicIntro = true
+    else delete data.musicIntro
+  }
+  const ps = normalizePetSkin(petSkin)
+  if (ps) data.petSkin = ps
+  else if (petSkin !== undefined) delete data.petSkin
+  const pm = normalizePetMode(petMode)
+  if (pm) data.petMode = pm
+  else if (petMode !== undefined) delete data.petMode
+  const pw = normalizePetWindowPos(petWindowPos)
+  if (pw) data.petWindowPos = pw
+  else if (petWindowPos !== undefined) delete data.petWindowPos
+  save(data)
+  return JSON.stringify(before) !== JSON.stringify(data) ? data : null
+}
+
+/** 主进程内部读偏好（SPEC-deskpet-out：启动时决定要不要开宠物窗口） */
+export function getPrefs(): PrefsShape {
+  return load()
+}
+
+/**
+ * 主进程内部写偏好（SPEC-deskpet-out）。
+ *
+ * 与 `prefs:set` 的差别：这里**一定**把变化广播出去，而且主进程自己的订阅者
+ * （`onPrefsWritten`）也会收到——宠物窗口拖动结束记位置、点「回到岛里」
+ * 把模式改回去，都靠这条路径让岛和设置窗口当场跟上。
+ */
+export function patchPrefs(payload: Partial<PrefsShape>): PrefsShape {
+  const data = applyPatch(payload)
+  if (data) {
+    broadcastPrefs(data)
+    emitPrefsWritten(data)
+  }
+  return load()
+}
+
+/** 主进程内部的偏好写入监听者（宠物窗口开关跟着 petMode 走） */
+const writtenCbs: ((p: PrefsShape) => void)[] = []
+
+function emitPrefsWritten(p: PrefsShape): void {
+  for (const cb of writtenCbs) cb(p)
+}
+
+/**
+ * 订阅主进程内部的偏好写入（SPEC-deskpet-out）。
+ * 只回调**真正变化过**的写入，与 `prefs:changed` 广播同源。
+ */
+export function onPrefsWritten(cb: (p: PrefsShape) => void): void {
+  writtenCbs.push(cb)
 }

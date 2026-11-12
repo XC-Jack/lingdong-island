@@ -11,6 +11,7 @@ import { setupExportStore } from './exportStore'
 import { setupPrefsStore } from './prefsStore'
 import { setupMusicStore, stopMusicStore } from './musicStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
+import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
@@ -62,6 +63,9 @@ function quitApp(): void {
   stopScheduleStore()
   stopMusicStore()
   stopFullscreenWatch()
+  // 宠物窗口是独立窗口（SPEC-deskpet-out）：不主动关它的话，它会拖住
+  // window-all-closed 的判定，退出会卡在半路。先关掉再 quit。
+  closePetWindow()
   app.quit()
 }
 
@@ -248,8 +252,13 @@ app.whenReady().then(() => {
   setupPrefsStore()
   setupMusicStore()
   setupSettingsWindow()
+  // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。
+  // 必须在 createWindow 之前——偏好里可能已经是 window 模式，启动时就该把它开出来。
+  setupPetWindow({ onQuit: () => quitApp() })
   initClipboardWatch()
   createWindow()
+  // 按当前 petMode 决定要不要把桌宠放出去（偏好缺失时是 island，这里什么都不做）
+  syncPetWindow()
   createTray()
   // US-041 全屏自动避让：检测子进程 + 状态机 + 感应窗
   initFullscreenWatch(

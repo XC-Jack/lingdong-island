@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, PetSkinId, PetMode } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, PetSkinId, PetMode, PetWindowPos } from '../shared/types'
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand }
 
@@ -129,6 +129,24 @@ const api = {
   },
   prefsSet(payload: PrefsShape): Promise<PrefsShape> {
     return ipcRenderer.invoke('prefs:set', payload)
+  },
+  /**
+   * 桌宠独立小窗口的拖动（SPEC-deskpet-out）。
+   *
+   * 为什么不在渲染层直接改窗口位置：渲染层没有窗口控制权（contextIsolation），
+   * 而且拖动要跟光标 60fps，跨进程只发「开始/结束」两次，中间由主进程自己读光标，
+   * 比每帧发一次坐标稳得多。
+   */
+  petDragStart(): void {
+    ipcRenderer.send('pet:drag-start')
+  },
+  /** 松手：主进程停跟光标，并把最终位置落盘 */
+  petDragEnd(): void {
+    ipcRenderer.send('pet:drag-end')
+  },
+  /** 宠物窗口右键菜单：主进程在光标处弹原生菜单（回到岛里 / 退出） */
+  petShowMenu(): void {
+    ipcRenderer.send('pet:show-menu')
   },
   /**
    * 音乐页（SPEC-music-page / US-031）：读当前播放快照。
@@ -357,6 +375,8 @@ export interface PrefsShape {
   petSkin?: PetSkinId
   /** 桌宠出现模式（SPEC-deskpet-skin）；缺失=island */
   petMode?: PetMode
+  /** 桌宠独立小窗口位置（SPEC-deskpet-out）；缺失=首次出现在主屏右下角 */
+  petWindowPos?: PetWindowPos
 }
 contextBridge.exposeInMainWorld('island', api)
 
