@@ -20,7 +20,7 @@
  * CDP 9321 / 主进程 inspect 9229；spawn 时 delete ELECTRON_RUN_AS_NODE。
  */
 import { spawn, execSync } from './isolate-userdata.mjs'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -761,6 +761,151 @@ try {
         '菜单项与 patchPrefs 调用必须成对出现，只加标签不接线等于没做')
       ok('P9g-2 右键菜单有「让桌宠回到岛里」且它把 petMode 写成 island', hasBackItem,
         '已经出去了就该显示收回，一个开关比两个入口省事')
+
+      // ========== P9h 点一下播「大笑」动作（SPEC-deskpet-action，2026-11-12 第五轮）==========
+      //
+      // 用户原话「我们就先做动作出来，我先看看效果，先不去管什么怎么触发它」。
+      // 触发方式只做最简单的一种：**在它身上点一下**（按下到松手之间没有拖动）。
+      //
+      // 动画素材是 108 帧两行 sprite sheet（8586×440，WebP 744 KB），
+      // 靠改 `<image>` 的 x/y 平移 + clipPath 只露一格来播放，帧号写在
+      // `data-action-frame` 上，所以 e2e 不靠截图也能判断「有没有在动」。
+      const actionNow = () => petEval(`document.querySelector('.petwin')?.dataset.petAction || ''`)
+      const frameNow = () => petEval(`document.querySelector('.pet-full')?.dataset.actionFrame || ''`)
+
+      /** 在宠物身上点一下（按下和松开同一位置，没有拖动） */
+      const clickPet = async () => {
+        await petEval(`(()=>{
+          const w = document.querySelector('.petwin');
+          const b = w.getBoundingClientRect();
+          const x = Math.round(b.left + b.width / 2);
+          const y = Math.round(b.top + b.height / 2);
+          const o = { bubbles: true, button: 0, buttons: 1, pointerId: 7, isPrimary: true,
+                      clientX: x, clientY: y, screenX: x, screenY: y };
+          w.dispatchEvent(new PointerEvent('pointerdown', o));
+          w.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+          return 'ok'
+        })()`)
+        await sleep(220)
+      }
+
+      ok('P9h-0 点之前是 idle（没有残留动作）', (await actionNow()) === 'idle',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      await clickPet()
+      ok('P9h-1 在它身上点一下会开始播「大笑」',
+        (await actionNow()) === 'laugh',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      // 帧号推进：采 6 次 × 200ms，至少要看到 3 个不同的帧号才算真在动。
+      // 只断言「frame 变了」不够——推一帧就停也能过；这里要的是持续推进。
+      const frames = []
+      for (let i = 0; i < 6; i++) {
+        const f = await frameNow()
+        if (f !== '' && frames[frames.length - 1] !== f) frames.push(f)
+        await sleep(200)
+      }
+      ok('P9h-2 动作帧在持续推进（不是卡在第一帧）',
+        frames.length >= 4,
+        JSON.stringify({ 采样到的帧号: frames }))
+
+      // 构图：动作格与站姿层水平居中、底边对齐。
+      //
+      // 为什么读 SVG 属性而不是 getBoundingClientRect：`<clipPath>` 里的元素
+      // **不参与渲染**，`getBoundingClientRect()` 一律返回 0（实测第一版就这么假红）。
+      // 这里改成读 x / y / width / height 这几个用户坐标属性——它们才是真正
+      // 决定「露出来哪一块」的值，而且和站姿 `<image>` 的属性在同一坐标系里，
+      // 可以直接比，不用换算 DPI。
+      const align = await petEval(`(()=>{
+        const clip = document.querySelector('clipPath rect');
+        const stand = document.querySelector('.pet-photo-layer.is-on');
+        if (!clip || !stand) return '';
+        const n = (el, a) => Number(el.getAttribute(a));
+        const cx = n(clip, 'x'), cy = n(clip, 'y'), cw = n(clip, 'width'), ch = n(clip, 'height');
+        const sx = n(stand, 'x'), sy = n(stand, 'y'), sw = n(stand, 'width'), sh = n(stand, 'height');
+        return JSON.stringify({
+          动作: { 中心: +(cx + cw / 2).toFixed(2), 底: +(cy + ch).toFixed(2), 宽: +cw.toFixed(2), 高: +ch.toFixed(2) },
+          站姿: { 中心: +(sx + sw / 2).toFixed(2), 底: +(sy + sh).toFixed(2), 宽: +sw.toFixed(2), 高: +sh.toFixed(2) }
+        })
+      })()`)
+      const a2 = JSON.parse(align)
+      const dCenter = Math.abs(a2.动作.中心 - a2.站姿.中心)
+      const dBottom = Math.abs(a2.动作.底 - a2.站姿.底)
+      ok('P9h-3 动作格与站姿水平居中对齐、底边一致（不会跳位或站到半空）',
+        dCenter <= 1 && dBottom <= 1 && a2.动作.高 > 0,
+        JSON.stringify({ 动作: a2.动作, 站姿: a2.站姿, 中心偏差: +dCenter.toFixed(2), 底边差: +dBottom.toFixed(2) }))
+
+      // 播完自己回到 idle：动作是一次性的，不该永远笑下去。
+      //
+      // 这条必须在「拖一把不算点击」之前跑：P9h-1 那次笑要 7.2 秒才结束，
+      // 如果不先等它结束就去做拖动测试，读到的是还在播的 laugh，
+      // 会把「拖动没触发」误判成失败（顺序写反过一次）。
+      const startedAt = Date.now()
+      let backToIdle = false
+      for (let i = 0; i < 60; i++) {
+        if ((await actionNow()) === 'idle') {
+          backToIdle = true
+          break
+        }
+        await sleep(200)
+      }
+      ok('P9h-4 播完自动回到 idle（约 7.2 秒），动作层从 DOM 移除',
+        backToIdle && (await petEval(`document.querySelectorAll('.pet-photo-action').length`)) === 0,
+        JSON.stringify({
+          实际: await actionNow(),
+          动作层数: await petEval(`document.querySelectorAll('.pet-photo-action').length`),
+          等待毫秒: Date.now() - startedAt
+        }))
+
+      // 按住拖一把不算点击：否则每挪一次位置它都笑一场（很吵，而且明显不对）。
+      // 用 pointermove 报 40px 位移，再在同一位置松手。
+      await petEval(`(window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: 0 })), 'ok')`)
+      await sleep(200)
+      await petEval(`(()=>{
+        const w = document.querySelector('.petwin');
+        const b = w.getBoundingClientRect();
+        const x = Math.round(b.left + b.width / 2);
+        const y = Math.round(b.top + b.height / 2);
+        const o = { bubbles: true, button: 0, buttons: 1, pointerId: 8, isPrimary: true,
+                    clientX: x, clientY: y, screenX: x, screenY: y };
+        w.dispatchEvent(new PointerEvent('pointerdown', o));
+        w.dispatchEvent(new PointerEvent('pointermove', { ...o, screenX: x + 40, clientX: x + 40 }));
+        w.dispatchEvent(new PointerEvent('pointerup', { ...o, buttons: 0 }));
+        return 'ok'
+      })()`)
+      await sleep(300)
+      ok('P9h-5 按住拖一把不会误触发动作（拖动 ≠ 点击）',
+        (await actionNow()) === 'idle',
+        JSON.stringify({ 实际: await actionNow(), 说明: '位移 > 4px 就不算点击' }))
+
+      // 另两套皮肤（胶囊 / 黄豆）没有动作素材，点了不播也不该报错。
+      // 这条是真回归：`PetSkin.Full` 的签名加了 `action`，如果哪套皮肤
+      // 在解构时假定它一定存在，运行时就会抛异常、整个窗口白屏。
+      const errs = []
+      await petEval(`(()=>{ window.__laughErr = []; window.addEventListener('error', (e) => window.__laughErr.push(String(e.message))); return 'ok' })()`)
+      await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
+      await waitForPrefs((p) => p.petSkin === 'capsule', 8000, '落盘 petSkin=capsule')
+      await sleep(600)
+      await clickPet()
+      const errRaw = await petEval(`JSON.stringify(window.__laughErr || [])`)
+      if (errRaw) errs.push(...JSON.parse(errRaw))
+      const cAction = await actionNow()
+      const cLayers = await petEval(`document.querySelectorAll('.pet-photo-action').length`)
+      ok('P9h-6 换到胶囊皮肤后点它不报错（没有动作素材就不播，不是崩）',
+        errs.length === 0 && Number(cLayers) === 0,
+        JSON.stringify({ 页面错误: errs, 触发的动作: cAction, 动作层数: cLayers }))
+
+      // 素材本身：108 帧折成 54 列 × 2 行。
+      // 单行 108 格是 17172px 宽，超过 WebP 单边 16383 的上限会被编码器截断，
+      // 所以「必须是两行」不是排版偏好而是硬限制，这里守住它。
+      const photoSrc = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'pet', 'skinPhoto.tsx'), 'utf8')
+      const cols = Number((photoSrc.match(/ACTION_COLS\s*=\s*(\d+)/) || [])[1])
+      const frms = Number((photoSrc.match(/ACTION_FRAMES\s*=\s*(\d+)/) || [])[1])
+      const laughFile = join(ROOT, 'src', 'renderer', 'src', 'assets', 'pet', 'bean-laugh.webp')
+      const laughSize = existsSync(laughFile) ? statSync(laughFile).size : 0
+      ok('P9h-7 大笑素材是两行 sprite sheet（单行会超 WebP 16383px 单边上限被截断）',
+        frms === 108 && cols === 54 && Math.ceil(frms / cols) === 2 && laughSize > 500 * 1024,
+        JSON.stringify({ 帧数: frms, 列数: cols, 行数: Math.ceil(frms / cols), 字节: laughSize }))
     }
 
     // 换回胶囊，别把测试值留在偏好里
