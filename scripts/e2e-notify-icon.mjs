@@ -1,4 +1,4 @@
-﻿/**
+/**
  * e2e：通知应用图标 + 新消息到岛横幅。
  *
  * 场景：
@@ -177,6 +177,29 @@ async function main() {
       const iconImgs = await evaluate(ws, `document.querySelectorAll('.notify-icon').length`)
       const appBadges = await evaluate(ws, `document.querySelectorAll('.notify-body .notify-app').length`)
       ok('I3 图标/徽标分支渲染', iconImgs + appBadges > 0, `图标 ${iconImgs} 个，文字徽标 ${appBadges} 个`)
+      // I3b 图标真的解码出来了，不只是 <img> 标签在。
+      // 2026-11-12 用户反馈「图标显示不出来」：横幅/列表的本地图标原来是 file:// URL，
+      // 打包版（页面源也是 file://）能显示，开发预览版（页面源 http://localhost:5173）
+      // 会被 Chromium 跨源拦掉 —— <img> 静默失败，只剩一块空灰底，且 CSP 违规数组为空。
+      // 所以这里只断言 naturalWidth 是不够判别「有没有真解码」的弱证据吗？不，它恰好是最强的：
+      // 拦截时 naturalWidth 恒为 0。同时断言协议名，防止有人改回 file://。
+      const iconStat = await evaluate(
+        ws,
+        `JSON.stringify([...document.querySelectorAll('.notify-icon')].map(i => ({src: i.getAttribute('src') || '', nw: i.naturalWidth})))`
+      )
+      const stats = JSON.parse(iconStat)
+      const decoded = stats.filter((s) => s.nw > 0)
+      ok(
+        'I3b 图标真的解码出来（naturalWidth > 0）',
+        stats.length === 0 || decoded.length === stats.length,
+        stats.length ? `共 ${stats.length} 个，解码 ${decoded.length} 个` : '(无图标条目，跳过判定)'
+      )
+      const schemes = [...new Set(stats.map((s) => (s.src.split(':')[0] || '').trim()))]
+      ok(
+        'I3c 图标走 ldapp: 协议（不是 file:）',
+        stats.length === 0 || (schemes.length === 1 && schemes[0] === 'ldapp'),
+        stats.length ? `协议 ${schemes.join(',')}` : '(无图标条目，跳过判定)'
+      )
     } else {
       ok('I3 图标/徽标分支渲染', false, '通知页没翻到')
     }

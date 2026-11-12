@@ -699,8 +699,8 @@ function FileIcon({ name, path }: { name: string; path: string }): React.JSX.Ele
     }
   }, [name, path])
   if (src) {
-    // Windows 路径转 file:// URL（空格等字符浏览器自动处理）
-    const url = `file:///${src.replace(/\\/g, '/')}`
+    // 走 ldapp:// 自定义协议，理由见 iconUrl() 的注释（开发版 http 源引用 file:// 会被拦）
+    const url = `ldapp://local/${encodeURIComponent(src)}`
     return <img className="shelf-icon" src={url} alt="" draggable={false} />
   }
   const color = extColor(name)
@@ -1121,9 +1121,18 @@ function ShelfPanel(): React.JSX.Element {
   )
 }
 
-/** Windows 绝对路径 → file:// URL（与置物架图标同款转换） */
+/**
+ * Windows 绝对路径 → 可加载的图片 URL。
+ *
+ * 为什么不用 file://（2026-11-12 用户反馈「这个图标怎么显示不出来」）：
+ * 打包版页面源是 file://，引用 file:// 同源、能加载；但开发预览版页面源是
+ * http://localhost:5173，从 http 源引用 file:// 会被 Chromium 底层拦掉，
+ * <img> 静默失败、连 CSP 违规都不报，横幅图标就剩一块空灰底。
+ * 改用主进程注册的 ldapp:// 自定义协议，两种源下都能加载。
+ * 拼接规则必须与 src/main/localFileProtocol.ts 的 localFileUrl() 一致。
+ */
 function iconUrl(p: string): string {
-  return `file:///${p.replace(/\\/g, '/')}`
+  return `ldapp://local/${encodeURIComponent(p)}`
 }
 
 /** 相对时间：刚刚 / n 分钟前 / n 小时前 / 昨天 / 具体日期 */

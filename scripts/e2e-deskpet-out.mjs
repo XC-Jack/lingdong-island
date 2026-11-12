@@ -965,7 +965,7 @@ try {
         rollFrames.length >= 4,
         JSON.stringify({ 采样到的帧号: rollFrames }))
 
-      // 构图：打滚的格子比大笑宽（165 vs 158 的格宽比），但两者都必须
+      // 构图：打滚的格子比大笑宽（167 vs 158 的格宽比），但两者都必须
       // 与站姿层水平居中、底边一致，否则播放时会「跳到半空」或者左右偏。
       //
       // 这条必须放在「等它回 idle」之前：动作层在 idle 时整个从 DOM 移除，
@@ -987,9 +987,20 @@ try {
         })
       })()`)
       const rg = rollAlign ? JSON.parse(rollAlign) : null
-      ok('P9i-5 打滚的格宽按它自己的素材比例算（165/220，比大笑的 158/220 宽）',
-        !!rg && Math.abs(rg.动作格宽 - (rg.动作格高 * 165) / 220) <= 0.5 && rg.动作格高 > 0,
-        JSON.stringify({ 实测: rg, 期望格宽: rg ? +((rg.动作格高 * 165) / 220).toFixed(2) : null }))
+      // 期望格宽比从源码常量算，不写死数字：
+      // 2026-11-12 打滚素材重抠时格宽 165→167（裁框左界 30→24 补回左手），
+      // 断言里写死 165 就会和源常量脱钩——那种「测试与实现各记一个数」的写法
+      // 迟早变成假绿（改实现忘改测试）或假红（改测试忘改实现）。
+      const rollRatioSrc = (photoSrc.match(/ROLL_CELL_RATIO\s*=\s*(\d+)\s*\/\s*(\d+)/) || [])
+      const rollRatio = rollRatioSrc.length === 3 ? Number(rollRatioSrc[1]) / Number(rollRatioSrc[2]) : NaN
+      ok('P9i-5 打滚的格宽按它自己的素材比例算（比大笑的 158/220 宽）',
+        !!rg && Number.isFinite(rollRatio) && rollRatio > 158 / 220 &&
+          Math.abs(rg.动作格宽 - rg.动作格高 * rollRatio) <= 0.5 && rg.动作格高 > 0,
+        JSON.stringify({
+          实测: rg,
+          源码格宽比: Number.isFinite(rollRatio) ? +rollRatio.toFixed(4) : '没解析到',
+          期望格宽: rg && Number.isFinite(rollRatio) ? +(rg.动作格高 * rollRatio).toFixed(2) : null
+        }))
 
       // 等它自己回 idle，并核对耗时落在打滚的时长附近（4.5~6.8 秒），
       // 而不是大笑的 7.2 秒。

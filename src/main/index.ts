@@ -14,6 +14,7 @@ import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
+import { setupLocalFileProtocol } from './localFileProtocol'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
@@ -273,6 +274,10 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.xcjack.lingdong-island')
   }
+  // 本地图片自定义协议（2026-11-12）：开发预览版的页面源是 http://localhost:5173，
+  // 从 http 源引用 file:// 本地图片会被 Chromium 拦掉，通知横幅/置物架图标全变空白。
+  // 注册成 ldapp:// 就能跨源加载（协议特权已在模块顶层登记）。
+  setupLocalFileProtocol()
   setupTodoStore()
   setupStatus()
   setupShelfStore()

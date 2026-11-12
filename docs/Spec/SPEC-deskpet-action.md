@@ -431,3 +431,75 @@ P9k-2 引用是显式登记而非 URL 匹配、P9k-3 两条横幅都走 `sendToI
 **未验证**：①打滚修完后真人在深色桌面上看还有没有观感问题
 ②三张皮肤各挖掉 10/3 像素后边缘有没有变得不自然（量太小，肉眼看不出）
 ③「灵动岛没有信息提示弹出」的真实触发场景（见上条）。
+
+### 7.11 横幅图标显示不出来（第八轮，用户实测反馈后修）
+
+用户 m04725 原话：「还有就是这个图标怎么显示不出来」。附图 m04724（123×46）是岛横幅截图：
+深色圆角条，左边一个**灰方块**是应用图标位，右边文字「屏幕截图已复制到…」「已自动保存到屏幕截…」。
+
+**先排除三个不是原因的方向**：
+
+| 猜测 | 实测结论 |
+|---|---|
+| 图标解析失败、`icon` 是 null | **不是**。紫色 fallback 文字没出现在图标位（紫像素在 `y10~20 x34~120`，是标题色），说明走的是 `<img>` 分支 |
+| CSP 挡了 `file:` | **不是**。`src/renderer/index.html:8` 的 CSP 是 `img-src 'self' data:`，确实没有 `file:`；但在构建产物页面（源本身就是 `file://`）里建 `<img src="file:///...">` → `{"outcome":"load","naturalWidth":48,"csp":[]}`，**CSP 违规数组为空** |
+| 图标本身是灰的 | **不是**。`%APPDATA%\lingdong-island\icon-cache\notify-ScreenSketch_8wekyb3d8bbwe.png`（48×48）放大到 192×192 是**彩色的**：红色虚线框 + 灰色剪刀 + 蓝色圆点 |
+
+**真因：源不同，`file://` 子资源被 Chromium 底层拦掉。**
+
+开发预览版的页面源是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`），打包版是 `file://`。
+`.tmp/probe-icon-origin.mjs`（node 起静态服务器挂 `out/renderer`，electron 加载 `http://127.0.0.1:5199`）
+三组对照，结果完全一致：
+
+```
+{"file":"error","data":"load:48","csp":[]}   ← 原 CSP
+{"file":"error","data":"load:48","csp":[]}   ← CSP 显式放行 file:
+{"file":"error","data":"load:48","csp":[]}   ← 直接 navigate 到副本
+```
+
+**`file:` 一律 error、`data:` 能 load:48、CSP 违规数组全空** —— 不是 CSP 规则拦的，是「http 源引用
+file:// 子资源」这条更底层的限制。`<img>` 静默失败，只剩 `.banner-icon` 那层
+`background: rgba(255,255,255,0.08)`，在深色横幅上就是一块空灰底。
+
+**为什么用户会在打包版里也看到**：置物架图标（`src/renderer/src/App.tsx:703`）走同样的 `file:///`
+写法，而用户当时跑的正是开发预览版；打包版同源能加载，所以他之前没发现。
+
+**修法：主进程注册自定义协议 `ldapp://`。**
+
+新增 `src/main/localFileProtocol.ts`：
+
+- `protocol.registerSchemesAsPrivileged([{ scheme: 'ldapp', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: false } }])`
+  —— **必须在模块顶层调用**，早于 `app.whenReady()`，放进去就失效了。
+- `protocol.handle('ldapp', ...)`：从 `url.pathname` 取单段 `encodeURIComponent` 的绝对路径 → `decodeURIComponent`，
+  过 `ALLOWED_EXT` 白名单（`.png .jpg .jpeg .webp .gif .bmp .ico .svg`）+ `existsSync` + `isFile()`，
+  最后 `net.fetch(pathToFileURL(target).toString())` 返回（Electron 官方做法，自动带对 content-type）。
+- `bypassCSP: false` + CSP 里显式写 `img-src 'self' data: ldapp:` —— 不靠放宽安全边界解决问题。
+
+三处接线：`src/main/index.ts` 的 `whenReady` 里 `setAppUserModelId` 之后插 `setupLocalFileProtocol()`；
+`App.tsx` 的 `iconUrl()` 与置物架图标都改成 `ldapp://local/${encodeURIComponent(path)}`。
+**拼接规则主进程与渲染层必须一致**，两边注释互相点名。
+
+**验证（[实测]）**：
+
+| 项 | 结果 |
+|---|---|
+| `.tmp/probe-ldapp.mjs`（http 源 + 真实主进程） | `{"file":"error","ldapp":"load:48","origin":"http://127.0.0.1:5201"}` |
+| `npm run typecheck` / `npm run build` | EXIT=0 / EXIT=0（`bean-roll-C0Y-dx-n.webp 348.00 kB`） |
+| `e2e-notify-icon` 修后 | **PASS（10 过 / 0 败）**，新增 I3b/I3c |
+| `e2e-notify-icon` 负对照（`iconUrl` 改回 `file://`） | **FAIL（9 过 / 1 败）**：`✗ I3c 图标走 ldapp: 协议（不是 file:） — 协议 file` |
+
+**新增两条 e2e 断言（`scripts/e2e-notify-icon.mjs`）**：
+
+- `I3b 图标真的解码出来（naturalWidth > 0）` —— 拦截时 `naturalWidth` 恒为 0，这是最强的判别依据。
+- `I3c 图标走 ldapp: 协议（不是 file:）` —— 防止有人改回去。
+
+**只断言「现在没有灰方块」是假绿**：截图像素比对会被横幅半透明背景干扰，`naturalWidth` 与协议名
+是能真变红的判据。
+
+**另一处顺带修掉的假红（`scripts/e2e-deskpet-out.mjs` P9i-5）**：断言里写死了 `165` 这个格宽比，
+而打滚素材重抠后已改成 `167`（裁框左界 30→24 补回左手）。改成**从源码正则读 `ROLL_CELL_RATIO`** 再算期望值——
+「测试与实现各记一个数」的写法迟早变成假绿（改实现忘改测试）或假红（改测试忘改实现）。
+
+**未验证**：①开发预览版里横幅图标的真实观感（e2e 断言的是 naturalWidth 与协议名，不是「好不好看」）
+②`ShellExperienceHost` 那张缓存图标只有 16×16/125 B，22px 下会不会糊。
+
