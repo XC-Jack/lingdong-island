@@ -1,0 +1,192 @@
+/**
+ * 桌宠独立小窗口的样式（SPEC-deskpet-out）。
+ *
+ * 这个文件是**独立**的：宠物窗口只加载 petwin.css，不加载 styles.css / settings.css，
+ * 所以这里需要的规则必须自带一份。哪些是必需的：
+ *   - 窗口本身透明（否则会看到一块深色矩形贴在桌面上）
+ *   - `.pet-wrap` / `.pet-full` 的尺寸链（皮肤 SVG 都按 160×160 的 viewBox 画）
+ *   - 眨眼（`.pet-eye`）、原图皮肤的呼吸（`.pet-photo-*`）这两组动画
+ * 岛里的 22px 那套（`.collapsed-pet`）不需要：这个窗口只用 `size="full"`。
+ */
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* 透明窗口：任何一层不透明背景都会让整窗变成一块色板 */
+  background: transparent;
+  /* 拖动由我们自己算，禁掉文本选中与系统拖拽，避免拖动时选中文字/拖出图片幽灵 */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+/* 整个窗口就是「宠物本体」，没有边距——命中区域要尽量大，用户才抓得住 */
+.petwin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: grab;
+}
+
+/* 拖动中换光标：用户才知道「抓住了」。
+   为什么不做缩放/位移反馈：窗口位置本身就是反馈，再加变换会和主进程的
+   setPosition 打架（画面抖）。只改光标，最轻。 */
+.petwin.dragging {
+  cursor: grabbing;
+}
+
+/* 皮肤包装层：铺满窗口，让里面的 SVG 撑满。
+   与 styles.css 的 .pet-wrap 同源（那边只管 inline-flex 布局，尺寸归各处自己定）。 */
+.petwin .pet-wrap {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.petwin .pet-full {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* 拖动时不要出现浏览器默认的图片拖影 */
+  -webkit-user-drag: none;
+}
+
+/* ---------- 底部旋转把手（2026-11-12 第三轮，用户要求）---------- */
+
+/**
+ * 用户原话：「我希望桌宠的下面有一个旋转的图标，按住它拖动鼠标可以旋转，
+ * 平时碰到桌宠时图标才显现」。
+ *
+ * 为什么把「移动」和「转身」分成两个把手：合成一个手势时，把宠物从屏幕这头
+ * 拖到那头，路上它会转好几圈，摆到目标位置时朝向是随机的——那不是用户要的。
+ *
+ * 平时 opacity: 0（完全看不见但不影响命中），鼠标碰到窗口才淡入。
+ * 注意别用 `visibility: hidden` 或 `pointer-events: none` 做隐藏——
+ * 那样把手就没法被「碰到」了，永远显不出来。
+ *
+ * ----- 位置：宠物正下方居中（2026-11-12 第四轮用户反馈后改）-----
+ * 用户先提「图标在往下移，有点遮住脚了」——那版是 `left:50%; bottom:4px` 居中贴底，
+ * 190×190 的窗口里脚底已经到 187 附近，22px 的圆必然盖住脚趾。
+ * 当时改成右下角（`right:6px; bottom:6px`）避开了，但用户接着说「我希望在奶娃的下面」，
+ * 也就是要正下方居中。
+ *
+ * 所以真正的问题不是「放哪」，是「窗口不够高」：190×190 里脚底下没有能站一个图标的地方。
+ * 解法是主进程把窗口加高到 190×250（见 `src/main/petWindow.ts` 的 `PET_WIN_H`），
+ * 加高的是透明留白，宠物本身用 `xMidYMid meet` 居中，渲染尺寸一点没变。
+ * 多出来的下方 30px 正好放这个 22px 的圆，圆顶在 222、宠物投影底在约 216，留 5px 缝隙。
+ *
+ * 居中用 `left:50%` + `translateX(-50%)`：窗口和宠物都是水平居中的，
+ * 圆跟着居中就是「在宠物正下方」。
+ */
+.pet-rotor {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 半透明深色底：压在亮黄身体上也能看清，压在桌面上也不突兀 */
+  background: rgba(28, 26, 22, 0.5);
+  color: rgba(255, 255, 255, 0.92);
+  /* 平时藏起来，鼠标进来才出现 */
+  opacity: 0;
+  transition: opacity 140ms linear, background 140ms linear;
+  cursor: grab;
+  /* 拖动时别让浏览器把它当图片拖出幽灵 */
+  -webkit-user-drag: none;
+}
+
+/* 鼠标碰到宠物（任意位置）把手就显形 */
+.petwin:hover .pet-rotor {
+  opacity: 1;
+}
+
+/* 正在转：加深底色 + 换抓取光标，用户才知道「抓住了」 */
+.pet-rotor.rotating {
+  opacity: 1;
+  background: rgba(28, 26, 22, 0.72);
+  cursor: grabbing;
+}
+
+/* 窗口失焦时也别让把手一直亮着（alt-tab 回来时别像是卡住了） */
+.petwin:not(:hover) .pet-rotor:not(.rotating) {
+  opacity: 0;
+}
+
+.pet-eye {
+  transform-origin: center 12px;
+  animation: petwin-blink 4.6s step-end infinite;
+}
+
+@keyframes petwin-blink {
+  0%,
+  5.5% {
+    transform: scaleY(1);
+  }
+  6%,
+  8% {
+    transform: scaleY(0.12);
+  }
+  8.5%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* ---------- 原图皮肤：呼吸 + 影子 ---------- */
+
+.pet-photo-img {
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  animation: petwin-photo-breathe 3.6s ease-in-out infinite;
+}
+
+/* 四视图转身（SPEC-deskpet-turn）：四层叠着，只有当前那层不透明。
+   设置页和这个窗口各有一份 CSS，规则要同步改两处。 */
+.pet-photo-layer {
+  opacity: 0;
+  transition: opacity 170ms linear;
+}
+.pet-photo-layer.is-on {
+  opacity: 1;
+}
+
+@keyframes petwin-photo-breathe {
+  0%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  50% {
+    transform: scaleY(1.025) scaleX(0.995);
+  }
+}
+
+.pet-photo-shadow {
+  transform-box: fill-box;
+  transform-origin: center center;
+  animation: petwin-photo-shadow-pulse 3.6s ease-in-out infinite;
+}
+
+@keyframes petwin-photo-shadow-pulse {
+  0%,
+  100% {
+    transform: scaleX(1);
+    opacity: 0.22;
+  }
+  50% {
+    transform: scaleX(0.96);
+    opacity: 0.17;
+  }
+}

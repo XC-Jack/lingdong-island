@@ -6,14 +6,13 @@ import Pet from '../pet/Pet'
 import { listPetSkins } from '../pet'
 
 /**
- * 设置窗口「桌宠」分区（SPEC-deskpet-skin）。
+ * 设置窗口「桌宠」分区（SPEC-deskpet-skin / SPEC-deskpet-out）。
  *
- * 这一轮只做「换肤」+「模式的框架」：
- * - 皮肤：两套可切换，选中立刻生效（岛和这里共用 prefs.petSkin，写完主进程广播回来）。
- * - 模式：三档全列出来，但只有「只在岛里」可用；另外两档显示成禁用 + 「还没做」，
- *   而不是干脆不列——用户要先知道有这三档，才知道以后会有什么。
+ * - 皮肤：三套可切换，选中立刻生效（岛、宠物窗口和这里共用 prefs.petSkin）。
+ * - 模式：三档全列出来。「只在岛里」「独立小窗口」可用（SPEC-deskpet-out 实现了后者），
+ *   「自由走动」仍是禁用 + 「还没做」——留着让用户知道以后会有什么。
  *
- * 为什么不给「保存」按钮：岛仔在另一个窗口实时渲染，用户改完就想立刻看到效果。
+ * 为什么不给「保存」按钮：桌宠在另外两个窗口实时渲染，用户改完就想立刻看到效果。
  * 立刻写 + 广播回来（与页面管理分区同一套模式）。
  */
 
@@ -26,8 +25,8 @@ const MODE_META: Record<PetMode, { label: string; desc: string; ready: boolean }
   },
   window: {
     label: '独立小窗口',
-    desc: '单独浮在桌面上的小窗，可以摆在任意位置。还没做。',
-    ready: false
+    desc: '单独浮在桌面上的一只，拖到哪都行，关掉重开会回到原位。右键可以收回岛里。',
+    ready: true
   },
   free: {
     label: '自由走动',
@@ -145,7 +144,8 @@ export default function DeskPetSection(): ReactElement {
           )
         })}
         <div className="pet-set-tip">
-          后两种等以后做。为了不白占一个开关位，先把选项摆在这里，能用了直接点亮。
+          选「独立小窗口」后它会跑到桌面右下角，拖到哪下次就在哪；在它身上点右键能收回岛里。
+          「自由走动」等以后做。
         </div>
       </div>
     </div>

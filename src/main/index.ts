@@ -8,9 +8,10 @@ import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
-import { setupPrefsStore } from './prefsStore'
+import { setupPrefsStore, getPrefs, patchPrefs } from './prefsStore'
 import { setupMusicStore, stopMusicStore } from './musicStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
+import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
@@ -62,19 +63,45 @@ function quitApp(): void {
   stopScheduleStore()
   stopMusicStore()
   stopFullscreenWatch()
+  // 宠物窗口是独立窗口（SPEC-deskpet-out）：不主动关它的话，它会拖住
+  // window-all-closed 的判定，退出会卡在半路。先关掉再 quit。
+  closePetWindow()
   app.quit()
 }
 
 /**
  * 岛内右键 / 托盘右键共用的菜单。设置（SPEC-settings-shell）+ 手动隐藏（US-041）+ 退出。
  * 导出数据（US-029）2026-11-11 起搬到设置窗口「常规 → 导出数据」，这里不再提供入口。
+ *
+ * 2026-11-12 加「桌宠出岛 / 收回岛里」（SPEC-deskpet-out）：
+ * 用户原话「给右键添加一个出岛，不然每次都要点设置」。
+ * 按当前 `petMode` 显示两项之一——已经出去了就显示「收回」，
+ * 一个开关比一次点击更省事，也不用去菜单里找哪个是当前状态。
  */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
   const hiddenByUser = manualHide
+  const petOut = getPrefs().petMode === 'window'
   return Menu.buildFromTemplate([
     { label: '设置…', click: () => openSettings('general') },
     { label: '页面管理…', click: () => openSettings('pages') },
+    { type: 'separator' },
+    // 切 petMode 就够：petWindow.ts 里的 onPrefsWritten 会去开/关窗口，
+    // 岛里的岛仔由 App.tsx 跟随 petMode 自行隐藏。这里不直接调 openPetWindow，
+    // 是因为「偏好」才是唯一事实来源，绕过它会出现「窗口开了但偏好还是 island」。
+    petOut
+      ? {
+          label: '让桌宠回到岛里',
+          click: () => {
+            patchPrefs({ petMode: 'island' })
+          }
+        }
+      : {
+          label: '让桌宠出岛…',
+          click: () => {
+            patchPrefs({ petMode: 'window' })
+          }
+        },
     { type: 'separator' },
     hiddenByUser
       ? { label: '显示灵动岛', click: () => mainWindow?.webContents.send('noop') /* 占位 */ }
@@ -248,8 +275,13 @@ app.whenReady().then(() => {
   setupPrefsStore()
   setupMusicStore()
   setupSettingsWindow()
+  // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。
+  // 必须在 createWindow 之前——偏好里可能已经是 window 模式，启动时就该把它开出来。
+  setupPetWindow({ onQuit: () => quitApp() })
   initClipboardWatch()
   createWindow()
+  // 按当前 petMode 决定要不要把桌宠放出去（偏好缺失时是 island，这里什么都不做）
+  syncPetWindow()
   createTray()
   // US-041 全屏自动避让：检测子进程 + 状态机 + 感应窗
   initFullscreenWatch(

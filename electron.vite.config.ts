@@ -15,13 +15,15 @@ export default defineConfig({
         '@renderer': resolve('src/renderer/src')
       }
     },
-    // 双入口（SPEC-settings-shell）：index.html 是岛，settings.html 是独立设置窗口。
-    // 两者产出落在 out/renderer/ 下，package.json 的 build.files 用 "out/**" 已覆盖，无需另配。
+    // 三入口：index.html 是岛，settings.html 是独立设置窗口（SPEC-settings-shell），
+    // pet.html 是桌宠独立小窗口（SPEC-deskpet-out）。
+    // 产物都落在 out/renderer/ 下，package.json 的 build.files 用 "out/**" 已覆盖，无需另配。
     build: {
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          settings: resolve('src/renderer/settings.html')
+          settings: resolve('src/renderer/settings.html'),
+          pet: resolve('src/renderer/pet.html')
         },
         output: {
           // 两个入口共用 React：不显式分组时，Rollup 会把共享包按「第一个引用它的模块」命名，

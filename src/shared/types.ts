@@ -61,12 +61,24 @@ export const PET_SKIN_IDS = ['capsule', 'bean', 'photo'] as const
 export type PetSkinId = (typeof PET_SKIN_IDS)[number]
 
 /**
- * 桌宠出现模式（SPEC-deskpet-skin）。
- * island=只在岛里（现有行为）、window=独立小窗口（未做）、free=自由走动（未做）。
- * 暂只实现 island；另外两个存下来但不生效，设置页里显示成「还没做」。
+ * 桌宠出现模式（SPEC-deskpet-skin / SPEC-deskpet-out）。
+ * island=只在岛里、window=独立小窗口（SPEC-deskpet-out 已实现）、free=自由走动（未做）。
+ * free 存得下但不生效，设置页里显示成「还没做」。
  */
 export const PET_MODES = ['island', 'window', 'free'] as const
 export type PetMode = (typeof PET_MODES)[number]
+
+/**
+ * 桌宠独立小窗口的位置（SPEC-deskpet-out）。
+ *
+ * 为什么记 x/y 而不是「右下角 + 偏移」：用户把它拖到哪就该回到哪，
+ * 记绝对坐标最直接。多显示器拔掉导致坐标越界时，由主进程 clamp 回工作区，
+ * 所以这里不做「第几块屏」的记录（见 SPEC 第六节）。
+ */
+export interface PetWindowPos {
+  x: number
+  y: number
+}
 
 /** 设置窗口「常规」页要显示的本机信息 */
 export interface AppInfo {

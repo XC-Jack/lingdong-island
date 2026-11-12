@@ -584,6 +584,17 @@ div.pm-row[draggable='true'] {
   transform-origin: center bottom;
   animation: pet-photo-breathe 3.6s ease-in-out infinite;
 }
+
+/* 四视图转身（SPEC-deskpet-turn）：四层叠着，只有当前那层不透明。
+   为什么用 opacity 过渡而不是 display:none 切换：换图要解码，
+   硬切会闪一帧空的；淡入淡出让「转过去」看着是个连续动作。 */
+.pet-photo-layer {
+  opacity: 0;
+  transition: opacity 170ms linear;
+}
+.pet-photo-layer.is-on {
+  opacity: 1;
+}
 @keyframes pet-photo-breathe {
   0%,
   100% {

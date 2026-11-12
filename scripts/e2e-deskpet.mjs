@@ -252,10 +252,15 @@ try {
     const islandMode = modes.find((x) => x.m === 'island')
     ok('D7b「只在岛里」可选且当前选中', islandMode && islandMode.disabled === false && islandMode.on === true,
       JSON.stringify(islandMode))
-    const notReady = modes.filter((x) => x.m !== 'island')
-    ok('D7c 另外两档是禁用态且标了「还没做」',
-      notReady.length === 2 && notReady.every((x) => x.disabled === true && x.soon === true),
-      JSON.stringify(notReady))
+    // SPEC-deskpet-out 之后「独立小窗口」也可用了，只剩「自由走动」是禁用档。
+    // 这里改成「至少有一档仍是禁用 + 标了还没做」，并明确 free 必须是那一档——
+    // 断言太宽会让「所有档都变成可用」这种回归溜过去。
+    const freeMode = modes.find((x) => x.m === 'free')
+    ok('D7c「自由走动」仍是禁用态且标了「还没做」',
+      freeMode && freeMode.disabled === true && freeMode.soon === true, JSON.stringify(freeMode))
+    const winMode = modes.find((x) => x.m === 'window')
+    ok('D7d「独立小窗口」已可用（SPEC-deskpet-out 放开）',
+      winMode && winMode.disabled === false && winMode.soon === false, JSON.stringify(winMode))
   }
 
   // ========== D8 切模式不影响皮肤 ==========
@@ -267,8 +272,10 @@ try {
     ok('D8a 选「只在岛里」后落盘 petMode=island', onDisk.petMode === 'island', `实际 ${JSON.stringify(onDisk.petMode)}`)
     ok('D8b 切模式没有把皮肤改掉（两份偏好互不干扰）', onDisk.petSkin === 'capsule', `实际 ${JSON.stringify(onDisk.petSkin)}`)
     const before = readPrefs().petSkin
+    // 点禁用的「自由走动」：不该产生任何写入。
+    // （原先是拿 window 档当禁用样例，SPEC-deskpet-out 把它放开了，换成 free。）
     const clickDisabled = await settingsEval(
-      `(()=>{const e=document.querySelector('.pet-set-mode[data-mode="window"]'); e.click(); return 'clicked'})()`
+      `(()=>{const e=document.querySelector('.pet-set-mode[data-mode="free"]'); e.click(); return 'clicked'})()`
     )
     await sleep(600)
     const after = readPrefs()

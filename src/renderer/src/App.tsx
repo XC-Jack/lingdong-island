@@ -1948,6 +1948,9 @@ export default function App(): React.JSX.Element {
   // 为什么不和 pagesCustom 合成一个 state：皮肤改动是「设置页单选」，频率与页面裁剪不同，
   // 且它只影响一处渲染，单独一份更好读。
   const [petSkin, setPetSkin] = useState<string>('capsule')
+  // 桌宠出现模式（SPEC-deskpet-out）：'window' 时岛里不画桌宠——它出门了。
+  // 与 petSkin 同一份 prefs，同样「先默认后异步回填」，同样不吃 dirty。
+  const [petMode, setPetMode] = useState<string>('island')
   const [page, setPage] = useState(0)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
@@ -1964,6 +1967,7 @@ export default function App(): React.JSX.Element {
         if (!alive) return
         // 皮肤不受 pagesCustomDirty 影响（是另一份偏好），先无条件应用
         if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
+        if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -2390,6 +2394,8 @@ export default function App(): React.JSX.Element {
     const off = window.island.onPrefsChanged((prefs) => {
       // 皮肤：设置页改完立刻换脸，不走 dirty 判断（它是独立的偏好项）
       if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
+      // 出现模式：切到独立小窗口后岛里那只立刻消失（宠物窗口由主进程开）
+      if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -2455,6 +2461,10 @@ export default function App(): React.JSX.Element {
    */
   const renderStatusItem = (k: CollapsedKey): React.JSX.Element | null => {
     if (!pagesCustom.collapsed[k]) return null
+    // 桌宠出门了（SPEC-deskpet-out）：window 模式下岛里不画它，否则会同时出现两只。
+    // 只影响渲染，不动 pagesCustom.collapsed.pet 的开关状态——切回 island 后
+    // 用户原来「岛仔显不显示」的选择原样生效。
+    if (k === 'pet' && petMode === 'window') return null
     switch (k) {
       case 'battery': {
         // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染。
