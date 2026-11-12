@@ -21,12 +21,24 @@ import photoUrl from '../assets/pet/bean-photo.png'
 
 /** 画布边长（跟矢量版统一成 160，方便同一套 CSS 尺寸规则） */
 const VIEW = 160
+/**
+ * 画布顶部额外留白。
+ *
+ * 为什么需要：这套皮肤的所有动画都是「以脚底为轴」做的——呼吸 `scaleY(1.025)` 往上长、
+ * 开心 `translateY(-6%)` 往上跳、惊讶 `scaleY(1.05)` 往上弹。图本身几乎顶满画布，
+ * 一放大就冲出 viewBox 上边界被裁掉，用户看到的是「呼吸时头被削掉一块」。
+ * 实测：`IMG_H = 150` 时呼吸上顶 3.75 单位、开心上跳 9 单位，都被裁。
+ * 留 10 单位刚好盖住最大的一种（开心 -6% = 9）。
+ */
+const PAD_TOP = 10
 /** 图本身的高宽比（310 / 515），改图后要同步 */
 const RATIO = 310 / 515
-/** 图在画布里占的高度：底部留一点给投影，别顶到边 */
-const IMG_H = 150
+/** 图在画布里占的高度（扣掉顶部留白，底部还剩一点给投影） */
+const IMG_H = VIEW - PAD_TOP - 10
 const IMG_W = IMG_H * RATIO
 const IMG_X = (VIEW - IMG_W) / 2
+/** 图的顶边在画布里的纵坐标 */
+const IMG_Y = PAD_TOP
 
 function Full({ mood }: { mood: PetMood }): JSX.Element {
   const happy = mood === 'happy'
@@ -45,7 +57,7 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
       <ellipse
         className="pet-photo-shadow"
         cx={VIEW / 2}
-        cy={IMG_H + 3.5}
+        cy={IMG_Y + IMG_H + 3.5}
         rx={IMG_W * 0.42}
         ry={4}
         fill="#000000"
@@ -56,7 +68,7 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
         className="pet-photo-img"
         href={photoUrl}
         x={IMG_X}
-        y={0}
+        y={IMG_Y}
         width={IMG_W}
         height={IMG_H}
         preserveAspectRatio="xMidYMax meet"

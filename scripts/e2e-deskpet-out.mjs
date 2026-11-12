@@ -430,6 +430,56 @@ try {
       JSON.stringify({ 按住期间采样: samples, '波动(宽,高)': [growW, growH], 说明: '未修时这里会是 +70 以上' }))
   }
 
+  // ========== P9d 原图皮肤呼吸时头不能被画布裁掉（2026-11-12 用户反馈的回归） ==========
+  {
+    // 用户原话：「他呼吸的时候，头的上半部分就会被遮住」。
+    // 根因：所有动画都以脚底为轴往上长（呼吸 scaleY 1.025、开心 translateY -6%、
+    // 惊讶 scaleY 1.05），而图几乎顶满 160 的画布，一放大就冲出 viewBox 上边界被裁。
+    // 修法见 src/renderer/src/pet/skinPhoto.tsx 的 PAD_TOP。
+    //
+    // 为什么不用截图判：裁切只发生在动画峰值，截图很容易抓在 0% 相位看不出来。
+    // 这里把动画暂停后逐相位拨过去，直接量「图片顶边 vs 画布顶边」的几何关系。
+    await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="photo"]').click(), 'ok')`)
+    await waitForPrefs((p) => p.petSkin === 'photo', 8000, '落盘 petSkin=photo')
+    await waitPetExpr(
+      `(document.querySelector('.pet-wrap')?.dataset.petSkin === 'photo') ? 'photo' : ''`,
+      { label: '宠物窗口换成原图皮肤' }
+    )
+
+    const raw = await waitPetExpr(`(()=>{
+      const svg = document.querySelector('.pet-full');
+      const img = document.querySelector('.pet-photo-img');
+      if (!svg || !img) return '';
+
+      const anims = document.getAnimations();
+      anims.forEach((a) => a.pause());
+
+      const samples = [];
+      const DUR = 3600;
+      for (let i = 0; i <= 8; i++) {
+        const t = (DUR / 8) * i;
+        anims.forEach((a) => { a.currentTime = t });
+        void svg.getBoundingClientRect();   // 强制同步布局，让 transform 落地
+        const c = svg.getBoundingClientRect();
+        const r = img.getBoundingClientRect();
+        samples.push(+(c.top - r.top).toFixed(2));   // >0 表示图片顶边冲出画布
+      }
+      anims.forEach((a) => a.play());
+      return JSON.stringify(samples);
+    })()`, { label: '拨呼吸相位量裁切' })
+
+    const overflows = JSON.parse(raw)
+    const worst = Math.max(...overflows)
+    // 阈值 0.5px：0 附近的小数来自亚像素取整，不是真的裁
+    ok('P9d 原图皮肤呼吸全程头部没有被画布裁掉（图片顶边始终在 viewBox 内）',
+      worst <= 0.5,
+      JSON.stringify({ 各相位冲出量: overflows, 最大冲出: worst, 说明: '未修时峰值冲出约 4.6px' }))
+
+    // 换回胶囊，别把测试值留在偏好里
+    await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="capsule"]').click(), 'ok')`)
+    await waitForPrefs((p) => p.petSkin === 'capsule', 8000, '落盘 petSkin=capsule')
+  }
+
   // ========== P10 重启 → 回到记录的位置 ==========
   {
     const recorded = readPrefs().petWindowPos
