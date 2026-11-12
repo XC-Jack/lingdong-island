@@ -49,13 +49,33 @@ function cdp(wsUrl, expression) {
   })
 }
 
+/** 轮询直到表达式返回真值（避免固定 sleep 在慢机器/冷启动上不够）
+ *  2026-11-12 修：原来 spawn 后固定 sleep(2000) 就往下走，实测 `.island` 首次出现
+ *  可能晚到 2.9 秒，此时 `.click()` 抛 TypeError、岛停在收起态，而 `.dot` 只在展开态
+ *  渲染 → 报 `dots=0`。这是脚本自身的时序问题，不是产品问题。 */
+async function waitFor(wsUrl, expr, { timeoutMs = 15000, gapMs = 250, label = expr } = {}) {
+  const t0 = Date.now()
+  let last
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      last = await cdp(wsUrl, expr)
+      if (last) return last
+    } catch {
+      /* 页面还没就绪，继续等 */
+    }
+    await sleep(gapMs)
+  }
+  throw new Error(`FAIL: 等 ${label} 超时（${timeoutMs}ms），最后的值=${JSON.stringify(last)}`)
+}
+
 const main = async () => {
   await ensureInstance()
-  await sleep(2000)
   const wsUrl = await connect()
-  // 1. 展开岛
+  // 1. 等 React 挂载出岛，再展开
+  await waitFor(wsUrl, `!!document.querySelector('.island')`, { label: '.island 挂载' })
   await cdp(wsUrl, `document.querySelector('.island').click()`)
-  await sleep(500)
+  // 展开后圆点才渲染，等它出现（数量由 pagesCustom 决定，至少 3 个）
+  await waitFor(wsUrl, `document.querySelectorAll('.dot').length >= 3`, { label: '.dot 出现' })
   // 2. 切到第三页（通知）——点击后等 React 渲染完再断言
   const dots = await cdp(wsUrl, `document.querySelectorAll('.dot').length`)
   if (dots < 3) throw new Error('FAIL: dots=' + dots)
