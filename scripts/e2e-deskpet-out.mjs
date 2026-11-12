@@ -603,21 +603,38 @@ try {
         rotor.存在 === true && Number(rotor.不透明度) === 0,
         rotorInfo)
 
-      // 2026-11-12 用户反馈「图标在往下移，有点遮住脚了」。
-      // 原先是 `left:50%; bottom:4px` 居中贴底，那个位置正好压在两只脚中间偏下。
-      // 所以这条断言不能只测「在底部」，必须同时测「没压到宠物轮廓」——
-      // 只看底部位置的话，压着脚的那个版本照样全绿，等于没测。
-      const overlapX = rotor.左 !== null && rotor.宠物左 !== null
-        ? Math.min(rotor.右, rotor.宠物右) - Math.max(rotor.左, rotor.宠物左)
-        : 0
-      ok('P9f-2 旋转图标在窗口下半部，且没有压在宠物身上（不遮脚）',
+      // 2026-11-12 用户反馈两轮：「图标在往下移，有点遮住脚了」→「我希望在奶娃的下面」。
+      // 第一版 `left:50%; bottom:4px` 居中贴底，190×190 的窗口里脚底到 187，
+      // 那个位置必然盖住脚趾；改成右下角避开了，但用户要的是「正下方居中」。
+      // 最终解法是把窗口加高（PET_WIN_H 190→250，加的是透明留白、宠物尺寸不变），
+      // 多出来的下方空间正好放这个圆。
+      //
+      // 所以这条断言要测三件事：
+      //   ① 把手完全在宠物下方（垂直方向不重叠）——遮脚就是垂直重叠
+      //   ② 水平方向与宠物大致居中对齐——这是「在下面」而不是「歪在一边」
+      //   ③ 不超出窗口底边
+      // 注意别再只测「把手底部 >= 180」：那个值在居中贴底的旧版里是 187，
+      // 比现在还大，旧版照样能过——那条断言测不出任何东西（本轮实测确认）。
+      //
+      // `overlapY` 是「宠物底边 − 把手顶边」：> 0 就是把手插进宠物身体里，
+      // <= 0 才是把手整个落在宠物下方。窗口高度没加够时它会变成正数
+      // （190 高的窗口里实测 +16），所以这条断言同时守着「窗口够不够高」。
+      const overlapY = rotor.顶 !== null && rotor.宠物底 !== null
+        ? rotor.宠物底 - rotor.顶
+        : null
+      const rotorCenterX = (rotor.左 + rotor.右) / 2
+      const petCenterX = (rotor.宠物左 + rotor.宠物右) / 2
+      const centerOff = Math.abs(rotorCenterX - petCenterX)
+      ok('P9f-2 旋转图标在宠物正下方居中，且完全没压在宠物身上（不遮脚）',
         rotor.存在 === true && rotor.宽 > 0 && rotor.高 > 0 &&
-          rotor.底部 >= 180 && overlapX <= 0,
+          rotor.左 >= 0 && rotor.右 <= 194 &&
+          overlapY !== null && overlapY <= 0 && centerOff <= 4,
         JSON.stringify({
           图标: { 左: rotor.左, 右: rotor.右, 顶: rotor.顶, 底部: rotor.底部 },
           宠物: { 左: rotor.宠物左, 右: rotor.宠物右, 底: rotor.宠物底 },
-          水平重叠: overlapX,
-          说明: '水平重叠 > 0 就是在挡脚；旧版 left:50%/bottom:4px 会重叠约 22px'
+          压入量: overlapY,
+          水平中心偏差: +centerOff.toFixed(1),
+          说明: '压入量 = 宠物底 − 把手顶，> 0 就是压在身上；中心偏差 <= 4 表示正下方居中'
         }))
 
       // 「鼠标碰到桌宠时图标才显现」——hover 才淡入。
