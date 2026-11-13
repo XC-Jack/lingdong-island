@@ -7,6 +7,7 @@ import sideUrl from '../assets/pet/bean-photo-side.png'
 import backUrl from '../assets/pet/bean-photo-back.png'
 import laughUrl from '../assets/pet/bean-laugh.webp'
 import rollUrl from '../assets/pet/bean-roll.webp'
+import waveUrl from '../assets/pet/bean-wave.webp'
 
 /**
  * 皮肤 3：原图版（`skinPhoto`）。用户 2026-11-12 12:44 发来的参考图，抠成透明底后用。
@@ -134,6 +135,25 @@ const ROLL_COLS = 24
 const ROLL_FRAMES = 82
 const ROLL_CELL_RATIO = 167 / 220
 
+/* ===== 挥手动作用（SPEC-deskpet-action 第三支） =====
+ *
+ * 素材：用户 2026-11-13 发来的可灵生成视频
+ * `kling_20261113_作品_一只圆滚滚的黄色小怪_3634_0.mp4`（1280×720、24fps、121 帧、5.04 秒）。
+ *
+ * 为什么只取 61~94 帧（34 帧、约 1.4 秒）而不是用户说的「后半段」61~121：
+ * 这段视频是 AI 生成的两段拼接，第 61 帧有一次硬切（帧间运动量从每帧 3~5 突增到 34.33，
+ * 前景框从 x59-290 变成 x91-205），61 帧之后才是正面居中真正挥手。
+ * 再往后看，手的横向重心在 61~94 之间于 x438~531 往返三轮（振幅 93px），
+ * 95 帧起手就放下了、121 帧几乎不动（运动量 0.03~0.1）。
+ * 把 95~121 那 27 帧放进动作里，就是挥完手站着不动 1.1 秒——看着像卡住了。
+ * 所以只留真正的挥手段。想换区间改这三个常量 + 重跑 `.tmp/wave_build.py` 即可。
+ *
+ * 格宽 174 的计算：抠图后并集包围盒是 500×631，按 220 高缩放 ⇒ 宽 500*220/631 ≈ 174。
+ */
+const WAVE_COLS = 17
+const WAVE_FRAMES = 34
+const WAVE_CELL_RATIO = 174 / 220
+
 /** 一支动作的素材参数：格子数、帧数、格宽比、图源 */
 interface ActionSpec {
   cols: number
@@ -144,20 +164,22 @@ interface ActionSpec {
 }
 
 /**
- * 动作 → 素材。想加第三支动作就在这里加一行，别的地方不用动。
+ * 动作 → 素材。想加动作就在这里加一行，别的地方不用动。
  *
- * 播放帧率统一用 `ACTION_FPS`（15，与原片抽帧一致），所以两支动作的时长
- * 分别是 108/15=7.2 秒和 82/15≈5.5 秒，各自按帧数算，不用单独配。
+ * 播放帧率统一用 `ACTION_FPS`（15），所以三支动作的时长分别是
+ * 108/15=7.2 秒（大笑）、82/15≈5.5 秒（打滚）、34/15≈2.3 秒（挥手），
+ * 各自按帧数算，不用单独配。
  */
 const ACTION_SPECS: Record<Exclude<PetAction, 'idle'>, ActionSpec> = {
   laugh: { cols: ACTION_COLS, frames: ACTION_FRAMES, cellRatio: ACTION_CELL_RATIO, src: laughUrl },
-  roll: { cols: ROLL_COLS, frames: ROLL_FRAMES, cellRatio: ROLL_CELL_RATIO, src: rollUrl }
+  roll: { cols: ROLL_COLS, frames: ROLL_FRAMES, cellRatio: ROLL_CELL_RATIO, src: rollUrl },
+  wave: { cols: WAVE_COLS, frames: WAVE_FRAMES, cellRatio: WAVE_CELL_RATIO, src: waveUrl }
 }
 
 /**
  * 一支动作要播多久（毫秒）。
  *
- * 为什么导出成函数而不是常量：现在有两支动作、时长不同（7.2 秒 vs 5.5 秒），
+ * 为什么导出成函数而不是常量：三支动作时长不同（7.2 / 5.5 / 2.3 秒），
  * 调用方必须按实际那支去定时，否则打滚会被 7.2 秒的定时器多挂 1.7 秒空站。
  */
 export function actionDurationMs(action: PetAction): number {

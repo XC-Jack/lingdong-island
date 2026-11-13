@@ -29,8 +29,11 @@ export type PetMood = 'idle' | 'happy' | 'sleepy' | 'surprised'
  *
  * 2026-11-12 追加 `roll`（打滚）：用户要「挥手 + 打滚」，但原视频里没有挥手这段，
  * 只有倒地打滚那 5 秒能切出来，所以先落了一支。
+ *
+ * 2026-11-13 追加 `wave`（挥手）：用户另外找来一段可灵生成的视频，取后半段抠成素材，
+ * 挥手这一支总算补齐了。
  */
-export type PetAction = 'idle' | 'laugh' | 'roll'
+export type PetAction = 'idle' | 'laugh' | 'roll' | 'wave'
 
 /** 尺寸档：见上方注释 */
 export type PetSize = 'tiny' | 'full'

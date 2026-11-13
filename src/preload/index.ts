@@ -149,11 +149,11 @@ const api = {
     ipcRenderer.send('pet:show-menu')
   },
   /**
-   * 右键菜单里点了某个动作之后，主进程把它推回来播（SPEC-deskpet-action 第二支）。
+   * 右键菜单里点了某个动作之后，主进程把它推回来播（SPEC-deskpet-action）。
    * 返回取消订阅函数。
    */
-  onPetAction(cb: (a: 'laugh' | 'roll') => void): () => void {
-    const h = (_e: Electron.IpcRendererEvent, a: 'laugh' | 'roll'): void => cb(a)
+  onPetAction(cb: (a: 'laugh' | 'roll' | 'wave') => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, a: 'laugh' | 'roll' | 'wave'): void => cb(a)
     ipcRenderer.on('pet:action', h)
     return () => {
       ipcRenderer.removeListener('pet:action', h)
