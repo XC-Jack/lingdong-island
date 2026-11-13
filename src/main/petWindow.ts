@@ -212,6 +212,18 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
     const win = petWindow
     if (!win || win.isDestroyed()) return
     Menu.buildFromTemplate([
+      // 动作入口（2026-11-12 追加）：用户点一下会笑，但「打滚」没有自然的
+      // 鼠标手势能表达，硬塞成双击/长按会和拖动、转身抢。放菜单里最直观，
+      // 以后加第三支动作也只是往这里加一行。
+      {
+        label: '再来一次大笑',
+        click: () => win.webContents.send('pet:action', 'laugh')
+      },
+      {
+        label: '打个滚',
+        click: () => win.webContents.send('pet:action', 'roll')
+      },
+      { type: 'separator' },
       { label: '回到岛里', click: () => patchPrefs({ petMode: 'island' }) },
       { type: 'separator' },
       { label: '退出灵动岛', click: () => quitHandler?.() }

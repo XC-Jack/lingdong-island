@@ -13,6 +13,8 @@ import { setupMusicStore, stopMusicStore } from './musicStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
+import { setIslandWindow } from './islandWindowRef'
+import { setupLocalFileProtocol } from './localFileProtocol'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
@@ -251,7 +253,13 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    // 登记处也要清：关掉的窗口引用留着，sendToIsland 会一直往死窗口发
+    setIslandWindow(null)
   })
+
+  // 登记给 notifyStore / clipboardStore 用（它们以前用 getAllWindows()[0]，
+  // 桌宠出岛后 [0] 变成宠物窗口，横幅全发给了一个不监听该事件的窗口）。
+  setIslandWindow(mainWindow)
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -266,6 +274,10 @@ app.whenReady().then(() => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.xcjack.lingdong-island')
   }
+  // 本地图片自定义协议（2026-11-12）：开发预览版的页面源是 http://localhost:5173，
+  // 从 http 源引用 file:// 本地图片会被 Chromium 拦掉，通知横幅/置物架图标全变空白。
+  // 注册成 ldapp:// 就能跨源加载（协议特权已在模块顶层登记）。
+  setupLocalFileProtocol()
   setupTodoStore()
   setupStatus()
   setupShelfStore()

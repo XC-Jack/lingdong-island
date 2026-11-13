@@ -711,12 +711,25 @@ try {
         JSON.stringify({ 转之前: posBefore, 转之后: posAfter }))
 
       // 但按住**身体**仍然要能拖走窗口（别把原来的功能弄丢了）
+      //
+      // 先把光标钉到一个已知位置再按下：前面 P9f-1 为了验「把手平时看不见」
+      // 把光标挪到过 (2,2)，中间几步又各自动过光标，起点不可预测。
+      // 万一光标贴在屏幕右/下边缘，`moveCursorBy(60,40)` 会被 Windows
+      // 自己的边界钳住而不动（实测就是这么撞上一次只走了 6px 的假红）。
+      const areaDrag = await workArea()
+      await setCursor(areaDrag.x + 200, areaDrag.y + 200)
+      await sleep(150)
       const posDragBefore = await petBounds()
       await petEval(`(()=>{
         const el = document.querySelector('.petwin');
         el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 3, isPrimary: true, screenX: 500 }));
         return 'ok'
       })()`)
+      // 必须等主进程真正收到 pet:drag-start 再挪光标。
+      // 主进程是在收到 IPC 的那一刻读 `screen.getCursorScreenPoint()` 当基准点的；
+      // 如果光标先动、IPC 后到，基准点已经是移动后的位置，算出的位移恒为 0，
+      // 窗口纹丝不动——这条断言就会随机红（2026-11-13 实测偶发一次）。
+      await sleep(250)
       await moveCursorBy(60, 40)
       await sleep(600)
       await petEval(`(()=>{
@@ -789,6 +802,14 @@ try {
         await sleep(220)
       }
 
+      // 先等回 idle 再断言。
+      //
+      // 动作状态是渲染层的一个 useState，前面任何一段（拖动被判成点击、
+      // 或者用户此刻正在真人试玩右键菜单「打个滚」）都可能让它还在播——
+      // 那样这条会在「点之前」读到一个不是 idle 的值，看起来像代码坏了，
+      // 其实只是上一件事还没播完（2026-11-13 连跑三轮撞到过一次）。
+      // 等回 idle 之后仍然断言 idle：真要是卡在某个动作上不复位，这里照样红。
+      for (let i = 0; i < 45 && (await actionNow()) !== 'idle'; i++) await sleep(200)
       ok('P9h-0 点之前是 idle（没有残留动作）', (await actionNow()) === 'idle',
         JSON.stringify({ 实际: await actionNow() }))
 
@@ -906,6 +927,274 @@ try {
       ok('P9h-7 大笑素材是两行 sprite sheet（单行会超 WebP 16383px 单边上限被截断）',
         frms === 108 && cols === 54 && Math.ceil(frms / cols) === 2 && laughSize > 500 * 1024,
         JSON.stringify({ 帧数: frms, 列数: cols, 行数: Math.ceil(frms / cols), 字节: laughSize }))
+
+      // ========== P9i 第二支动作「打滚」（SPEC-deskpet-action，2026-11-12 第六轮）==========
+      //
+      // 用户原话「就做挥手打滚」。挥手那段素材里根本没有（视频只有站立/大笑/倒地打滚），
+      // 所以这一轮只落了打滚：82 帧、24 列 × 4 行、每格 165×220。
+      //
+      // 触发入口放右键菜单，不做鼠标手势——「打滚」没有自然的手势能表达，
+      // 硬塞成双击/长按会跟拖动、转身把手抢事件。
+      const colsNow = () => petEval(`document.querySelector('.pet-photo-action')?.dataset.actionCols || ''`)
+      const framesNow = () => petEval(`document.querySelector('.pet-photo-action')?.dataset.actionFrames || ''`)
+
+      /** 让主进程往宠物窗口 send 一个动作（模拟右键菜单那一项被点击） */
+      const pushAction = (a) =>
+        mainEval(`(()=>{
+          const { BrowserWindow } = require('electron');
+          const w = BrowserWindow.getAllWindows().find(x => (x.webContents.getURL() || '').includes('pet.html'));
+          if (!w) throw new Error('没有宠物窗口');
+          w.webContents.send('pet:action', ${JSON.stringify(a)});
+          return 'ok'
+        })()`)
+
+      // 先切回原图皮肤（P9h-6 把它换成了胶囊）
+      await settingsEval(`(document.querySelector('.pet-set-skin[data-skin-id="photo"]').click(), 'ok')`)
+      await waitForPrefs((p) => p.petSkin === 'photo', 8000, '落盘 petSkin=photo')
+      await sleep(600)
+
+      // 等上一段（P9h-6 在胶囊皮肤上点的那一下）的笑播完再开始。
+      // 注意：胶囊皮肤没有动作素材、不渲染动作层，但 `PetWindowApp` 的动作状态机
+      // 照旧会把它设成 'laugh' 并挂 7.2 秒定时器——所以这里必须等，不能只看
+      // 「DOM 里没有 .pet-photo-action」就认为没在播（第一次就是这么假红的）。
+      for (let i = 0; i < 45 && (await actionNow()) !== 'idle'; i++) await sleep(200)
+
+      ok('P9i-0 打滚之前是 idle', (await actionNow()) === 'idle',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      // 计时：打滚 82 帧 / 15fps ≈ 5.47 秒，比大笑的 7.2 秒短。
+      // 这条能抓住「复位定时器写成一个大笑专用的常量」这种错——
+      // 那样打滚会播完 5.47 秒后还空站 1.7 秒才回 idle。
+      const rollStart = Date.now()
+      await pushAction('roll')
+      await sleep(250)
+      ok('P9i-1 右键菜单那条通道能把「打滚」推进窗口（data-pet-action 变 roll）',
+        (await actionNow()) === 'roll',
+        JSON.stringify({ 实际: await actionNow() }))
+
+      ok('P9i-2 打滚用的是它自己的素材参数（24 列 / 82 帧，不是大笑的 54 列 / 108 帧）',
+        (await colsNow()) === '24' && (await framesNow()) === '82',
+        JSON.stringify({ 列数: await colsNow(), 帧数: await framesNow() }))
+
+      const rollFrames = []
+      for (let i = 0; i < 6; i++) {
+        const f = await frameNow()
+        if (f !== '' && rollFrames[rollFrames.length - 1] !== f) rollFrames.push(f)
+        await sleep(200)
+      }
+      ok('P9i-3 打滚的帧在持续推进（不是卡在第一帧）',
+        rollFrames.length >= 4,
+        JSON.stringify({ 采样到的帧号: rollFrames }))
+
+      // 构图：打滚的格子比大笑宽（167 vs 158 的格宽比），但两者都必须
+      // 与站姿层水平居中、底边一致，否则播放时会「跳到半空」或者左右偏。
+      //
+      // 这条必须放在「等它回 idle」之前：动作层在 idle 时整个从 DOM 移除，
+      // 等完了再来量只会读到 null（无意义的假红）。
+      const rollAlign = await petEval(`(()=>{
+        const stand = document.querySelector('.pet-photo-layer.is-on');
+        const sheet = document.querySelector('.pet-photo-action-sheet');
+        const grp = document.querySelector('.pet-photo-action');
+        if (!stand || !sheet || !grp) return '';
+        const n = (el, a) => Number(el.getAttribute(a));
+        const sx = n(stand, 'x'), sy = n(stand, 'y'), sw = n(stand, 'width'), sh = n(stand, 'height');
+        const cols = Number(grp.dataset.actionCols);
+        const frames = Number(grp.dataset.actionFrames);
+        const w = n(sheet, 'width') / cols;
+        const h = n(sheet, 'height') / Math.ceil(frames / cols);
+        return JSON.stringify({
+          站姿中心: +(sx + sw / 2).toFixed(2), 站姿底: +(sy + sh).toFixed(2),
+          动作格宽: +w.toFixed(2), 动作格高: +h.toFixed(2)
+        })
+      })()`)
+      const rg = rollAlign ? JSON.parse(rollAlign) : null
+      // 期望格宽比从源码常量算，不写死数字：
+      // 2026-11-12 打滚素材重抠时格宽 165→167（裁框左界 30→24 补回左手），
+      // 断言里写死 165 就会和源常量脱钩——那种「测试与实现各记一个数」的写法
+      // 迟早变成假绿（改实现忘改测试）或假红（改测试忘改实现）。
+      const rollRatioSrc = (photoSrc.match(/ROLL_CELL_RATIO\s*=\s*(\d+)\s*\/\s*(\d+)/) || [])
+      const rollRatio = rollRatioSrc.length === 3 ? Number(rollRatioSrc[1]) / Number(rollRatioSrc[2]) : NaN
+      ok('P9i-5 打滚的格宽按它自己的素材比例算（比大笑的 158/220 宽）',
+        !!rg && Number.isFinite(rollRatio) && rollRatio > 158 / 220 &&
+          Math.abs(rg.动作格宽 - rg.动作格高 * rollRatio) <= 0.5 && rg.动作格高 > 0,
+        JSON.stringify({
+          实测: rg,
+          源码格宽比: Number.isFinite(rollRatio) ? +rollRatio.toFixed(4) : '没解析到',
+          期望格宽: rg && Number.isFinite(rollRatio) ? +(rg.动作格高 * rollRatio).toFixed(2) : null
+        }))
+
+      // 等它自己回 idle，并核对耗时落在打滚的时长附近（4.5~6.8 秒），
+      // 而不是大笑的 7.2 秒。
+      let rollBack = false
+      for (let i = 0; i < 40; i++) {
+        if ((await actionNow()) === 'idle') {
+          rollBack = true
+          break
+        }
+        await sleep(200)
+      }
+      const rollElapsed = Date.now() - rollStart
+      ok('P9i-4 打滚按自己的时长复位（约 5.5 秒，明显短于大笑的 7.2 秒）',
+        rollBack && rollElapsed >= 4500 && rollElapsed <= 6800,
+        JSON.stringify({ 回到idle: rollBack, 耗时毫秒: rollElapsed, 打滚应约: 5467, 大笑是: 7200 }))
+
+      // 素材硬事实：82 帧排 24 列 4 行、3960×880，文件 > 300 KB。
+      const rollFile = join(ROOT, 'src', 'renderer', 'src', 'assets', 'pet', 'bean-roll.webp')
+      const rollSize = existsSync(rollFile) ? statSync(rollFile).size : 0
+      const rollCols = Number((photoSrc.match(/ROLL_COLS\s*=\s*(\d+)/) || [])[1])
+      const rollFrms = Number((photoSrc.match(/ROLL_FRAMES\s*=\s*(\d+)/) || [])[1])
+      ok('P9i-6 打滚素材是 82 帧 24 列 4 行，且文件确实落盘了',
+        rollCols === 24 && rollFrms === 82 && Math.ceil(rollFrms / rollCols) === 4 && rollSize > 300 * 1024,
+        JSON.stringify({ 帧数: rollFrms, 列数: rollCols, 行数: Math.ceil(rollFrms / rollCols), 字节: rollSize }))
+
+      // 菜单接线：两项都要既有标签、又有 send，不能只加标签。
+      const petWinSrc = readFileSync(join(ROOT, 'src', 'main', 'petWindow.ts'), 'utf8')
+      ok('P9i-7 右键菜单里有「打个滚」且它 send 的是 roll',
+        /label:\s*'打个滚'/.test(petWinSrc) && /send\('pet:action',\s*'roll'\)/.test(petWinSrc),
+        JSON.stringify({
+          有标签: /label:\s*'打个滚'/.test(petWinSrc),
+          有send: /send\('pet:action',\s*'roll'\)/.test(petWinSrc)
+        }))
+    }
+
+    // ========== P9j 右键不再多出一圈边框（焦点环）==========
+    //
+    // 用户原话（2026-11-12）：「我一右键就会多出来一个边框」。
+    // 截图实测：那圈线是 238×313 物理像素的矩形，正好等于宠物窗口 190×250 DIP × DPR 1.25；
+    // 线色 (229,151,0)，本机 DWM 强调色是 0xFFD47800 → RGB(212,120,0)。
+    // 矩形贴合窗口 + 用系统强调色 = Chromium 的 :focus-visible 焦点环。
+    //
+    // 修法是 `.petwin:focus, .petwin:focus-visible { outline: none }`（petwin.css）。
+    // 下面这三条里，P9j-3 是关键：它证明「删掉这条规则，焦点环就真的出现」，
+    // 否则只断言「现在没有」属于假绿——把 CSS 整段删掉也能过。
+    {
+      // 让根节点进入 :focus-visible。脚本 focus() 不够（Chromium 认定那是鼠标交互），
+      // 必须派发一次真实的 Tab 键。
+      const tab = async () => {
+        const pages = await listTargets()
+        const page = pages.find(MATCH.pet)
+        if (!page) throw new Error('no pet target')
+        const ws = new WebSocket(page.webSocketDebuggerUrl)
+        await new Promise((res, rej) => {
+          const timer = setTimeout(() => rej(new Error('cdp timeout')), 15000)
+          ws.onopen = () => {
+            ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: `(document.querySelector('.petwin').blur(), 'ok')`, returnByValue: true } }))
+          }
+          ws.onmessage = (ev) => {
+            const m = JSON.parse(ev.data)
+            if (m.id === 1) {
+              ws.send(JSON.stringify({ id: 2, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, text: '\t' } }))
+            }
+            if (m.id === 2) {
+              ws.send(JSON.stringify({ id: 3, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 } }))
+            }
+            if (m.id === 3) { clearTimeout(timer); ws.close(); res() }
+          }
+          ws.onerror = rej
+        })
+      }
+
+      const focusState = () => petEval(`(() => {
+        const el = document.querySelector('.petwin')
+        if (!el) return JSON.stringify({ err: 'no .petwin' })
+        const cs = getComputedStyle(el)
+        return JSON.stringify({
+          focus: el.matches(':focus'),
+          focusVisible: el.matches(':focus-visible'),
+          outlineStyle: cs.outlineStyle,
+          outlineColor: cs.outlineColor,
+          outlineWidth: cs.outlineWidth,
+        })
+      })()`).then((s) => (typeof s === 'string' ? JSON.parse(s) : s))
+
+      const cssSrc = readFileSync(join(ROOT, 'src', 'renderer', 'src', 'petwin', 'petwin.css'), 'utf8')
+
+      // P9j-1 源码层面：本意就是「这个窗口不要键盘焦点环」
+      ok('P9j-1 petwin.css 里给 .petwin 关掉了 focus 焦点环',
+        /\.petwin:focus[^{]*\{[^}]*outline:\s*none/.test(cssSrc),
+        JSON.stringify({ 找到规则: /\.petwin:focus[^{]*\{[^}]*outline:\s*none/.test(cssSrc) }))
+
+      // P9j-2 运行时层面：真的进到 :focus-visible 时，computed outline 必须是 none
+      await tab()
+      await sleep(400)
+      const on = await focusState()
+      ok('P9j-2 拿到键盘焦点时计算样式里 outline 是 none（真出现在界面上才是边框）',
+        on.focusVisible === true && on.outlineStyle === 'none',
+        JSON.stringify({ 拿到焦点: on.focus, 焦点可见: on.focusVisible, 描边样式: on.outlineStyle, 颜色: on.outlineColor }))
+
+      // P9j-3 负对照：把那几条规则从文档里删掉，焦点环应该立刻回来。
+      // 这一步是防止「CSS 写错了但恰好没触发」这种假绿。
+      const del = await petEval(`(() => {
+        let n = 0
+        for (const sheet of Array.from(document.styleSheets)) {
+          let rules
+          try { rules = sheet.cssRules } catch { continue }
+          for (let i = rules.length - 1; i >= 0; i--) {
+            const sel = rules[i].selectorText || ''
+            if (sel.includes('.petwin') && sel.includes(':focus')) {
+              try { sheet.deleteRule(i); n++ } catch {}
+            }
+          }
+        }
+        return String(n)
+      })()`)
+      await tab()
+      await sleep(400)
+      const off = await focusState()
+      ok('P9j-3 删掉那条规则后焦点环真的会出现（证明修复不是摆设）',
+        Number(del) > 0 && off.outlineStyle !== 'none' && /229|212/.test(String(off.outlineColor)),
+        JSON.stringify({
+          删掉的规则数: del,
+          描边样式: off.outlineStyle,
+          描边颜色: off.outlineColor,
+          说明: '本机强调色 0xFFD47800 → RGB(212,120,0)，Chromium 用强调色画焦点环'
+        }))
+    }
+
+    // ========== P9k 桌宠出岛时，岛仍然能收到横幅事件 ==========
+    //
+    // 用户原话（2026-11-12）：「我刚刚截图，灵动岛没有信息提示弹出」。
+    // 根因不在通知库，在推送目标：`notifyStore` / `clipboardStore` 用
+    // `BrowserWindow.getAllWindows()[0]` 往渲染层推横幅，假设 [0] 是岛窗口。
+    // 桌宠出岛后实测顺序是 `[pet.html, index.html]`，[0] 变成宠物窗口，
+    // 横幅全发给了不监听 `island:notify-arrived` / `island:code-arrived` 的窗口。
+    // 修法是新增 `src/main/islandWindowRef.ts` 显式登记岛窗口。
+    //
+    // 这里守两件事：①主进程里那个登记引用指向的是 index.html 而不是 pet.html
+    // ②源码里不再有 `getAllWindows()[0]` 的横幅推送（防止以后改回去）。
+    {
+      const prevIdx = await mainEval(`(() => {
+        const { BrowserWindow } = require('electron')
+        const all = BrowserWindow.getAllWindows().map((w) => w.webContents.getURL())
+        return JSON.stringify({
+          count: all.length,
+          第一个: all[0] || '',
+          有岛: all.some((u) => u.includes('index.html')),
+          有宠物: all.some((u) => u.includes('pet.html')),
+        })
+      })()`).then((s) => (typeof s === 'string' ? JSON.parse(s) : s))
+
+      ok('P9k-1 前情：桌宠出岛时确实有宠物窗口，且它可能是 getAllWindows 的第一个',
+        prevIdx.有宠物 === true,
+        JSON.stringify(prevIdx))
+
+      const refSrc = readFileSync(join(ROOT, 'src', 'main', 'islandWindowRef.ts'), 'utf8')
+      const notifySrc = readFileSync(join(ROOT, 'src', 'main', 'notifyStore.ts'), 'utf8')
+      const clipSrc = readFileSync(join(ROOT, 'src', 'main', 'clipboardStore.ts'), 'utf8')
+
+      ok('P9k-2 岛窗口引用是显式登记的，靠 URL 猜会漏（开发版 loadURL / 打包版 loadFile）',
+        /setIslandWindow/.test(refSrc) && /getIslandWindow/.test(refSrc),
+        JSON.stringify({ 有set: /setIslandWindow/.test(refSrc), 有get: /getIslandWindow/.test(refSrc) }))
+
+      ok('P9k-3 通知与验证码两条横幅都走登记引用，不再用 getAllWindows()[0]',
+        /sendToIsland\('island:notify-arrived'/.test(notifySrc) &&
+          /sendToIsland\('island:code-arrived'/.test(clipSrc) &&
+          !/getAllWindows\(\)\[0\][\s\S]{0,40}island:(notify-arrived|code-arrived)/.test(notifySrc + clipSrc),
+        JSON.stringify({
+          通知走sendToIsland: /sendToIsland\('island:notify-arrived'/.test(notifySrc),
+          验证码走sendToIsland: /sendToIsland\('island:code-arrived'/.test(clipSrc),
+          还有getAllWindows写法: /getAllWindows\(\)\[0\][\s\S]{0,40}island:/.test(notifySrc + clipSrc)
+        }))
     }
 
     // 换回胶囊，别把测试值留在偏好里

@@ -6,7 +6,8 @@
  * - 识别防误报优先：整段短文本匹配码模式直接弹；长文本只在含验证码关键词时提取行内数字。
  * - 同码 30s 去重；展开态不弹（渲染层自行判断）；内容只在内存，不落盘。
  */
-import { clipboard, ipcMain, BrowserWindow } from 'electron'
+import { clipboard, ipcMain } from 'electron'
+import { sendToIsland } from './islandWindowRef'
 
 const POLL_MS = 1000
 const REPEAT_SUPPRESS_MS = 30_000
@@ -72,5 +73,8 @@ async function pollOnce(): Promise<void> {
   if (code === lastCode && now - lastShownAt < REPEAT_SUPPRESS_MS) return
   lastCode = code
   lastShownAt = now
-  BrowserWindow.getAllWindows()[0]?.webContents.send('island:code-arrived', code)
+  // 用登记好的岛窗口，不要用 getAllWindows()[0]：桌宠切成「独立小窗口」后
+  // [0] 是 pet.html，验证码横幅会发给一个不监听该事件的窗口，岛上什么都不弹
+  // （2026-11-12 用户实测「刚刚截图，灵动岛没有信息提示弹出」就是这个）。
+  sendToIsland('island:code-arrived', code)
 }

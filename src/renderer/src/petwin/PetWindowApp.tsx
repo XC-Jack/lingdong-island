@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import Pet from '../pet/Pet'
 import type { PetAction } from '../pet/types'
-import { ACTION_DURATION_MS } from '../pet/skinPhoto'
+import { actionDurationMs } from '../pet/skinPhoto'
 
 /**
  * 桌宠独立小窗口的界面（SPEC-deskpet-out）。
@@ -190,11 +190,22 @@ export default function PetWindowApp(): JSX.Element {
       return
     }
     setAction(next)
+    // 时长按「这一支」算：大笑 7.2 秒、打滚 5.5 秒，写死一个常量会让短的那支空站一段
     actionTimer.current = window.setTimeout(() => {
       actionTimer.current = null
       setAction('idle')
-    }, ACTION_DURATION_MS)
+    }, actionDurationMs(next))
   }
+
+  // 右键菜单里选动作（2026-11-12 追加「打滚」时开的入口）。
+  // 为什么走 IPC 而不是 window 事件：菜单是主进程的原生菜单，
+  // 点完之后主进程直接 send 回这个窗口，比再绕一层自定义事件少一跳。
+  useEffect(() => {
+    return window.island.onPetAction((a) => playAction(a))
+    // playAction 每次渲染都是新函数，但它只用到 ref 和 setState，行为稳定；
+    // 依赖留空避免每次渲染重订阅。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // 窗口关掉时别忘了清定时器，不然会在已卸载的组件上 setState
   useEffect(() => {
