@@ -1055,7 +1055,102 @@ try {
           有标签: /label:\s*'打个滚'/.test(petWinSrc),
           有send: /send\('pet:action',\s*'roll'\)/.test(petWinSrc)
         }))
+      // ========== P9l 第三支动作「挥手」（SPEC-deskpet-action，2026-11-13 第七轮）==========
+      //
+      // 用户 2026-11-13 另外给了一段可灵生成的视频，说「只要后半段」。
+      // 实测那段视频是一次硬切的拼接：第 61 帧帧间运动量从每帧 3~5 突增到 34.33，
+      // 61 帧之后才是正面居中真正挥手；再往后 95 帧起手就放下了、121 帧几乎不动。
+      // 所以真正可用的是 61~94 共 34 帧。下面这几条守住三件事：
+      // 素材参数是这支自己的、时长按它自己的 34 帧算、菜单那项真的接上了。
+      {
+        for (let i = 0; i < 45 && (await actionNow()) !== 'idle'; i++) await sleep(200)
+
+        ok('P9l-0 挥手之前是 idle', (await actionNow()) === 'idle',
+          JSON.stringify({ 实际: await actionNow() }))
+
+        // 34 帧 / 15fps ≈ 2.27 秒，比打滚的 5.47 秒、大笑的 7.2 秒都短。
+        // 这条抓的是「复位定时器沿用别的动作的帧数」——那样挥手播完会空站好几秒。
+        const waveStart = Date.now()
+        await pushAction('wave')
+        await sleep(250)
+        ok('P9l-1 右键菜单那条通道能把「挥手」推进窗口（data-pet-action 变 wave）',
+          (await actionNow()) === 'wave',
+          JSON.stringify({ 实际: await actionNow() }))
+
+        ok('P9l-2 挥手用的是它自己的素材参数（17 列 / 34 帧，不是打滚的 24 列 / 82 帧）',
+          (await colsNow()) === '17' && (await framesNow()) === '34',
+          JSON.stringify({ 列数: await colsNow(), 帧数: await framesNow() }))
+
+        const waveFrames = []
+        for (let i = 0; i < 5; i++) {
+          const f = await frameNow()
+          if (f !== '' && waveFrames[waveFrames.length - 1] !== f) waveFrames.push(f)
+          await sleep(150)
+        }
+        ok('P9l-3 挥手的帧在持续推进（不是卡在第一帧）',
+          waveFrames.length >= 4,
+          JSON.stringify({ 采样到的帧号: waveFrames }))
+
+        // 格宽比同样从源码常量算，不写死 174——素材重抠时格宽会跟着变。
+        // 这条必须排在「等它回 idle」之前：动作层在 idle 时整个从 DOM 移除。
+        const waveAlign = await petEval(`(()=>{
+          const sheet = document.querySelector('.pet-photo-action-sheet');
+          const grp = document.querySelector('.pet-photo-action');
+          if (!sheet || !grp) return '';
+          const cols = Number(grp.dataset.actionCols);
+          const frames = Number(grp.dataset.actionFrames);
+          const w = Number(sheet.getAttribute('width')) / cols;
+          const h = Number(sheet.getAttribute('height')) / Math.ceil(frames / cols);
+          return JSON.stringify({ 动作格宽: +w.toFixed(2), 动作格高: +h.toFixed(2) })
+        })()`)
+        const wg = waveAlign ? JSON.parse(waveAlign) : null
+        const waveRatioSrc = (photoSrc.match(/WAVE_CELL_RATIO\s*=\s*(\d+)\s*\/\s*(\d+)/) || [])
+        const waveRatio = waveRatioSrc.length === 3
+          ? Number(waveRatioSrc[1]) / Number(waveRatioSrc[2])
+          : NaN
+        ok('P9l-4 挥手的格宽按它自己的素材比例算（174/220）',
+          !!wg && Number.isFinite(waveRatio) &&
+            Math.abs(wg.动作格宽 - wg.动作格高 * waveRatio) <= 0.5 && wg.动作格高 > 0,
+          JSON.stringify({
+            实测: wg,
+            源码格宽比: Number.isFinite(waveRatio) ? +waveRatio.toFixed(4) : '没解析到',
+            期望格宽: wg && Number.isFinite(waveRatio) ? +(wg.动作格高 * waveRatio).toFixed(2) : null
+          }))
+
+        let waveBack = false
+        for (let i = 0; i < 40; i++) {
+          if ((await actionNow()) === 'idle') {
+            waveBack = true
+            break
+          }
+          await sleep(200)
+        }
+        const waveElapsed = Date.now() - waveStart
+        ok('P9l-5 挥手按自己的时长复位（约 2.3 秒，明显短于打滚的 5.5 秒）',
+          waveBack && waveElapsed >= 1800 && waveElapsed <= 3600,
+          JSON.stringify({ 回到idle: waveBack, 耗时毫秒: waveElapsed, 挥手应约: 2267, 打滚是: 5467 }))
+
+        const waveFile = join(ROOT, 'src', 'renderer', 'src', 'assets', 'pet', 'bean-wave.webp')
+        const waveSize = existsSync(waveFile) ? statSync(waveFile).size : 0
+        const waveCols = Number((photoSrc.match(/WAVE_COLS\s*=\s*(\d+)/) || [])[1])
+        const waveFrms = Number((photoSrc.match(/WAVE_FRAMES\s*=\s*(\d+)/) || [])[1])
+        ok('P9l-6 挥手素材是 34 帧 17 列 2 行，且文件确实落盘了',
+          waveCols === 17 && waveFrms === 34 && Math.ceil(waveFrms / waveCols) === 2 &&
+            waveSize > 200 * 1024,
+          JSON.stringify({
+            帧数: waveFrms, 列数: waveCols, 行数: Math.ceil(waveFrms / waveCols), 字节: waveSize
+          }))
+
+        ok('P9l-7 右键菜单里有「挥挥手」且它 send 的是 wave',
+          /label:\s*'挥挥手'/.test(petWinSrc) && /send\('pet:action',\s*'wave'\)/.test(petWinSrc),
+          JSON.stringify({
+            有标签: /label:\s*'挥挥手'/.test(petWinSrc),
+            有send: /send\('pet:action',\s*'wave'\)/.test(petWinSrc)
+          }))
+      }
+
     }
+
 
     // ========== P9j 右键不再多出一圈边框（焦点环）==========
     //
