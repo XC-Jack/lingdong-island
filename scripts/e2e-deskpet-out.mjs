@@ -711,12 +711,25 @@ try {
         JSON.stringify({ 转之前: posBefore, 转之后: posAfter }))
 
       // 但按住**身体**仍然要能拖走窗口（别把原来的功能弄丢了）
+      //
+      // 先把光标钉到一个已知位置再按下：前面 P9f-1 为了验「把手平时看不见」
+      // 把光标挪到过 (2,2)，中间几步又各自动过光标，起点不可预测。
+      // 万一光标贴在屏幕右/下边缘，`moveCursorBy(60,40)` 会被 Windows
+      // 自己的边界钳住而不动（实测就是这么撞上一次只走了 6px 的假红）。
+      const areaDrag = await workArea()
+      await setCursor(areaDrag.x + 200, areaDrag.y + 200)
+      await sleep(150)
       const posDragBefore = await petBounds()
       await petEval(`(()=>{
         const el = document.querySelector('.petwin');
         el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, pointerId: 3, isPrimary: true, screenX: 500 }));
         return 'ok'
       })()`)
+      // 必须等主进程真正收到 pet:drag-start 再挪光标。
+      // 主进程是在收到 IPC 的那一刻读 `screen.getCursorScreenPoint()` 当基准点的；
+      // 如果光标先动、IPC 后到，基准点已经是移动后的位置，算出的位移恒为 0，
+      // 窗口纹丝不动——这条断言就会随机红（2026-11-13 实测偶发一次）。
+      await sleep(250)
       await moveCursorBy(60, 40)
       await sleep(600)
       await petEval(`(()=>{
@@ -789,6 +802,14 @@ try {
         await sleep(220)
       }
 
+      // 先等回 idle 再断言。
+      //
+      // 动作状态是渲染层的一个 useState，前面任何一段（拖动被判成点击、
+      // 或者用户此刻正在真人试玩右键菜单「打个滚」）都可能让它还在播——
+      // 那样这条会在「点之前」读到一个不是 idle 的值，看起来像代码坏了，
+      // 其实只是上一件事还没播完（2026-11-13 连跑三轮撞到过一次）。
+      // 等回 idle 之后仍然断言 idle：真要是卡在某个动作上不复位，这里照样红。
+      for (let i = 0; i < 45 && (await actionNow()) !== 'idle'; i++) await sleep(200)
       ok('P9h-0 点之前是 idle（没有残留动作）', (await actionNow()) === 'idle',
         JSON.stringify({ 实际: await actionNow() }))
 
