@@ -61,9 +61,10 @@ export const PET_SKIN_IDS = ['capsule', 'bean', 'photo'] as const
 export type PetSkinId = (typeof PET_SKIN_IDS)[number]
 
 /**
- * 桌宠出现模式（SPEC-deskpet-skin / SPEC-deskpet-out）。
- * island=只在岛里、window=独立小窗口（SPEC-deskpet-out 已实现）、free=自由走动（未做）。
- * free 存得下但不生效，设置页里显示成「还没做」。
+ * 桌宠出现模式（SPEC-deskpet-skin / SPEC-deskpet-out / SPEC-deskpet-walk）。
+ * island=只在岛里、window=独立小窗口（SPEC-deskpet-out 已实现）、
+ * free=自由走动（SPEC-deskpet-walk 已实现，在独立窗口里横向溜达、走一段停一段）。
+ * 三个值都生效，设置页三档都可选。
  */
 export const PET_MODES = ['island', 'window', 'free'] as const
 export type PetMode = (typeof PET_MODES)[number]

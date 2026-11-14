@@ -60,6 +60,31 @@ body,
   height: 100%;
 }
 
+/* ---------- 自由走动：小幅上下颠动（SPEC-deskpet-walk）---------- */
+
+/**
+ * 走动时给整只宠物一个轻微的上下颠动，看起来像在迈步。
+ *
+ * 为什么挂在 .pet-wrap 而不是 .pet-photo-img：原图皮肤的图片本身已经有
+ * `animation: petwin-photo-breathe`（缩放呼吸），两者都改 transform 会互相覆盖/打架。
+ * .pet-wrap 是三套皮肤共有的外层 span，在它上面做 translateY 位移不碰内部缩放。
+ *
+ * 只在 .walking 时生效：停下或被拖动时 class 去掉，动画随之停止、位置归零。
+ */
+.petwin.walking .pet-wrap {
+  animation: petwin-walk-bob 520ms ease-in-out infinite;
+}
+
+@keyframes petwin-walk-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
 .petwin .pet-full {
   display: block;
   width: 100%;

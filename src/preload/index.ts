@@ -160,6 +160,17 @@ const api = {
     }
   },
   /**
+   * 自由走动方向（SPEC-deskpet-walk）：主进程在方向变化 / 走停切换时推一次。
+   * 'idle' = 停下或没在走。返回取消订阅函数。
+   */
+  onPetWalk(cb: (d: 'left' | 'right' | 'idle') => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, d: 'left' | 'right' | 'idle'): void => cb(d)
+    ipcRenderer.on('pet:walk', h)
+    return () => {
+      ipcRenderer.removeListener('pet:walk', h)
+    }
+  },
+  /**
    * 音乐页（SPEC-music-page / US-031）：读当前播放快照。
    * 首次调用会懒启动主进程里的常驻 PowerShell 桥接（约 50MB），
    * 所以只在渲染层真的要显示音乐页时才调。

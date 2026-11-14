@@ -79,11 +79,15 @@ function quitApp(): void {
  * 用户原话「给右键添加一个出岛，不然每次都要点设置」。
  * 按当前 `petMode` 显示两项之一——已经出去了就显示「收回」，
  * 一个开关比一次点击更省事，也不用去菜单里找哪个是当前状态。
+ * 2026-11-14（SPEC-deskpet-walk）：free 也是「出去了」，一样显示收回。
  */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
   const hiddenByUser = manualHide
-  const petOut = getPrefs().petMode === 'window'
+  // 只有 window / free 才算「出去了」。不能写成 !== 'island'：
+  // 老用户 prefs 里没有 petMode（undefined）时那会误判成已出岛，显示「收回」。
+  const pm = getPrefs().petMode
+  const petOut = pm === 'window' || pm === 'free'
   return Menu.buildFromTemplate([
     { label: '设置…', click: () => openSettings('general') },
     { label: '页面管理…', click: () => openSettings('pages') },

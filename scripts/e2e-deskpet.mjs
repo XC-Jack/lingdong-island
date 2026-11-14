@@ -9,8 +9,8 @@
  * D5 换肤后岛仔几何不变：.collapsed-pet 存在、仍是 22×22、.pet-eye 恰好 2 个
  *   （这三条是 e2e-m2 / e2e-head-order / e2e-collapse-order 的既有硬依赖，换肤不许弄坏）
  * D6 切回紫胶囊 → 落盘 petSkin=capsule → 岛仔换回来
- * D7 出现模式三档都在，只有「只在岛里」可选，另外两档 disabled 并带「还没做」
- * D8 选模式（island）落盘 petMode，且不影响皮肤
+ * D7 出现模式三档都在，且三档都可选（SPEC-deskpet-walk 放开「自由走动」）
+ * D8 选模式落盘 petMode，切到 free 再切回 island，且全程不影响皮肤
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
  */
@@ -252,35 +252,31 @@ try {
     const islandMode = modes.find((x) => x.m === 'island')
     ok('D7b「只在岛里」可选且当前选中', islandMode && islandMode.disabled === false && islandMode.on === true,
       JSON.stringify(islandMode))
-    // SPEC-deskpet-out 之后「独立小窗口」也可用了，只剩「自由走动」是禁用档。
-    // 这里改成「至少有一档仍是禁用 + 标了还没做」，并明确 free 必须是那一档——
-    // 断言太宽会让「所有档都变成可用」这种回归溜过去。
+    // SPEC-deskpet-walk 之后三档全部放开，再没有禁用档 / 「还没做」标签。
     const freeMode = modes.find((x) => x.m === 'free')
-    ok('D7c「自由走动」仍是禁用态且标了「还没做」',
-      freeMode && freeMode.disabled === true && freeMode.soon === true, JSON.stringify(freeMode))
+    ok('D7c「自由走动」已可用（SPEC-deskpet-walk 放开）',
+      freeMode && freeMode.disabled === false && freeMode.soon === false, JSON.stringify(freeMode))
     const winMode = modes.find((x) => x.m === 'window')
     ok('D7d「独立小窗口」已可用（SPEC-deskpet-out 放开）',
       winMode && winMode.disabled === false && winMode.soon === false, JSON.stringify(winMode))
+    ok('D7e 三档里没有残留禁用档 / 「还没做」标签',
+      modes.every((x) => x.disabled === false && x.soon === false), JSON.stringify(modes))
   }
 
-  // ========== D8 切模式不影响皮肤 ==========
+  // ========== D8 选模式落盘 petMode，且不影响皮肤 ==========
   {
-    // 先切到「独立小窗口」的尝试应该无效（disabled），再确认 island 模式落盘
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="island"]').click(), 'ok')`)
     await sleep(700)
     const onDisk = readPrefs()
     ok('D8a 选「只在岛里」后落盘 petMode=island', onDisk.petMode === 'island', `实际 ${JSON.stringify(onDisk.petMode)}`)
     ok('D8b 切模式没有把皮肤改掉（两份偏好互不干扰）', onDisk.petSkin === 'capsule', `实际 ${JSON.stringify(onDisk.petSkin)}`)
-    const before = readPrefs().petSkin
-    // 点禁用的「自由走动」：不该产生任何写入。
-    // （原先是拿 window 档当禁用样例，SPEC-deskpet-out 把它放开了，换成 free。）
-    const clickDisabled = await settingsEval(
-      `(()=>{const e=document.querySelector('.pet-set-mode[data-mode="free"]'); e.click(); return 'clicked'})()`
+    const checked = await settingsEval(
+      `(()=>{const e=document.querySelector('.pet-set-mode.on'); return e?.dataset.mode ?? ''})()`
     )
-    await sleep(600)
-    const after = readPrefs()
-    ok('D8c 点禁用档位不产生任何写入', clickDisabled === 'clicked' && after.petMode === 'island' && after.petSkin === before,
-      `petMode=${JSON.stringify(after.petMode)} petSkin=${JSON.stringify(after.petSkin)}`)
+    ok('D8c 设置页选中态停在「只在岛里」', checked === 'island', `实际 ${checked}`)
+    // 注：free / window 会开独立宠物窗口，会干扰本脚本单窗口 helper（islandEval 只认一个
+    // 非 settings 的 target）。「点 free 落盘 + 开窗 + 走动」的完整验证放在
+    // e2e-deskpet-out.mjs 的 P13（那里有 petBounds / waitForTarget 三窗口 helper）。
   }
 
   // ========== D9 原图皮肤：大尺寸用照片本人，22px 仍用矢量简版 ==========

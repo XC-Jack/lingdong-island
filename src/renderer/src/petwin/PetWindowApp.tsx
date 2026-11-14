@@ -96,6 +96,8 @@ export default function PetWindowApp(): JSX.Element {
   const [action, setAction] = useState<PetAction>('idle')
   /** 播完后复位用的定时器；重播/卸载时都要清，不然一次点击会多出一个定时器 */
   const actionTimer = useRef<number | null>(null)
+  /** 自由走动方向（SPEC-deskpet-walk）：'idle' = 停下 / 没在走 */
+  const [walkDir, setWalkDir] = useState<'left' | 'right' | 'idle'>('idle')
   /** 按下时的屏幕坐标，用来判松手有没有拖动 */
   const downAt = useRef({ x: 0, y: 0 })
   /** 本次按下之后有没有真的拖动过（拖了就一定不算点击） */
@@ -207,6 +209,21 @@ export default function PetWindowApp(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 自由走动（SPEC-deskpet-walk）：主进程在方向变化 / 走停切换时推一次方向。
+  // 方向 → 视图下标：右=3(侧右)、左=1(侧左)、停=0(正面)。
+  // 直接派发皮肤层内部的 pet:turn-abs 切侧视，同时 setFacing 让 data 属性与画面一致；
+  // walkDir 控制 .walking 这个 class（CSS 上下颠动）。
+  useEffect(() => {
+    return window.island.onPetWalk((d) => {
+      setWalkDir(d)
+      const i = d === 'right' ? 3 : d === 'left' ? 1 : 0
+      setFacing(i)
+      window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: i }))
+    })
+    // 回调只用到 setState，行为稳定；依赖留空避免每次渲染重订阅。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 窗口关掉时别忘了清定时器，不然会在已卸载的组件上 setState
   useEffect(() => {
     return () => {
@@ -250,10 +267,11 @@ export default function PetWindowApp(): JSX.Element {
 
   return (
     <div
-      className={`petwin ${pressed ? 'dragging' : ''}`}
+      className={`petwin ${pressed ? 'dragging' : ''} ${walkDir !== 'idle' ? 'walking' : ''}`}
       data-pet-skin={skin}
       data-pet-facing={facing}
       data-pet-action={action}
+      data-pet-walk={walkDir}
       onPointerDown={onPointerDown}
       onPointerMove={onBodyMove}
       onPointerUp={endDrag}
