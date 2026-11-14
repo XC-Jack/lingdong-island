@@ -6,11 +6,11 @@ import Pet from '../pet/Pet'
 import { listPetSkins } from '../pet'
 
 /**
- * 设置窗口「桌宠」分区（SPEC-deskpet-skin / SPEC-deskpet-out / SPEC-deskpet-walk）。
+ * 设置窗口「桌宠」分区（SPEC-deskpet-skin / SPEC-deskpet-out / SPEC-deskpet-walk / SPEC-deskpet-walk-roam）。
  *
  * - 皮肤：三套可切换，选中立刻生效（岛、宠物窗口和这里共用 prefs.petSkin）。
  * - 模式：三档全列出来，三档都可用。window=独立小窗口（SPEC-deskpet-out），
- *   free=自由走动、在独立窗口里横向溜达走一段停一段（SPEC-deskpet-walk）。
+ *   free=自由走动、在独立窗口里随机漫步（SPEC-deskpet-walk-roam）。
  *
  * 为什么不给「保存」按钮：桌宠在另外两个窗口实时渲染，用户改完就想立刻看到效果。
  * 立刻写 + 广播回来（与页面管理分区同一套模式）。
@@ -30,7 +30,7 @@ const MODE_META: Record<PetMode, { label: string; desc: string; ready: boolean }
   },
   free: {
     label: '自由走动',
-    desc: '自己沿屏幕四条边溜达，走到边才停一会儿换下一条边，四个方向都能贴住屏幕边；拖它、点它、右键都照旧。',
+    desc: '自己在桌面上随机溜达：先贴一次边，之后每次随机换个地方（屏幕中间或靠边）斜着走过去，停多久、走多快都不固定，路线不重复；拖它、点它、右键都照旧。',
     ready: true
   }
 }
@@ -144,7 +144,7 @@ export default function DeskPetSection(): ReactElement {
           )
         })}
         <div className="pet-set-tip">
-          选「独立小窗口」后它会跑到桌面右下角，拖到哪下次就在哪；选「自由走动」它会沿屏幕四条边依次溜达，走到边贴住一会儿再换下一条边。
+          选「独立小窗口」后它会跑到桌面右下角，拖到哪下次就在哪；选「自由走动」它会先贴一次边，之后随机换地方溜达、停一会儿再走，路线不重复。
           两种模式下在它身上点右键都能收回岛里。
         </div>
       </div>

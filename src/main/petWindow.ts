@@ -57,23 +57,21 @@ let dragOrigin: { cursor: PetWindowPos; win: PetWindowPos } | null = null
 /** 退出应用的回调：菜单里的「退出灵动岛」要走 index.ts 的 quitApp（要先停各轮询） */
 let quitHandler: (() => void) | null = null
 
-// ===== 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）=====
+// ===== 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish / SPEC-deskpet-walk-roam）=====
 /** 走动定时器步长：50ms 一帧（约 20 帧/秒），够顺滑又不烧 CPU */
 const WALK_TICK_MS = 50
-/** 每帧位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
+/** 默认每帧位移（DIP）：2px × 20 帧 = 40px/秒；随机漫步每段会在 1~3px 间重新抽 */
 const WALK_STEP_PX = 2
-/** 走到边后停多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
+/** 默认停下时长（帧）：30 帧 ≈ 1.5 秒；随机漫步每段会在 10~60 帧（0.5~3 秒）间重新抽 */
 const WALK_REST_TICKS = 30
 
 /**
- * 巡边用的 4 个纯方向：右 / 下 / 左 / 上（下标也就是目标边）。
+ * 首段「贴边」用的 4 个纯方向：右 / 下 / 左 / 上（下标也就是目标边）。
  *
- * 2026-11-14 用户验收反馈：「贴边不行，哪个方向都不行，还是有距离」。
- * 根因不是边界算错——上一版每段定时换一个方向、且开局朝屏幕中心走，
- * 8 个方向每段只走 120px 就换，位移互相抵消，桌宠永远在屏幕中间绕圈，
- * 上轮加的「30px 留白越界」根本没机会被看到。
- * 改成：四条边依次当目标，朝它一直走，撞到边（真的贴住）才停一下换下一条边。
- * 斜向先去掉：斜着走会先撞一条边、另一轴还没到，看起来仍是「贴不到边」。
+ * 2026-11-14 m02126 反馈「贴边不行」后定为巡边：开局朝最近的一条边直走、
+ * 真的贴住才停，让用户几秒内看到桌宠贴到屏幕边。m02689 又反馈「一直绕屏幕
+ * 走没有什么不同」，本轮（SPEC-deskpet-walk-roam）把「停完以后」改成随机漫步：
+ * 只保留首段这一次贴边，之后换成随机目标，不再四边固定循环。
  */
 const WALK_DIRS: ReadonlyArray<{ dx: number; dy: number }> = [
   { dx: 1, dy: 0 },
@@ -84,10 +82,17 @@ const WALK_DIRS: ReadonlyArray<{ dx: number; dy: number }> = [
 
 type WalkDir = 'left' | 'right' | 'up' | 'down' | 'idle'
 
-/** 当前走动方向分量（dx / dy 各取 -1 / 0 / 1） */
+/** 当前实际移动方向的符号（供 currentWalkDir() 与拖动松手后补发用） */
 let walkVec: { dx: number; dy: number } = { dx: -1, dy: 0 }
-/** 走到第几个方向：每段 rest→run 取下一个，循环 */
+/** 首段贴边的目标边编号（0 右 / 1 下 / 2 左 / 3 上） */
 let walkSeq = 0
+/** 'edge' = 首段朝最近边直走贴住；'roam' = 之后朝随机目标漫步 */
+let walkMode: 'edge' | 'roam' = 'edge'
+/** 当前随机目标点（窗口左上角坐标）；edge 段为 null */
+let walkTarget: PetWindowPos | null = null
+/** 本段停下多少帧 / 每帧走多少 px，每段随机抽，节奏不再固定 */
+let walkRestTicks = WALK_REST_TICKS
+let walkStep = WALK_STEP_PX
 let walkTimer: NodeJS.Timeout | null = null
 let walkPhase: 'run' | 'rest' = 'run'
 let walkTicks = 0
@@ -174,25 +179,48 @@ function walkLimits(): WalkLimits {
 }
 
 /**
+ * 随机挑下一个目标点（SPEC-deskpet-walk-roam，用户 m02689「一直绕屏幕走没什么不同」）：
+ * 约三成概率把某一轴钉在边极限上（保留「偶尔也能贴边」），另一轴随机；
+ * 其余落在屏幕内部随机点。目标始终在 walkLimits() 的允许范围内。
+ * 每次停下后重新抽，路线不再固定循环。
+ */
+function pickRoamTarget(lim: WalkLimits): PetWindowPos {
+  const rx = (): number => lim.minX + Math.random() * (lim.maxX - lim.minX)
+  const ry = (): number => lim.minY + Math.random() * (lim.maxY - lim.minY)
+  if (Math.random() < 0.3) {
+    const side = Math.floor(Math.random() * 4)
+    if (side === 0) return { x: lim.maxX, y: ry() }
+    if (side === 1) return { x: lim.minX, y: ry() }
+    if (side === 2) return { x: rx(), y: lim.maxY }
+    return { x: rx(), y: lim.minY }
+  }
+  return { x: rx(), y: ry() }
+}
+
+/** 抽本段的随机节奏：停下 0.5~3 秒、每帧走 1~3px，不再固定 1.5 秒 + 40px/秒 */
+function randomizeWalkPace(): void {
+  walkRestTicks = 10 + Math.floor(Math.random() * 51)
+  walkStep = 1 + Math.floor(Math.random() * 3)
+}
+
+/**
  * 开走动：只在 free 模式、且窗口已存在时调。
  *
- * 2026-11-14 用户验收反馈「贴边不行，哪个方向都不行，还是有距离」后重写：
- * 上一版每段定时换一个方向、开局还朝屏幕中心走，8 个方向每段只走 120px 就换，
- * 位移互相抵消，桌宠永远在屏幕中间绕圈，根本走不到边——上轮加的「30px 留白
- * 越界」因此没机会被看到。现在改成「巡边」：四条边依次当目标（右→下→左→上），
- * 朝它一直走，真的贴到那条边才停 1.5 秒换下一条边。于是任意时刻桌宠都贴着
- * 某一条边（走的那一段沿边走、停下时也贴在边上），四个方向都能贴住。
+ * 2026-11-14 m02689「一直绕屏幕走没有什么不同」后改成随机漫步：
+ * 首段仍朝离当前位置最近的一条边直走、真的贴住才停（保住「两个统一，都可以碰边」
+ * 的验收语义，也让 e2e P13g 四条边运行时贴边断言成立）；贴边停下后切到 roam：
+ * 每段用 pickRoamTarget() 随机挑一个目标点（约三成贴边、其余在屏幕内部），
+ * 以随机步速朝它直走（可斜走），到了随机停一会儿再换目标，路线不再固定循环。
  *
- * 到达判定用 walkLimits() 的「桌宠图片」边界：图片上下各留 42px、左右各留 45px
- * 透明区，允许越出工作区，所以贴上边时窗口 y 可到 area.y-42，桌宠头顶正好贴屏幕上边。
+ * 位置始终在 walkLimits() 的「桌宠图片」边界内：图片上下各留 42px、左右各留 45px
+ * 透明区，允许越出工作区，贴边时窗口 y 可到 area.y-42，桌宠头顶正好贴屏幕上边。
  * 不逐帧写盘：位置只在用户拖动松手时落盘。
  */
 function startWalk(): void {
   if (walkTimer) return // 已在走，避免重复起定时器
   const win = petWindow
   if (!win || win.isDestroyed()) return
-  // 开局选「离当前位置最近、且还没贴住」的那条边当第一个目标：
-  // 朝边直走，用户几秒内就能看到桌宠真的贴到屏幕边，不用先横穿半个屏幕。
+  // 首段：选「离当前位置最近、且还没贴住」的那条边当目标，几秒内就能看到贴边
   try {
     const b = win.getBounds()
     const lim = walkLimits()
@@ -212,6 +240,9 @@ function startWalk(): void {
     walkSeq = 0
   }
   walkVec = { ...WALK_DIRS[walkSeq] }
+  walkMode = 'edge'
+  walkTarget = null
+  randomizeWalkPace()
   walkPhase = 'run'
   walkTicks = 0
   walkPaused = false
@@ -226,38 +257,63 @@ function startWalk(): void {
     const b = w.getBounds()
     if (walkPhase === 'rest') {
       walkTicks++
-      if (walkTicks >= WALK_REST_TICKS) {
+      if (walkTicks >= walkRestTicks) {
         walkPhase = 'run'
         walkTicks = 0
-        // 贴上一条边后换下一条边，四边循环：右→下→左→上
-        walkSeq = (walkSeq + 1) % WALK_DIRS.length
-        walkVec = { ...WALK_DIRS[walkSeq] }
+        randomizeWalkPace()
+        // 首段贴边完成后切到 roam，之后每段都重新随机挑目标
+        walkMode = 'roam'
+        const tgt = pickRoamTarget(walkLimits())
+        walkTarget = tgt
+        walkVec = {
+          dx: Math.sign(tgt.x - b.x),
+          dy: Math.sign(tgt.y - b.y)
+        }
         pushWalk(currentWalkDir())
       }
       return
     }
-    // run：朝当前目标边一直走；只有真的贴到那条边才停下换边
+    // run：朝当前目标（首段是边、之后是随机点）走，到了就停
     const lim = walkLimits()
-    let nx = b.x + walkVec.dx * WALK_STEP_PX
-    let ny = b.y + walkVec.dy * WALK_STEP_PX
-    let reached = false
-    switch (walkSeq) {
-      case 0:
-        reached = nx >= lim.maxX
-        if (reached) nx = lim.maxX
-        break
-      case 1:
-        reached = ny >= lim.maxY
-        if (reached) ny = lim.maxY
-        break
-      case 2:
-        reached = nx <= lim.minX
-        if (reached) nx = lim.minX
-        break
-      case 3:
-        reached = ny <= lim.minY
-        if (reached) ny = lim.minY
-        break
+    let nx: number
+    let ny: number
+    let reached: boolean
+    if (walkMode === 'edge' && walkTarget === null) {
+      // 首段贴边：沿纯方向一直走，撞到那条边才算到达
+      nx = b.x + walkVec.dx * walkStep
+      ny = b.y + walkVec.dy * walkStep
+      switch (walkSeq) {
+        case 0:
+          reached = nx >= lim.maxX
+          if (reached) nx = lim.maxX
+          break
+        case 1:
+          reached = ny >= lim.maxY
+          if (reached) ny = lim.maxY
+          break
+        case 2:
+          reached = nx <= lim.minX
+          if (reached) nx = lim.minX
+          break
+        default:
+          reached = ny <= lim.minY
+          if (reached) ny = lim.minY
+          break
+      }
+    } else {
+      // 随机漫步：朝目标点直走（可斜走），两轴距离进一帧步长内算到达
+      const tgt = walkTarget as PetWindowPos
+      const dx = tgt.x - b.x
+      const dy = tgt.y - b.y
+      const dist = Math.hypot(dx, dy)
+      reached = dist <= walkStep
+      if (reached) {
+        nx = tgt.x
+        ny = tgt.y
+      } else {
+        nx = b.x + (dx / dist) * walkStep
+        ny = b.y + (dy / dist) * walkStep
+      }
     }
     nx = Math.min(lim.maxX, Math.max(lim.minX, nx))
     ny = Math.min(lim.maxY, Math.max(lim.minY, ny))
@@ -271,7 +327,7 @@ function startWalk(): void {
     if (reached) {
       walkPhase = 'rest'
       walkTicks = 0
-      pushWalk('idle') // 停在边上转正面，让用户看清它贴住了
+      pushWalk('idle') // 停下转正面，让用户看清它到地方了
     }
   }, WALK_TICK_MS)
 }
