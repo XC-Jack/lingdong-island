@@ -11,9 +11,9 @@ import type { PetWindowPos } from '../shared/types'
  * 独立窗口才能自由摆放、记住位置、被用户拖来拖去。
  *
  * 生命周期：单例，跟着 `prefs.petMode` 走。
- * mode=window 就开着，其它值就关掉；用户在设置页改、或点宠物窗口右键「回到岛里」，
- * 都通过 `onPrefsWritten` 这条主进程内部通道统一收口，不会出现「窗口开着但偏好是 island」
- * 这种对不上的状态。
+ * mode=window / free 就开着（free 还会启动自由走动，SPEC-deskpet-walk），其它值就关掉；
+ * 用户在设置页改、或点宠物窗口右键「回到岛里」，都通过 `onPrefsWritten`
+ * 这条主进程内部通道统一收口，不会出现「窗口开着但偏好是 island」这种对不上的状态。
  */
 const PET_WIN_W = 190
 /**
@@ -48,6 +48,111 @@ let dragOrigin: { cursor: PetWindowPos; win: PetWindowPos } | null = null
 
 /** 退出应用的回调：菜单里的「退出灵动岛」要走 index.ts 的 quitApp（要先停各轮询） */
 let quitHandler: (() => void) | null = null
+
+// ===== 自由走动（SPEC-deskpet-walk）=====
+/** 走动定时器步长：50ms 一帧（约 20 帧/秒），够顺滑又不烧 CPU */
+const WALK_TICK_MS = 50
+/** 每帧横向位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
+const WALK_STEP_PX = 2
+/** 连续走多少帧后停一会儿（60 帧 ≈ 3 秒） */
+const WALK_RUN_TICKS = 60
+/** 停下多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
+const WALK_REST_TICKS = 30
+
+/** 当前走动方向：1=向右，-1=向左 */
+let walkDir: 1 | -1 = -1
+let walkTimer: NodeJS.Timeout | null = null
+let walkPhase: 'run' | 'rest' = 'run'
+let walkTicks = 0
+/** 用户正在拖窗口：冻结自动走动，免得 16ms drag 与 50ms walk 同时 setBounds 打架 */
+let walkPaused = false
+/** 最近一次推给渲染层的方向/状态（渲染层挂载后补发用） */
+let walkEmit: 'left' | 'right' | 'idle' = 'idle'
+
+type WalkDir = 'left' | 'right' | 'idle'
+
+/** 把走动方向/状态推给宠物窗口；同时记下来，窗口刚挂载时补发 */
+function pushWalk(dir: WalkDir): void {
+  walkEmit = dir
+  const win = petWindow
+  if (win && !win.isDestroyed()) win.webContents.send('pet:walk', dir)
+}
+
+/** 停走动：清定时器、复位相位、通知渲染层收起颠动；幂等 */
+function stopWalk(): void {
+  const wasWalking = walkTimer !== null
+  if (walkTimer) {
+    clearInterval(walkTimer)
+    walkTimer = null
+  }
+  walkPhase = 'run'
+  walkTicks = 0
+  walkPaused = false
+  walkEmit = 'idle'
+  // 只有确实从「走动中」停下才通知渲染层复位朝向、收起颠动。
+  // window / island 模式每次偏好写入也会走到这里：没走动时不能推 idle，
+  // 否则用户在「独立小窗口」里手动转好的朝向会被一次次强行转回正面。
+  if (wasWalking) pushWalk('idle')
+}
+
+/**
+ * 开走动：只在 free 模式、且窗口已存在时调。
+ * 每帧读当前 bounds 往 walkDir 方向挪 WALK_STEP_PX，再用 clampPetPos 钳进工作区；
+ * 「想动却没动」就是撞到左右边界，掉头。走满一段停一段，循环往复。
+ * 不逐帧写盘：位置只在用户拖动松手时由 savePos 落盘，自动走动是临时的。
+ */
+function startWalk(): void {
+  if (walkTimer) return // 已在走，避免重复起定时器
+  const win = petWindow
+  if (!win || win.isDestroyed()) return
+  // 开局方向：靠右半屏先往左、靠左半屏先往右，避免第一帧就撞边掉头
+  try {
+    const b = win.getBounds()
+    const area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
+    walkDir = b.x + PET_WIN_W / 2 >= area.x + area.width / 2 ? -1 : 1
+  } catch {
+    walkDir = -1
+  }
+  walkPhase = 'run'
+  walkTicks = 0
+  walkPaused = false
+  pushWalk(walkDir === 1 ? 'right' : 'left')
+  walkTimer = setInterval(() => {
+    const w = petWindow
+    if (!w || w.isDestroyed()) {
+      stopWalk()
+      return
+    }
+    if (walkPaused) return
+    const b = w.getBounds()
+    if (walkPhase === 'rest') {
+      walkTicks++
+      if (walkTicks >= WALK_REST_TICKS) {
+        walkPhase = 'run'
+        walkTicks = 0
+        pushWalk(walkDir === 1 ? 'right' : 'left')
+      }
+      return
+    }
+    // run：往当前方向挪一步
+    const nx = b.x + walkDir * WALK_STEP_PX
+    const clamped = clampPetPos({ x: nx, y: b.y }, PET_WIN_W, PET_WIN_H)
+    // 想动却没动 = 撞到工作区左右边界 → 掉头，下一帧再走
+    if (clamped.x === b.x && nx !== b.x) {
+      walkDir = walkDir === 1 ? -1 : 1
+      pushWalk(walkDir === 1 ? 'right' : 'left')
+    } else {
+      // 仍用 setBounds 显式带尺寸：125% 缩放下 setPosition 会让窗口越走越大（实测过）
+      w.setBounds({ x: clamped.x, y: b.y, width: PET_WIN_W, height: PET_WIN_H })
+    }
+    walkTicks++
+    if (walkTicks >= WALK_RUN_TICKS) {
+      walkPhase = 'rest'
+      walkTicks = 0
+      pushWalk('idle')
+    }
+  }, WALK_TICK_MS)
+}
 
 function stopDrag(): void {
   if (dragTimer) {
@@ -115,8 +220,15 @@ function createPetWindow(): BrowserWindow {
     win.showInactive()
   })
 
+  // 页面刚加载好时补发一次当前走动状态：startWalk 可能在渲染层还没挂上监听时就
+  // 推过一次，那次会丢；这里补一发，保证 free 模式开窗后桌宠立刻是侧身走动的样子。
+  win.webContents.on('did-finish-load', () => {
+    if (walkEmit !== 'idle') win.webContents.send('pet:walk', walkEmit)
+  })
+
   win.on('closed', () => {
     stopDrag()
+    stopWalk()
     petWindow = null
   })
 
@@ -141,6 +253,7 @@ export function openPetWindow(): void {
 /** 关闭宠物窗口（切回「只在岛里」或退出应用时调） */
 export function closePetWindow(): void {
   stopDrag()
+  stopWalk()
   if (petWindow && !petWindow.isDestroyed()) petWindow.close()
   petWindow = null
 }
@@ -151,15 +264,22 @@ export function isPetOpen(): boolean {
 }
 
 /**
- * 按当前 `petMode` 同步宠物窗口的存在（SPEC-deskpet-out 第三节第 2、3、8 条）。
+ * 按当前 `petMode` 同步宠物窗口的存在与走动（SPEC-deskpet-out 第三节第 2、3、8 条
+ * ＋ SPEC-deskpet-walk）。
  *
- * 只认 `window`：`free`（自由走动）还没做，落盘了也不该开窗——
- * 否则用户手改 prefs.json 成 free，会得到一个「开着的独立窗口但岛里也有桌宠」的怪状态。
+ * window / free 都开独立窗口；free 额外起走动定时器，window 则确保走动是停的。
+ * 其余值（island，含缺省）关窗。这样手改 prefs.json 成 free 也不会出现
+ * 「开着独立窗口但岛里也有桌宠」的怪状态。
+ *
+ * 每次偏好写入都会走到这里（onPrefsWritten），所以必须是幂等的：
+ * openPetWindow 已开就只提一下，startWalk 已在走就直接返回，stopWalk 可重复调。
  */
 export function syncPetWindow(): void {
   const mode = getPrefs().petMode ?? 'island'
-  if (mode === 'window') {
+  if (mode === 'window' || mode === 'free') {
     openPetWindow()
+    if (mode === 'free') startWalk()
+    else stopWalk()
   } else {
     closePetWindow()
   }
@@ -174,6 +294,10 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
     const win = petWindow
     if (!win || win.isDestroyed()) return
     stopDrag()
+    // 拖动期间冻结自动走动：两个定时器同时 setBounds 会互相抢位置。
+    // 同时推 idle 让渲染层收起颠动、转回正面，别一边被拖着走一边还在迈步。
+    walkPaused = true
+    if (walkTimer) pushWalk('idle')
     const cursor = screen.getCursorScreenPoint()
     const b = win.getBounds()
     dragOrigin = { cursor, win: { x: b.x, y: b.y } }
@@ -202,6 +326,11 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
   ipcMain.on('pet:drag-end', () => {
     const win = petWindow
     stopDrag()
+    walkPaused = false // 松手后恢复自动走动（非 free 模式没有 walkTimer，无副作用）
+    // 拖动时推过 idle，松手要按当前相位补回方向/停下状态，否则渲染层一直停在正面
+    if (walkTimer) {
+      pushWalk(walkPhase === 'rest' ? 'idle' : walkDir === 1 ? 'right' : 'left')
+    }
     if (!win || win.isDestroyed()) return
     const b = win.getBounds()
     savePos({ x: b.x, y: b.y })

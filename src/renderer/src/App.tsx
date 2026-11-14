@@ -2420,10 +2420,10 @@ export default function App(): React.JSX.Element {
    */
   const renderStatusItem = (k: CollapsedKey): React.JSX.Element | null => {
     if (!pagesCustom.collapsed[k]) return null
-    // 桌宠出门了（SPEC-deskpet-out）：window 模式下岛里不画它，否则会同时出现两只。
-    // 只影响渲染，不动 pagesCustom.collapsed.pet 的开关状态——切回 island 后
-    // 用户原来「岛仔显不显示」的选择原样生效。
-    if (k === 'pet' && petMode === 'window') return null
+    // 桌宠出门了（SPEC-deskpet-out / SPEC-deskpet-walk）：window 与 free 模式下
+    // 岛里都不画它，否则会同时出现两只。只影响渲染，不动 pagesCustom.collapsed.pet
+    // 的开关状态——切回 island 后用户原来「岛仔显不显示」的选择原样生效。
+    if (k === 'pet' && (petMode === 'window' || petMode === 'free')) return null
     switch (k) {
       case 'battery': {
         // 电量环（美化-01 起在默认顺序第一位）；读不到电量不渲染。

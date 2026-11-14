@@ -14,7 +14,8 @@
  * P10 重启 → 宠物窗口出现在记录的位置（±2）
  * P11 prefs 里写一个屏幕外的坐标 → 重启后被 clamp 回工作区内（不会「丢了找不回来」）
  * P12 切回「只在岛里」→ 宠物窗口消失、岛里岛仔回来、petMode 落盘 island
- * P13 点「自由走动」（禁用档）不产生任何写入
+ * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口自己横向移动、
+ *      宽度不漂移、渲染层收到方向；随后切回 island 关窗（P14 的前提是窗口关着）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
  * CDP 9321 / 主进程 inspect 9229；spawn 时 delete ELECTRON_RUN_AS_NODE。
@@ -361,8 +362,8 @@ try {
       const e = document.querySelector('.pet-set-mode[data-mode="free"]');
       return JSON.stringify({disabled: e.disabled, soon: !!e.querySelector('.pet-set-soon')})
     })()`))
-    ok('P2c「自由走动」仍是禁用 + 「还没做」（本轮不做）',
-      free.disabled === true && free.soon === true, JSON.stringify(free))
+    ok('P2c「自由走动」已可用且不再标「还没做」（SPEC-deskpet-walk 放开）',
+      free.disabled === false && free.soon === false, JSON.stringify(free))
   }
 
   // ========== P3–P8 切到独立小窗口 ==========
@@ -1340,16 +1341,63 @@ try {
     ok('P12c 岛里的岛仔回来了', count === 1, `实际 ${count}`)
   }
 
-  // ========== P13 点禁用档不写入 ==========
+  // ========== P13 自由走动（SPEC-deskpet-walk） ==========
   {
-    const before = readPrefs().petMode
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="free"]').click(), 'ok')`)
-    await sleep(800)
-    const after = readPrefs().petMode
-    ok('P13 点「自由走动」（禁用档）不产生任何写入', after === before && after === 'island',
-      `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`)
-    const hasPetWin = await hasTarget('pet')
-    ok('P13b 点禁用档也不会误开宠物窗口', hasPetWin === false, `实际 ${hasPetWin}`)
+    await waitForPrefs((p) => p.petMode === 'free', 8000, '落盘 petMode=free')
+    ok('P13a 点「自由走动」落盘 petMode=free', true)
+
+    await waitForTarget('pet', true, 15000, '宠物窗口出现')
+    ok('P13b free 模式开了独立宠物窗口', true)
+
+    // 等窗口 bounds 能读到（target 存在 ≠ 页面加载完），再量走动前后的 x。
+    let b0 = null
+    {
+      const t0 = Date.now()
+      while (Date.now() - t0 < 10000) {
+        b0 = await petBounds()
+        if (!b0.none) break
+        await sleep(150)
+      }
+    }
+    if (!b0 || b0.none) throw new Error('free 模式宠物窗口 target 有了但主进程仍找不到该窗口')
+
+    // 渲染层应收到走动方向：根 .petwin 带 .walking，且 data-pet-walk 是 left/right。
+    // 走一段（60 帧≈3 秒）后会停一段（30 帧≈1.5 秒），停下时是 idle，所以用等待式断言
+    // 抓住「曾经在走」的那一段，而不是固定 sleep 后碰运气。
+    const walking = await waitPetExpr(`(()=>{
+      const e = document.querySelector('.petwin');
+      if (!e) return '';
+      const cls = e.classList.contains('walking');
+      const dir = e.dataset.petWalk;
+      // 只在「真的在走」时返回：free 会走一段停一段，停下的那段是 idle，
+      // 等的是走的那一段，否则会抓到 rest 相位造成假红。
+      if (!cls || (dir !== 'left' && dir !== 'right')) return '';
+      return JSON.stringify({cls, dir, facing: e.dataset.petFacing})
+    })()`, { timeoutMs: 12000, gapMs: 120, label: '渲染层收到走动方向' })
+      .then((s) => { try { return JSON.parse(s) } catch { return null } })
+    ok('P13c 渲染层收到走动方向（.walking + data-pet-walk=left/right）',
+      walking && walking.cls === true && (walking.dir === 'left' || walking.dir === 'right'),
+      JSON.stringify(walking))
+    ok('P13d 走动时朝向切到侧视（data-pet-facing=1 或 3）',
+      walking && (Number(walking.facing) === 1 || Number(walking.facing) === 3),
+      JSON.stringify(walking))
+
+    await sleep(900)
+    const b1 = await petBounds()
+    ok('P13e 窗口确实在横向自己移动（x 变了）', b1.x !== b0.x,
+      `x: ${b0.x} → ${b1.x}`)
+    // 不硬写 190×250：125% 缩放下 getBounds() 返回物理像素（实测 191×251），
+    // 和 P9c 一样用「走动前后不变」判漂移——setBounds 显式带尺寸锁的就是这个。
+    ok('P13f 走动时窗口尺寸不漂移（走动前后 width/height 一致，setBounds 显式带尺寸）',
+      b1.width === b0.width && b1.height === b0.height,
+      `走动前 ${b0.width}×${b0.height} → 走动后 ${b1.width}×${b1.height}`)
+
+    // 切回 island：关掉宠物窗口，保证 P14「窗口现在关着」的前提成立。
+    await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="island"]').click(), 'ok')`)
+    await waitForPrefs((p) => p.petMode === 'island', 8000, '落盘 petMode=island')
+    await waitForTarget('pet', false, 10000, '宠物窗口关闭')
+    ok('P13g 切回「只在岛里」后宠物窗口关掉、走动停止', true)
   }
 
   // ========== P14 窗口属性：不进任务栏、置顶（验收条件 3） ==========
@@ -1359,16 +1407,24 @@ try {
     await waitForPrefs((p) => p.petMode === 'window', 8000, '落盘 petMode=window')
     await waitForTarget('pet', true, 15000, '宠物窗口出现')
     // CDP 的 target 在 loadURL 之前就存在了，此时 webContents.getURL() 还是空串，
-    // 按 URL 找窗口会找不到（实测第一次就栽在这）。等到 bounds 能读到再说。
+    // 按 URL 找窗口会找不到（实测第一次就栽在这）。等到窗口真的 show 出来再说：
+    // showInactive() 挂在 ready-to-show 上，光能读到 bounds 时可能还没显示
+    // （本轮 P13 多了一次开窗/关窗，撞进这个空档导致 visible=false 的假红）。
     {
       const t0 = Date.now()
       let got = null
       while (Date.now() - t0 < 10000) {
-        got = await petBounds()
-        if (!got.none) break
+        got = JSON.parse(await mainEval(`(()=>{
+          const { BrowserWindow } = require('electron');
+          const w = BrowserWindow.getAllWindows().find(x => (x.webContents.getURL() || '').includes('pet.html'));
+          if (!w) return JSON.stringify({ none: true });
+          const r = w.getBounds();
+          return JSON.stringify({ x: r.x, y: r.y, width: r.width, height: r.height, visible: w.isVisible() })
+        })()`))
+        if (!got.none && got.visible) break
         await sleep(150)
       }
-      if (!got || got.none) throw new Error('宠物窗口 target 有了但主进程仍找不到该窗口')
+      if (!got || got.none || !got.visible) throw new Error('宠物窗口 target 有了但主进程仍没看到可见窗口')
     }
 
     // skipTaskbar / alwaysOnTop 只有主进程能读（BrowserWindow 的 getter）
