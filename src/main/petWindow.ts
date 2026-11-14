@@ -1,6 +1,14 @@
 import { BrowserWindow, Menu, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
-import { clampPetPos, defaultPetPos, getPrefs, onPrefsWritten, patchPrefs } from './prefsStore'
+import {
+  clampPetPos,
+  defaultPetPos,
+  getPrefs,
+  onPrefsWritten,
+  patchPrefs,
+  PET_IMG_PAD_X,
+  PET_IMG_PAD_Y
+} from './prefsStore'
 import type { PetWindowPos } from '../shared/types'
 
 /**
@@ -49,27 +57,56 @@ let dragOrigin: { cursor: PetWindowPos; win: PetWindowPos } | null = null
 /** 退出应用的回调：菜单里的「退出灵动岛」要走 index.ts 的 quitApp（要先停各轮询） */
 let quitHandler: (() => void) | null = null
 
-// ===== 自由走动（SPEC-deskpet-walk）=====
+// ===== 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）=====
 /** 走动定时器步长：50ms 一帧（约 20 帧/秒），够顺滑又不烧 CPU */
 const WALK_TICK_MS = 50
-/** 每帧横向位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
+/** 每帧位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
 const WALK_STEP_PX = 2
-/** 连续走多少帧后停一会儿（60 帧 ≈ 3 秒） */
-const WALK_RUN_TICKS = 60
-/** 停下多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
+/** 走到边后停多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
 const WALK_REST_TICKS = 30
 
-/** 当前走动方向：1=向右，-1=向左 */
-let walkDir: 1 | -1 = -1
+/**
+ * 巡边用的 4 个纯方向：右 / 下 / 左 / 上（下标也就是目标边）。
+ *
+ * 2026-11-14 用户验收反馈：「贴边不行，哪个方向都不行，还是有距离」。
+ * 根因不是边界算错——上一版每段定时换一个方向、且开局朝屏幕中心走，
+ * 8 个方向每段只走 120px 就换，位移互相抵消，桌宠永远在屏幕中间绕圈，
+ * 上轮加的「30px 留白越界」根本没机会被看到。
+ * 改成：四条边依次当目标，朝它一直走，撞到边（真的贴住）才停一下换下一条边。
+ * 斜向先去掉：斜着走会先撞一条边、另一轴还没到，看起来仍是「贴不到边」。
+ */
+const WALK_DIRS: ReadonlyArray<{ dx: number; dy: number }> = [
+  { dx: 1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 0 },
+  { dx: 0, dy: -1 }
+]
+
+type WalkDir = 'left' | 'right' | 'up' | 'down' | 'idle'
+
+/** 当前走动方向分量（dx / dy 各取 -1 / 0 / 1） */
+let walkVec: { dx: number; dy: number } = { dx: -1, dy: 0 }
+/** 走到第几个方向：每段 rest→run 取下一个，循环 */
+let walkSeq = 0
 let walkTimer: NodeJS.Timeout | null = null
 let walkPhase: 'run' | 'rest' = 'run'
 let walkTicks = 0
 /** 用户正在拖窗口：冻结自动走动，免得 16ms drag 与 50ms walk 同时 setBounds 打架 */
 let walkPaused = false
 /** 最近一次推给渲染层的方向/状态（渲染层挂载后补发用） */
-let walkEmit: 'left' | 'right' | 'idle' = 'idle'
+let walkEmit: WalkDir = 'idle'
 
-type WalkDir = 'left' | 'right' | 'idle'
+/** 方向分量 → 方向名。斜向时横向优先（侧视更自然，也避开 dx/dy 相等时分不出主导） */
+function dirOf(dx: number, dy: number): WalkDir {
+  if (dx > 0) return 'right'
+  if (dx < 0) return 'left'
+  if (dy > 0) return 'down'
+  if (dy < 0) return 'up'
+  return 'idle'
+}
+function currentWalkDir(): WalkDir {
+  return dirOf(walkVec.dx, walkVec.dy)
+}
 
 /** 把走动方向/状态推给宠物窗口；同时记下来，窗口刚挂载时补发 */
 function pushWalk(dir: WalkDir): void {
@@ -96,27 +133,89 @@ function stopWalk(): void {
 }
 
 /**
+ * 走动的边界（SPEC-deskpet-walk-polish）：按「桌宠图片」算，不按整窗。
+ *
+ * 留白常量在 prefsStore.ts 的 PET_IMG_PAD_X / PET_IMG_PAD_Y，与拖动、重启用的
+ * clampPetPos() 共用一份——用户 2026-11-14 反馈「独立小窗口也碰不到边」后统一，
+ * 三个入口（拖动 / 重启 / 自动走动）不会再出现两套边界。
+ *
+ * 换算依据见 prefsStore.ts 的常量注释：窗口 190×250 里图片约左 45、右 145、
+ * 顶 42、底 208；让这段透明留白越出工作区，图片边缘正好贴住屏幕边。
+ */
+interface WalkLimits {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+interface WalkArea {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+function walkLimits(): WalkLimits {
+  const win = petWindow
+  let area: WalkArea
+  try {
+    const b = win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0 }
+    area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
+  } catch {
+    area = screen.getPrimaryDisplay().workArea
+  }
+  return {
+    // 窗口左边可越出工作区 PET_IMG_PAD_X，图片左边缘正好贴 area.x
+    minX: area.x - PET_IMG_PAD_X,
+    // 窗口右边可越出工作区 PET_IMG_PAD_X，图片右边缘正好贴 area.x+area.width
+    maxX: area.x + area.width - (PET_WIN_W - PET_IMG_PAD_X),
+    minY: area.y - PET_IMG_PAD_Y,
+    maxY: area.y + area.height - (PET_WIN_H - PET_IMG_PAD_Y)
+  }
+}
+
+/**
  * 开走动：只在 free 模式、且窗口已存在时调。
- * 每帧读当前 bounds 往 walkDir 方向挪 WALK_STEP_PX，再用 clampPetPos 钳进工作区；
- * 「想动却没动」就是撞到左右边界，掉头。走满一段停一段，循环往复。
- * 不逐帧写盘：位置只在用户拖动松手时由 savePos 落盘，自动走动是临时的。
+ *
+ * 2026-11-14 用户验收反馈「贴边不行，哪个方向都不行，还是有距离」后重写：
+ * 上一版每段定时换一个方向、开局还朝屏幕中心走，8 个方向每段只走 120px 就换，
+ * 位移互相抵消，桌宠永远在屏幕中间绕圈，根本走不到边——上轮加的「30px 留白
+ * 越界」因此没机会被看到。现在改成「巡边」：四条边依次当目标（右→下→左→上），
+ * 朝它一直走，真的贴到那条边才停 1.5 秒换下一条边。于是任意时刻桌宠都贴着
+ * 某一条边（走的那一段沿边走、停下时也贴在边上），四个方向都能贴住。
+ *
+ * 到达判定用 walkLimits() 的「桌宠图片」边界：图片上下各留 42px、左右各留 45px
+ * 透明区，允许越出工作区，所以贴上边时窗口 y 可到 area.y-42，桌宠头顶正好贴屏幕上边。
+ * 不逐帧写盘：位置只在用户拖动松手时落盘。
  */
 function startWalk(): void {
   if (walkTimer) return // 已在走，避免重复起定时器
   const win = petWindow
   if (!win || win.isDestroyed()) return
-  // 开局方向：靠右半屏先往左、靠左半屏先往右，避免第一帧就撞边掉头
+  // 开局选「离当前位置最近、且还没贴住」的那条边当第一个目标：
+  // 朝边直走，用户几秒内就能看到桌宠真的贴到屏幕边，不用先横穿半个屏幕。
   try {
     const b = win.getBounds()
-    const area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
-    walkDir = b.x + PET_WIN_W / 2 >= area.x + area.width / 2 ? -1 : 1
+    const lim = walkLimits()
+    const dist = [
+      lim.maxX - b.x, // 右
+      lim.maxY - b.y, // 下
+      b.x - lim.minX, // 左
+      b.y - lim.minY // 上
+    ]
+    let best = -1
+    for (let i = 0; i < 4; i++) {
+      if (dist[i] <= 0) continue // 已经贴住的边跳过
+      if (best < 0 || dist[i] < dist[best]) best = i
+    }
+    walkSeq = best < 0 ? 0 : best
   } catch {
-    walkDir = -1
+    walkSeq = 0
   }
+  walkVec = { ...WALK_DIRS[walkSeq] }
   walkPhase = 'run'
   walkTicks = 0
   walkPaused = false
-  pushWalk(walkDir === 1 ? 'right' : 'left')
+  pushWalk(currentWalkDir())
   walkTimer = setInterval(() => {
     const w = petWindow
     if (!w || w.isDestroyed()) {
@@ -130,26 +229,49 @@ function startWalk(): void {
       if (walkTicks >= WALK_REST_TICKS) {
         walkPhase = 'run'
         walkTicks = 0
-        pushWalk(walkDir === 1 ? 'right' : 'left')
+        // 贴上一条边后换下一条边，四边循环：右→下→左→上
+        walkSeq = (walkSeq + 1) % WALK_DIRS.length
+        walkVec = { ...WALK_DIRS[walkSeq] }
+        pushWalk(currentWalkDir())
       }
       return
     }
-    // run：往当前方向挪一步
-    const nx = b.x + walkDir * WALK_STEP_PX
-    const clamped = clampPetPos({ x: nx, y: b.y }, PET_WIN_W, PET_WIN_H)
-    // 想动却没动 = 撞到工作区左右边界 → 掉头，下一帧再走
-    if (clamped.x === b.x && nx !== b.x) {
-      walkDir = walkDir === 1 ? -1 : 1
-      pushWalk(walkDir === 1 ? 'right' : 'left')
-    } else {
-      // 仍用 setBounds 显式带尺寸：125% 缩放下 setPosition 会让窗口越走越大（实测过）
-      w.setBounds({ x: clamped.x, y: b.y, width: PET_WIN_W, height: PET_WIN_H })
+    // run：朝当前目标边一直走；只有真的贴到那条边才停下换边
+    const lim = walkLimits()
+    let nx = b.x + walkVec.dx * WALK_STEP_PX
+    let ny = b.y + walkVec.dy * WALK_STEP_PX
+    let reached = false
+    switch (walkSeq) {
+      case 0:
+        reached = nx >= lim.maxX
+        if (reached) nx = lim.maxX
+        break
+      case 1:
+        reached = ny >= lim.maxY
+        if (reached) ny = lim.maxY
+        break
+      case 2:
+        reached = nx <= lim.minX
+        if (reached) nx = lim.minX
+        break
+      case 3:
+        reached = ny <= lim.minY
+        if (reached) ny = lim.minY
+        break
     }
-    walkTicks++
-    if (walkTicks >= WALK_RUN_TICKS) {
+    nx = Math.min(lim.maxX, Math.max(lim.minX, nx))
+    ny = Math.min(lim.maxY, Math.max(lim.minY, ny))
+    // 仍用 setBounds 显式带尺寸：125% 缩放下 setPosition 会让窗口越走越大（实测过）
+    w.setBounds({
+      x: Math.round(nx),
+      y: Math.round(ny),
+      width: PET_WIN_W,
+      height: PET_WIN_H
+    })
+    if (reached) {
       walkPhase = 'rest'
       walkTicks = 0
-      pushWalk('idle')
+      pushWalk('idle') // 停在边上转正面，让用户看清它贴住了
     }
   }, WALK_TICK_MS)
 }
@@ -329,7 +451,7 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
     walkPaused = false // 松手后恢复自动走动（非 free 模式没有 walkTimer，无副作用）
     // 拖动时推过 idle，松手要按当前相位补回方向/停下状态，否则渲染层一直停在正面
     if (walkTimer) {
-      pushWalk(walkPhase === 'rest' ? 'idle' : walkDir === 1 ? 'right' : 'left')
+      pushWalk(walkPhase === 'rest' ? 'idle' : currentWalkDir())
     }
     if (!win || win.isDestroyed()) return
     const b = win.getBounds()

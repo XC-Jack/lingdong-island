@@ -12,10 +12,14 @@
  * P8  首次出现的默认位置在主屏右下（x 过了屏幕中线，y 过了中线）
  * P9  按住再松手 → prefs.json 的 petWindowPos 落盘，且等于窗口当前 bounds（±2）
  * P10 重启 → 宠物窗口出现在记录的位置（±2）
- * P11 prefs 里写一个屏幕外的坐标 → 重启后被 clamp 回工作区内（不会「丢了找不回来」）
+ * P11 prefs 里写屏幕外坐标 → 重启后 clamp 回「桌宠图片可见」范围（不会「丢了找不回来」）；
+ *      两种模式统一边界后（用户 m02392「两个统一，都可以碰边」），独立小窗口也能
+ *      贴到屏幕边：重启落点 = 图片正好贴住工作区边，真拖一次也能拖到边
  * P12 切回「只在岛里」→ 宠物窗口消失、岛里岛仔回来、petMode 落盘 island
- * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口自己横向移动、
- *      宽度不漂移、渲染层收到方向；随后切回 island 关窗（P14 的前提是窗口关着）
+ * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口在二维里自己移动
+ *      （横向+纵向都有）、方向→视图映射正确、尺寸不漂移、按「桌宠图片」留白放宽
+ *      边界且运行时真能贴到屏幕边（用户 m02126 反馈「贴边不行」后改成四条边巡边）；
+ *      随后切回 island 关窗（P14 的前提是窗口关着）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
  * CDP 9321 / 主进程 inspect 9229；spawn 时 delete ELECTRON_RUN_AS_NODE。
@@ -1312,7 +1316,7 @@ try {
     ok('P10b 重启后岛上仍然没有岛仔（模式记着了）', count === 0, `实际 ${count}`)
   }
 
-  // ========== P11 屏幕外坐标被 clamp ==========
+  // ========== P11 屏幕外坐标被 clamp（两种模式统一按「桌宠图片」算边界）==========
   {
     await stopApp(child)
     writePrefs({ petMode: 'window', petWindowPos: { x: -5000, y: -5000 } })
@@ -1320,11 +1324,52 @@ try {
     await waitForTarget('pet', true, 15000, '重启后宠物窗口出现')
     const b = await petBounds()
     area = await workArea()
-    ok('P11a 屏幕外的坐标被拉回工作区内（x 不小于工作区左边）',
-      !b.none && b.x >= area.x, JSON.stringify({ bounds: b, workArea: area }))
-    ok('P11b 也不会跑到工作区右/下边界外（整窗可见）',
-      !b.none && b.x + b.width <= area.x + area.width + 1 && b.y + b.height <= area.y + area.height + 1,
+    // 用户 m02392「两个统一，都可以碰边」后，clampPetPos 与 walkLimits 共用
+    // prefsStore.ts 的 PET_IMG_PAD_X=45 / PET_IMG_PAD_Y=42：屏幕外坐标会被拉到
+    // 「图片左边缘贴工作区左边、上边缘贴上边」的位置，而不是旧版整窗左上角 area.x/area.y。
+    ok('P11a 屏幕外坐标被拉回，且落点按桌宠图片留白算（图片正好贴上/左边）',
+      !b.none && Math.abs(b.x - (area.x - 45)) <= 2 && Math.abs(b.y - (area.y - 42)) <= 2,
+      JSON.stringify({ bounds: b, workArea: area, expect: { x: area.x - 45, y: area.y - 42 } }))
+    ok('P11b 图片可见矩形不会跑到工作区右/下边界外',
+      !b.none && b.x + b.width - 45 <= area.x + area.width + 1 && b.y + b.height - 42 <= area.y + area.height + 1,
       JSON.stringify({ bounds: b, workArea: area }))
+
+    // P11c 独立小窗口（window）拖动时也能贴边：把窗口摆到图片左边缘贴住工作区
+    // 左边的位置，再按住身体不放（不挪光标）——拖动定时器每 16ms 都会过一遍
+    // clampPetPos。统一边界会让它留在极限位；旧「整窗可见」边界会把它拉回 area.x，
+    // 那就还是用户说的「碰不到边」。
+    {
+      const t0 = Date.now()
+      while (Date.now() - t0 < 8000) {
+        try { if (await petEval(`!!document.querySelector('.petwin')`)) break } catch { /* 还在加载 */ }
+        await sleep(100)
+      }
+      // 必须用 DIP 常量 190×250，不能把 getBounds() 读回的物理像素（125% 缩放下
+      // 191×251）当 DIP 回设——那会把窗口撑大，和主进程 createPetWindow/startWalk 不一致。
+      const put = await mainEval(`(()=>{
+        const { BrowserWindow } = require('electron');
+        const w = BrowserWindow.getAllWindows().find(t=>(t.webContents.getURL()||'').includes('pet.html'));
+        if(!w) return 'no pet window';
+        w.setBounds({x:${Math.round(area.x - 45)},y:${Math.round(area.y + 100)},width:190,height:250});
+        return 'ok'
+      })()`)
+      if (put !== 'ok') throw new Error('摆窗口到左边失败：' + put)
+      await petEval(`(()=>{
+        const el=document.querySelector('.petwin');
+        el.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:9,isPrimary:true,screenX:600}));
+        return 'ok'
+      })()`)
+      await sleep(600)
+      const dragged = await petBounds()
+      await petEval(`(()=>{
+        const el=document.querySelector('.petwin');
+        el.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerId:9,isPrimary:true,screenX:600}));
+        return 'ok'
+      })()`)
+      ok('P11c 独立小窗口拖动时也能贴到屏幕边（与自由走动同一套图片边界，不会被拉回整窗可见）',
+        !dragged.none && dragged.x <= area.x - 45 + 3,
+        JSON.stringify({ dragged, expectX: area.x - 45, workArea: area }))
+    }
   }
 
   // ========== P12 切回「只在岛里」 ==========
@@ -1341,7 +1386,7 @@ try {
     ok('P12c 岛里的岛仔回来了', count === 1, `实际 ${count}`)
   }
 
-  // ========== P13 自由走动（SPEC-deskpet-walk） ==========
+  // ========== P13 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish） ==========
   {
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="free"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petMode === 'free', 8000, '落盘 petMode=free')
@@ -1350,7 +1395,7 @@ try {
     await waitForTarget('pet', true, 15000, '宠物窗口出现')
     ok('P13b free 模式开了独立宠物窗口', true)
 
-    // 等窗口 bounds 能读到（target 存在 ≠ 页面加载完），再量走动前后的 x。
+    // 等窗口 bounds 能读到（target 存在 ≠ 页面加载完），再量走动前后的坐标。
     let b0 = null
     {
       const t0 = Date.now()
@@ -1362,42 +1407,137 @@ try {
     }
     if (!b0 || b0.none) throw new Error('free 模式宠物窗口 target 有了但主进程仍找不到该窗口')
 
-    // 渲染层应收到走动方向：根 .petwin 带 .walking，且 data-pet-walk 是 left/right。
-    // 走一段（60 帧≈3 秒）后会停一段（30 帧≈1.5 秒），停下时是 idle，所以用等待式断言
-    // 抓住「曾经在走」的那一段，而不是固定 sleep 后碰运气。
-    const walking = await waitPetExpr(`(()=>{
+    const DIRS = ['left', 'right', 'up', 'down']
+    const FACE = { right: 3, left: 1, up: 2, down: 0 }
+    // 巡边（用户 m02126 反馈「贴边不行」后改）：朝一条边走到底、贴住才停
+    // 1.5 秒换下一条边，不再定时换向绕圈。停下时推 idle。用等待式抓
+    // 「真的在走」那一段，别固定 sleep 后碰运气；allow 限定关心的方向集合。
+    const readWalk = (allow) => `(()=>{
       const e = document.querySelector('.petwin');
       if (!e) return '';
       const cls = e.classList.contains('walking');
       const dir = e.dataset.petWalk;
-      // 只在「真的在走」时返回：free 会走一段停一段，停下的那段是 idle，
-      // 等的是走的那一段，否则会抓到 rest 相位造成假红。
-      if (!cls || (dir !== 'left' && dir !== 'right')) return '';
-      return JSON.stringify({cls, dir, facing: e.dataset.petFacing})
-    })()`, { timeoutMs: 12000, gapMs: 120, label: '渲染层收到走动方向' })
-      .then((s) => { try { return JSON.parse(s) } catch { return null } })
-    ok('P13c 渲染层收到走动方向（.walking + data-pet-walk=left/right）',
-      walking && walking.cls === true && (walking.dir === 'left' || walking.dir === 'right'),
-      JSON.stringify(walking))
-    ok('P13d 走动时朝向切到侧视（data-pet-facing=1 或 3）',
-      walking && (Number(walking.facing) === 1 || Number(walking.facing) === 3),
-      JSON.stringify(walking))
+      if (!cls || !${JSON.stringify(allow)}.includes(dir)) return '';
+      return JSON.stringify({cls, dir, facing: Number(e.dataset.petFacing)})
+    })()`
+    const parse = (s) => { try { return JSON.parse(s) } catch { return null } }
 
-    await sleep(900)
-    const b1 = await petBounds()
-    ok('P13e 窗口确实在横向自己移动（x 变了）', b1.x !== b0.x,
-      `x: ${b0.x} → ${b1.x}`)
-    // 不硬写 190×250：125% 缩放下 getBounds() 返回物理像素（实测 191×251），
-    // 和 P9c 一样用「走动前后不变」判漂移——setBounds 显式带尺寸锁的就是这个。
-    ok('P13f 走动时窗口尺寸不漂移（走动前后 width/height 一致，setBounds 显式带尺寸）',
-      b1.width === b0.width && b1.height === b0.height,
-      `走动前 ${b0.width}×${b0.height} → 走动后 ${b1.width}×${b1.height}`)
+    const walking = await waitPetExpr(readWalk(DIRS),
+      { timeoutMs: 15000, gapMs: 120, label: '渲染层收到走动方向' }).then(parse)
+    ok('P13c 渲染层收到走动方向（.walking + data-pet-walk ∈ 左/右/上/下）',
+      walking && walking.cls === true && DIRS.includes(walking.dir), JSON.stringify(walking))
+    ok('P13d 走动朝向与方向对应（右3/左1/上2/下0）',
+      walking && walking.facing === FACE[walking.dir], JSON.stringify(walking))
+
+    // 窗口确实在自己移动（8 秒采样，坐标有变化即可）。
+    // 不在这里强制「x 和 y 都变过」：巡边从当前位置先直达最近的一条边，
+    // 之后会沿那条边走很久（一整条屏宽约 35 秒），固定窗口里可能只有一个轴在变。
+    // 四方向 / 二维位移 / 贴边统一交给下面 P13g 的运行时四边验证，那里每条边都单独摆位重启，证据更强。
+    {
+      const seenX = new Set(), seenY = new Set(), samples = []
+      const t0 = Date.now()
+      if (!b0.none) samples.push([b0.width, b0.height])
+      while (Date.now() - t0 < 8000) {
+        const b = await petBounds()
+        if (!b.none) {
+          seenX.add(b.x); seenY.add(b.y)
+          samples.push([b.width, b.height])
+        }
+        await sleep(200)
+      }
+      ok('P13e 窗口自己移动过（x 或 y 坐标有变化）',
+        seenX.size > 1 || seenY.size > 1,
+        `x 取值 ${seenX.size} 种、y 取值 ${seenY.size} 种`)
+      // 与既有 P9c 同口径：只看「走动期间自己的波动」（max-min），不硬写 190×250、
+      // 也不跟走动前的值比。本机 125% 缩放下 getBounds() 读回 191×251 且 ±1px 舍入抖动，
+      // getSize() 同样抖；而真漂移（setPosition 老 bug）是单调 +70px 以上，用波动 ≤1 一眼可辨。
+      const ws = samples.map((s) => s[0]), hs = samples.map((s) => s[1])
+      const growW = Math.max(...ws) - Math.min(...ws)
+      const growH = Math.max(...hs) - Math.min(...hs)
+      ok('P13f 走动时窗口尺寸不漂移（全程波动 ≤1px，setBounds 显式带尺寸）',
+        samples.length >= 4 && growW <= 1 && growH <= 1,
+        `采样 ${samples.length} 次，宽波动 ${growW}px / 高波动 ${growH}px（未修时单调 +70 以上）`)
+    }
+
+    // 贴边（用户 m02126「哪个方向都不行，还是有距离」后重做）：
+    // 根因两层——①旧版每段只走 3 秒就定时换向、8 向位移互相抵消，永远绕圈走不到边；
+    // ②窗口 190×250 里桌宠图片左右各留约 45px、上下约 42px 透明区，旧版只放宽了
+    // 纵向 30px、横向一点没放宽。现在是「巡边」：朝一条边走到底、贴住才停 1.5 秒换下一条边。
+    // 用户 m02392「两个统一，都可以碰边」后，留白常量提到 prefsStore.ts 的
+    // PET_IMG_PAD_X/Y，clampPetPos（拖动/重启）与 walkLimits（自动走动）共用一份。
+    // 上一版 P13g 只查源码字符串就报绿，正是「假绿」的来源：这轮改成运行时真量窗口坐标。
+    const walkSrc = readFileSync(join(ROOT, 'src', 'main', 'petWindow.ts'), 'utf8')
+    const prefsSrc = readFileSync(join(ROOT, 'src', 'main', 'prefsStore.ts'), 'utf8')
+    ok('P13g 两个模式共用 prefsStore 的图片留白常量（PET_IMG_PAD_X/Y，clampPetPos 与 walkLimits 同一套）',
+      /PET_IMG_PAD_X\s*=\s*45/.test(prefsSrc) && /PET_IMG_PAD_Y\s*=\s*42/.test(prefsSrc) &&
+        /Math\.max\(area\.x\s*-\s*PET_IMG_PAD_X/.test(prefsSrc) &&
+        /minX:\s*area\.x\s*-\s*PET_IMG_PAD_X/.test(walkSrc) &&
+        /maxX:\s*area\.x\s*\+\s*area\.width\s*-\s*\(PET_WIN_W\s*-\s*PET_IMG_PAD_X\)/.test(walkSrc) &&
+        /minY:\s*area\.y\s*-\s*PET_IMG_PAD_Y/.test(walkSrc) &&
+        /maxY:\s*area\.y\s*\+\s*area\.height\s*-\s*\(PET_WIN_H\s*-\s*PET_IMG_PAD_Y\)/.test(walkSrc),
+      '源码 prefsStore.ts + petWindow.ts')
+
+    // 运行时验证：把窗口摆到离某条边约 60px 处，重启走动（window→free 会 stopWalk→
+    // startWalk 重新选最近的边当目标），等它真的走到那条边的极限坐标。四条边各测一次，
+    // 覆盖用户说的「哪个方向都不行」；顺带在每条边证明方向与朝向、并累积二维位移。
+    // 不重启整个 app，设置窗口一直在，P13h 还能点。
+    const wa = await workArea()
+    const midX = wa.x + wa.width / 2 - 95
+    const midY = wa.y + wa.height / 2 - 125
+    const edges = [
+      { name: '左', dir: 'left', x: wa.x + 60, y: midY, hit: (b) => b.x <= wa.x - 45 + 3 },
+      { name: '右', dir: 'right', x: wa.x + wa.width - 190 - 60, y: midY, hit: (b) => b.x >= wa.x + wa.width - 145 - 3 },
+      { name: '上', dir: 'up', x: midX, y: wa.y + 60, hit: (b) => b.y <= wa.y - 42 + 3 },
+      { name: '下', dir: 'down', x: midX, y: wa.y + wa.height - 250 - 60, hit: (b) => b.y >= wa.y + wa.height - 208 - 3 }
+    ]
+    const setMode = (m) => settingsEval(
+      `(async()=>{ await window.island.prefsSet({ petMode: '${m}' }); return 'ok' })()`
+    )
+    // 同 P11c：setBounds 的尺寸一律用 DIP 常量 190×250，不把 getBounds() 读回的
+    // 物理像素（125% 缩放下 191×251）回设，否则窗口会被越撑越大。
+    const movePet = (x, y) => mainEval(`(()=>{
+      const { BrowserWindow } = require('electron');
+      const w = BrowserWindow.getAllWindows().find(t => (t.webContents.getURL()||'').includes('pet.html'));
+      if (!w) return 'no pet window';
+      w.setBounds({ x: ${Math.round(x)}, y: ${Math.round(y)}, width: 190, height: 250 });
+      return 'ok'
+    })()`)
+    const seenX = new Set(), seenY = new Set()
+    for (const e of edges) {
+      await setMode('window')          // stopWalk()，窗口仍开着
+      const moved = await movePet(e.x, e.y)
+      if (moved !== 'ok') throw new Error('挪窗口失败：' + moved)
+      const start = await petBounds()
+      await setMode('free')            // startWalk()，从新位置选最近的边
+
+      // 该边对应的方向与朝向（右3/左1/上2/下0）真的推到了渲染层
+      const wdir = await waitPetExpr(readWalk([e.dir]),
+        { timeoutMs: 8000, gapMs: 100, label: `${e.name}边走动方向` }).then(parse)
+      ok(`P13g-${e.name}-dir 走到${e.name}边时方向=${e.dir}、朝向=${FACE[e.dir]}`,
+        wdir && wdir.cls === true && wdir.dir === e.dir && wdir.facing === FACE[e.dir],
+        JSON.stringify(wdir))
+
+      let hit = null
+      const t0 = Date.now()
+      while (Date.now() - t0 < 12000) {
+        const b = await petBounds()
+        if (!b.none) { seenX.add(b.x); seenY.add(b.y) }
+        if (!b.none && e.hit(b)) { hit = b; break }
+        await sleep(100)
+      }
+      ok(`P13g-${e.name} 运行时真贴到${e.name}边（窗口坐标到达按图片留白算出的极限）`,
+        hit !== null && !start.none,
+        JSON.stringify({ start, hit, workArea: wa }))
+    }
+    ok('P13d2 四个方向都走过（含上/下纵向），不再只会左右走',
+      seenX.size > 1 && seenY.size > 1,
+      `x 取值 ${seenX.size} 种、y 取值 ${seenY.size} 种`)
 
     // 切回 island：关掉宠物窗口，保证 P14「窗口现在关着」的前提成立。
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="island"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petMode === 'island', 8000, '落盘 petMode=island')
     await waitForTarget('pet', false, 10000, '宠物窗口关闭')
-    ok('P13g 切回「只在岛里」后宠物窗口关掉、走动停止', true)
+    ok('P13h 切回「只在岛里」后宠物窗口关掉、走动停止', true)
   }
 
   // ========== P14 窗口属性：不进任务栏、置顶（验收条件 3） ==========

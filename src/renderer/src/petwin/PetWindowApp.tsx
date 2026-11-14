@@ -97,7 +97,7 @@ export default function PetWindowApp(): JSX.Element {
   /** 播完后复位用的定时器；重播/卸载时都要清，不然一次点击会多出一个定时器 */
   const actionTimer = useRef<number | null>(null)
   /** 自由走动方向（SPEC-deskpet-walk）：'idle' = 停下 / 没在走 */
-  const [walkDir, setWalkDir] = useState<'left' | 'right' | 'idle'>('idle')
+  const [walkDir, setWalkDir] = useState<'left' | 'right' | 'up' | 'down' | 'idle'>('idle')
   /** 按下时的屏幕坐标，用来判松手有没有拖动 */
   const downAt = useRef({ x: 0, y: 0 })
   /** 本次按下之后有没有真的拖动过（拖了就一定不算点击） */
@@ -209,14 +209,16 @@ export default function PetWindowApp(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 自由走动（SPEC-deskpet-walk）：主进程在方向变化 / 走停切换时推一次方向。
-  // 方向 → 视图下标：右=3(侧右)、左=1(侧左)、停=0(正面)。
-  // 直接派发皮肤层内部的 pet:turn-abs 切侧视，同时 setFacing 让 data 属性与画面一致；
+  // 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）：
+  // 主进程在方向变化 / 走停切换时推一次方向（巡边后只有四个纯方向 + idle，无斜向）。
+  // 方向 → 视图下标：右=3(侧右)、左=1(侧左)、上=2(背面)、下=0(正面)、停=0(正面)。
+  // 直接派发皮肤层内部的 pet:turn-abs 切视图，同时 setFacing 让 data 属性与画面一致；
   // walkDir 控制 .walking 这个 class（CSS 上下颠动）。
   useEffect(() => {
     return window.island.onPetWalk((d) => {
       setWalkDir(d)
-      const i = d === 'right' ? 3 : d === 'left' ? 1 : 0
+      const i =
+        d === 'right' ? 3 : d === 'left' ? 1 : d === 'up' ? 2 : 0
       setFacing(i)
       window.dispatchEvent(new CustomEvent('pet:turn-abs', { detail: i }))
     })
