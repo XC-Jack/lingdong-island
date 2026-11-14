@@ -209,8 +209,8 @@ export default function PetWindowApp(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）：
-  // 主进程在方向变化 / 走停切换时推一次方向（巡边后只有四个纯方向 + idle，无斜向）。
+  // 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish / SPEC-deskpet-walk-roam）：
+  // 主进程在方向变化 / 走停切换时推一次方向（随机漫步可斜走，斜向已按主导分量归到四方向之一 + idle）。
   // 方向 → 视图下标：右=3(侧右)、左=1(侧左)、上=2(背面)、下=0(正面)、停=0(正面)。
   // 直接派发皮肤层内部的 pet:turn-abs 切视图，同时 setFacing 让 data 属性与画面一致；
   // walkDir 控制 .walking 这个 class（CSS 上下颠动）。

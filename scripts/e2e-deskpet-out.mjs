@@ -18,7 +18,8 @@
  * P12 切回「只在岛里」→ 宠物窗口消失、岛里岛仔回来、petMode 落盘 island
  * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口在二维里自己移动
  *      （横向+纵向都有）、方向→视图映射正确、尺寸不漂移、按「桌宠图片」留白放宽
- *      边界且运行时真能贴到屏幕边（用户 m02126 反馈「贴边不行」后改成四条边巡边）；
+ *      边界且运行时真能贴到屏幕边（用户 m02126 反馈「贴边不行」后改成首段朝最近边贴住，
+ *      m02689 反馈「一直绕屏幕走没变化」后首段之后改随机漫步，首段贴边语义保留）；
  *      随后切回 island 关窗（P14 的前提是窗口关着）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
@@ -1386,7 +1387,7 @@ try {
     ok('P12c 岛里的岛仔回来了', count === 1, `实际 ${count}`)
   }
 
-  // ========== P13 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish） ==========
+  // ========== P13 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish / SPEC-deskpet-walk-roam） ==========
   {
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="free"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petMode === 'free', 8000, '落盘 petMode=free')
@@ -1409,9 +1410,9 @@ try {
 
     const DIRS = ['left', 'right', 'up', 'down']
     const FACE = { right: 3, left: 1, up: 2, down: 0 }
-    // 巡边（用户 m02126 反馈「贴边不行」后改）：朝一条边走到底、贴住才停
-    // 1.5 秒换下一条边，不再定时换向绕圈。停下时推 idle。用等待式抓
-    // 「真的在走」那一段，别固定 sleep 后碰运气；allow 限定关心的方向集合。
+    // 随机漫步（SPEC-deskpet-walk-roam）：首段仍朝最近一条边直走、贴住才停
+    // （保留 m02126 贴边验收语义），之后每段随机换目标，停下时推 idle。
+    // 用等待式抓「真的在走」那一段，别固定 sleep 后碰运气；allow 限定关心的方向集合。
     const readWalk = (allow) => `(()=>{
       const e = document.querySelector('.petwin');
       if (!e) return '';
@@ -1430,8 +1431,7 @@ try {
       walking && walking.facing === FACE[walking.dir], JSON.stringify(walking))
 
     // 窗口确实在自己移动（8 秒采样，坐标有变化即可）。
-    // 不在这里强制「x 和 y 都变过」：巡边从当前位置先直达最近的一条边，
-    // 之后会沿那条边走很久（一整条屏宽约 35 秒），固定窗口里可能只有一个轴在变。
+    // 不在这里强制「x 和 y 都变过」：首段先直达最近的一条边，固定窗口里可能只有一个轴在变。
     // 四方向 / 二维位移 / 贴边统一交给下面 P13g 的运行时四边验证，那里每条边都单独摆位重启，证据更强。
     {
       const seenX = new Set(), seenY = new Set(), samples = []
@@ -1462,7 +1462,8 @@ try {
     // 贴边（用户 m02126「哪个方向都不行，还是有距离」后重做）：
     // 根因两层——①旧版每段只走 3 秒就定时换向、8 向位移互相抵消，永远绕圈走不到边；
     // ②窗口 190×250 里桌宠图片左右各留约 45px、上下约 42px 透明区，旧版只放宽了
-    // 纵向 30px、横向一点没放宽。现在是「巡边」：朝一条边走到底、贴住才停 1.5 秒换下一条边。
+    // 纵向 30px、横向一点没放宽。现在首段仍朝最近一条边走到底、贴住才停（保贴边），
+    // 之后改随机漫步（m02689 嫌绕圈没变化）。
     // 用户 m02392「两个统一，都可以碰边」后，留白常量提到 prefsStore.ts 的
     // PET_IMG_PAD_X/Y，clampPetPos（拖动/重启）与 walkLimits（自动走动）共用一份。
     // 上一版 P13g 只查源码字符串就报绿，正是「假绿」的来源：这轮改成运行时真量窗口坐标。
@@ -1532,6 +1533,49 @@ try {
     ok('P13d2 四个方向都走过（含上/下纵向），不再只会左右走',
       seenX.size > 1 && seenY.size > 1,
       `x 取值 ${seenX.size} 种、y 取值 ${seenY.size} 种`)
+
+    // 随机漫步（用户 m02689「一直绕屏幕走没什么不同」）：
+    // ①源码断言——随机目标 / 随机停顿与步速 / roam 模式都在，固定四边循环已删。
+    ok('P13i 走动逻辑含随机漫步（pickRoamTarget / Math.random / 随机停顿与步速 / roam 模式）',
+      /function pickRoamTarget\(/.test(walkSrc) &&
+        /Math\.random\(\)/.test(walkSrc) &&
+        /function randomizeWalkPace\(/.test(walkSrc) &&
+        /walkRestTicks\s*=\s*10\s*\+/.test(walkSrc) &&
+        /walkStep\s*=\s*1\s*\+/.test(walkSrc) &&
+        /walkMode\s*=\s*'roam'/.test(walkSrc) &&
+        /Math\.hypot\(dx, dy\)/.test(walkSrc),
+      '源码 src/main/petWindow.ts')
+    ok('P13i2 不再有四边固定循环（(walkSeq + 1) % WALK_DIRS.length 已删）',
+      !/\(walkSeq\s*\+\s*1\)\s*%\s*WALK_DIRS\.length/.test(walkSrc),
+      '源码 src/main/petWindow.ts')
+
+    // ②运行时证据：把窗口摆到屏幕左上角附近重新走，首段贴边后随机漫步会
+    // 出现「斜走段」（相邻两次采样 x 与 y 同时变）或「屏幕内部停留点」，
+    // 这两样在旧版「沿四条边纯方向走」里都不会出现。
+    {
+      await setMode('window')
+      await movePet(wa.x + 70, wa.y + 70)
+      await setMode('free')
+      let diagonal = false
+      let interior = false
+      let prev = null
+      const t0 = Date.now()
+      while (Date.now() - t0 < 18000) {
+        const b = await petBounds()
+        if (!b.none) {
+          const insideX = b.x > wa.x - 45 + 20 && b.x < wa.x + wa.width - 145 - 20
+          const insideY = b.y > wa.y - 42 + 20 && b.y < wa.y + wa.height - 208 - 20
+          if (insideX && insideY) interior = true
+          if (prev && b.x !== prev.x && b.y !== prev.y) diagonal = true
+          prev = { x: b.x, y: b.y }
+          if (diagonal || interior) break
+        }
+        await sleep(150)
+      }
+      ok('P13j 运行时路线不再固定绕边（出现斜走段或屏幕内部停留点）',
+        diagonal || interior,
+        `diagonal=${diagonal} interior=${interior}`)
+    }
 
     // 切回 island：关掉宠物窗口，保证 P14「窗口现在关着」的前提成立。
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="island"]').click(), 'ok')`)

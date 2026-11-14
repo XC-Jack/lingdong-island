@@ -160,9 +160,9 @@ const api = {
     }
   },
   /**
-   * 自由走动方向（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）：
-   * 主进程在方向变化 / 走停切换时推一次，四方向 + idle（巡边后不再有斜向）。
-   * 'idle' = 贴住某条边停下或没在走。返回取消订阅函数。
+   * 自由走动方向（SPEC-deskpet-walk / SPEC-deskpet-walk-polish / SPEC-deskpet-walk-roam）：
+   * 主进程在方向变化 / 走停切换时推一次，四方向 + idle（随机漫步可斜走，斜向按主导分量归到某一视图）。
+   * 'idle' = 走到目标停下或没在走。返回取消订阅函数。
    */
   onPetWalk(cb: (d: 'left' | 'right' | 'up' | 'down' | 'idle') => void): () => void {
     const h = (
