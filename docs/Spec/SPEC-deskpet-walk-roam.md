@@ -94,3 +94,5 @@
 ## 验收记录
 
 （留空：按批攒独立验收，本轮不做）
+
+交付流水（非独立验收，实现阶段口径说明）：用户 m02873「可以」＝预览版验收通过 → 合并回 `main`（`d85c5c2`）→ 用户单独确认「现在就装（推荐）」→ 双镜像 `npm run dist`（首次 7-Zip `Can't allocate required memory!`，释放内存后重试 DIST_EXIT=0）→ 静默安装到 `D:\软件\灵动岛\` → 安装版 asar **10936247 B** / SHA256 `1A1D6EC5F5CBD9915F2D4F601C04B15A09407EB5FEC55DE78914DD33A39B52D1`，包内 UTF8 命中 `pickRoamTarget` / `randomizeWalkPace` / `walkMode` / `Math.random` ⇒ 新代码确实进包。上面「未核验边界」与六.7 的「不合并/不打包/不装机」均指自检阶段的实现口径；交付以后续 `docs/状态.md`（21:26 一句话状态）为准。
