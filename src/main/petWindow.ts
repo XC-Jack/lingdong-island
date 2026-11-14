@@ -1,6 +1,14 @@
 import { BrowserWindow, Menu, ipcMain, screen } from 'electron'
 import { join } from 'node:path'
-import { clampPetPos, defaultPetPos, getPrefs, onPrefsWritten, patchPrefs } from './prefsStore'
+import {
+  clampPetPos,
+  defaultPetPos,
+  getPrefs,
+  onPrefsWritten,
+  patchPrefs,
+  PET_IMG_PAD_X,
+  PET_IMG_PAD_Y
+} from './prefsStore'
 import type { PetWindowPos } from '../shared/types'
 
 /**
@@ -127,27 +135,13 @@ function stopWalk(): void {
 /**
  * 走动的边界（SPEC-deskpet-walk-polish）：按「桌宠图片」算，不按整窗。
  *
- * 用户 2026-11-14 验收反馈：「透明窗口有点大，碰不到桌面端边界」「贴边不行，
- * 哪个方向都不行，还是有距离」。窗口 190×250 里真正有画面的只有中间一小块：
- *  - SVG viewBox 160×160，xMidYMid meet 铺进 190×250 → 内容区 190×190 居中，
- *    上下各 30px 透明留白；
- *  - 图片本身（skinPhoto.tsx：PAD_TOP=10、IMG_H=140、正面比例 310/515）
- *    在 160 画布里只是中间约 84 宽、140 高的一块，左右又各留约 38 画布单位。
- * 换算到窗口像素：scale = 190/160 = 1.1875，y 偏移 30 →
- *    图片左 ≈ 45、右 ≈ 145、顶 ≈ 42、底 ≈ 208（窗口像素）。
- * 也就是说按整窗贴边，桌宠**看起来**离屏幕左右边还差约 45px、上下约 42px。
+ * 留白常量在 prefsStore.ts 的 PET_IMG_PAD_X / PET_IMG_PAD_Y，与拖动、重启用的
+ * clampPetPos() 共用一份——用户 2026-11-14 反馈「独立小窗口也碰不到边」后统一，
+ * 三个入口（拖动 / 重启 / 自动走动）不会再出现两套边界。
  *
- * 所以边界要放宽：让这些透明留白越出工作区，图片边缘正好贴住屏幕边。
- * 下面两个 WALK_PAD_* 就是图片在窗口内的留白（取正面视图，停下会转回正面）。
- *
- * 注意：这里只用于「自动走动」；拖动 / 重启仍走 prefsStore.clampPetPos 的
- * 「整窗可见」约束（e2e-deskpet-out 的 P11b 断言），不共用一套边界。
+ * 换算依据见 prefsStore.ts 的常量注释：窗口 190×250 里图片约左 45、右 145、
+ * 顶 42、底 208；让这段透明留白越出工作区，图片边缘正好贴住屏幕边。
  */
-/** 图片左右各留白（窗口像素，正面视图换算，见上） */
-const WALK_PAD_X = 45
-/** 图片上下各留白（窗口像素，含 SVG 居中的 30 + 画布内 12，见上） */
-const WALK_PAD_Y = 42
-
 interface WalkLimits {
   minX: number
   maxX: number
@@ -170,12 +164,12 @@ function walkLimits(): WalkLimits {
     area = screen.getPrimaryDisplay().workArea
   }
   return {
-    // 窗口左边可越出工作区 WALK_PAD_X，图片左边缘正好贴 area.x
-    minX: area.x - WALK_PAD_X,
-    // 窗口右边可越出工作区 WALK_PAD_X，图片右边缘正好贴 area.x+area.width
-    maxX: area.x + area.width - (PET_WIN_W - WALK_PAD_X),
-    minY: area.y - WALK_PAD_Y,
-    maxY: area.y + area.height - (PET_WIN_H - WALK_PAD_Y)
+    // 窗口左边可越出工作区 PET_IMG_PAD_X，图片左边缘正好贴 area.x
+    minX: area.x - PET_IMG_PAD_X,
+    // 窗口右边可越出工作区 PET_IMG_PAD_X，图片右边缘正好贴 area.x+area.width
+    maxX: area.x + area.width - (PET_WIN_W - PET_IMG_PAD_X),
+    minY: area.y - PET_IMG_PAD_Y,
+    maxY: area.y + area.height - (PET_WIN_H - PET_IMG_PAD_Y)
   }
 }
 

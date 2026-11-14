@@ -140,11 +140,32 @@ function normalizePetWindowPos(v: unknown): PetWindowPos | undefined {
 }
 
 /**
- * 把桌宠窗口坐标拉回「当前显示器工作区内」（SPEC-deskpet-out）。
+ * 桌宠图片在 190×250 窗口内的透明留白（窗口像素）。
+ *
+ * 来源 [已核验]：`src/renderer/src/pet/skinPhoto.tsx:45–63,339–358` 的 SVG
+ * viewBox 160×160、PAD_TOP=10、IMG_H=140、正面比例 310/515；
+ * `src/renderer/src/petwin/petwin.css` 把 190×190 内容区居中、上下各留 30px。
+ * scale = 190/160 = 1.1875，换算图片在窗口内约左 45、右 145、顶 42、底 208。
+ *
+ * 2026-11-14 用户反馈「独立小窗口也碰不到边」（m02380/m02389）后，
+ * 自由走动与独立小窗口统一改用这两个值算边界：让留白越出工作区，
+ * 图片边缘正好贴住屏幕边。两个模式共用一份常量，不会再出现两套边界。
+ */
+export const PET_IMG_PAD_X = 45
+export const PET_IMG_PAD_Y = 42
+
+/**
+ * 把桌宠窗口坐标钳到「桌宠图片可见」的范围（SPEC-deskpet-out ／
+ * SPEC-deskpet-walk-polish 统一边界）。
  *
  * 为什么需要：坐标是绝对值，用户拔掉副屏、改分辨率、或者手改 prefs.json
  * 都可能留下一个屏幕外的坐标。不 clamp 的话窗口开在看不见的地方，
  * 用户会以为「桌宠丢了」且再也点不到它。
+ *
+ * 按「桌宠图片」算而不是「整窗」：窗口四周有 PET_IMG_PAD_* 的透明留白，
+ * 按整窗钳进工作区时桌宠看起来离屏幕边还差一截（用户反馈「碰不到边」）。
+ * 允许这段留白越出工作区，图片边缘正好贴住屏幕边；拖动、重启、自动走动
+ * 三种入口都走这里（自动走动的 walkLimits 用同一组常量算 min/max）。
  *
  * 落在哪块屏：取离该坐标最近的显示器（`getDisplayNearestPoint`），
  * 而不是主显示器——用户把宠物拖到副屏，重启后应该还在副屏。
@@ -158,8 +179,8 @@ export function clampPetPos(pos: PetWindowPos, w: number, h: number): PetWindowP
     area = screen.getPrimaryDisplay().workArea
   }
   return {
-    x: Math.round(Math.min(area.x + area.width - w, Math.max(area.x, pos.x))),
-    y: Math.round(Math.min(area.y + area.height - h, Math.max(area.y, pos.y)))
+    x: Math.round(Math.min(area.x + area.width - (w - PET_IMG_PAD_X), Math.max(area.x - PET_IMG_PAD_X, pos.x))),
+    y: Math.round(Math.min(area.y + area.height - (h - PET_IMG_PAD_Y), Math.max(area.y - PET_IMG_PAD_Y, pos.y)))
   }
 }
 
