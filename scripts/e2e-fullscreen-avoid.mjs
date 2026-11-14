@@ -9,7 +9,7 @@
  * （多行 here-string 嵌套必炸）；③透明无边框窗口有 MainWindowHandle（非 0）。
  */
 import { spawn } from './isolate-userdata.mjs'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -235,6 +235,18 @@ try {
   fullWin2.kill()
   ok('A7 全屏横幅临时现身+结束回隐', v7a === true && v7b === false,
     `show=${v7a} backHide=${v7b}`)
+
+  // A8 后台轮询降频（SPEC-perf-poll-throttle）：源码断言自适应调度确实落地。
+  // 只看源码，不依赖时序；运行时 spawn 频率下降由预览版实测单独覆盖。
+  const watchSrc = readFileSync(join(ROOT, 'src', 'main', 'fullscreenWatch.ts'), 'utf8')
+  ok('A8 全屏轮询已改为自适应（常态 1s / 避让 2s / 手动隐藏停，不再固定 setInterval 1s）',
+    /WATCH_INTERVAL_NORMAL_MS\s*=\s*1000/.test(watchSrc) &&
+    /WATCH_INTERVAL_AVOIDED_MS\s*=\s*2000/.test(watchSrc) &&
+    /function scheduleNextPoll|const scheduleNextPoll/.test(watchSrc) &&
+    /setTimeout\(pollOnce,\s*delay\)/.test(watchSrc) &&
+    /pollStopped/.test(watchSrc) &&
+    !/setInterval\(pollOnce,\s*WATCH_INTERVAL_MS\)/.test(watchSrc),
+    '源码 src/main/fullscreenWatch.ts')
 } catch (err) {
   console.error('e2e error:', err)
 } finally {

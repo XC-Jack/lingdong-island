@@ -8,7 +8,8 @@ import { BrowserWindow, ipcMain, screen } from 'electron'
  *  - avoided   前台窗口全屏/最大化占满屏幕 → 岛 hide()，摸顶边临时唤回
  *  - manual    用户从菜单选了「暂时隐藏」→ 岛 hide()，摸边无效；托盘点击恢复
  *
- * 全屏判定：每 1s spawn 一个短命 PowerShell 子进程，输出一行 fullscreen|normal。
+ * 全屏判定：自适应间隔 spawn 一个短命 PowerShell 子进程，输出一行 fullscreen|normal
+ * （SPEC-perf-poll-throttle：常态 1s、全屏避让 2s、手动隐藏暂停，避免小工具在游戏/办公时反复空转）。
  * 判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来
  * （2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
  *   1. DWM 已 cloak（不可见）的 Shell 窗口，典型是 TextInputHost 的
@@ -30,8 +31,11 @@ import { BrowserWindow, ipcMain, screen } from 'electron'
 const EDGE_HEIGHT = 4
 /** 全屏判定的去抖延迟：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁 */
 const DEBOUNCE_MS = 300
-/** 检测脚本轮询周期（脚本侧） */
-const WATCH_INTERVAL_MS = 1000
+/** 检测脚本轮询周期（SPEC-perf-poll-throttle）：
+ * 常态保持 1s（进全屏响应不变）；已进入全屏避让后前台长时间不会变，降到 2s；
+ * 手动隐藏时完全停掉 spawn（commit 里 manual 本来就 return，判定无意义）。 */
+const WATCH_INTERVAL_NORMAL_MS = 1000
+const WATCH_INTERVAL_AVOIDED_MS = 2000
 /** 现身期间光标轮询回隐的周期 */
 const CURSOR_WATCH_INTERVAL_MS = 400
 /** 感应窗实际高度：Windows 对顶层窗口有最小尺寸约束（SM_CXMINTRACK/SM_CYMINTRACK），
@@ -56,6 +60,11 @@ let edgeWindow: BrowserWindow | null = null
 let lastFullscreen = false
 /** 摸边探测 interval 集合（退出时统一清） */
 const probeTimers = new Set<NodeJS.Timeout>()
+/** 自适应轮询的递归定时器（SPEC-perf-poll-throttle）：不用固定 setInterval，
+ * 每轮结束后按当前状态决定下一轮延迟（normal 1s / avoided 2s / manual 不排）。 */
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+/** 退出标志：防止在途子进程的 finish() 在 stop 之后又排下一轮 */
+let pollStopped = false
 
 /** 检测脚本文本（内嵌，不落盘）。单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（实测）。
  * C# 双引号在 PS 双引号字符串里用 `" 转义（实测 got=True 验证过）。
@@ -124,6 +133,7 @@ function watchScript(): string {
 
 export function initFullscreenWatch(getMain: () => BrowserWindow | null, onStateChange: (hidden: boolean) => void): void {
   const { spawn } = require('node:child_process') as typeof import('node:child_process')
+  pollStopped = false // 上次 stop 可能置过 true，重新初始化要复位（SPEC-perf-poll-throttle）
 
   /** 摸边/避让恢复共用的现身动作。
    * 实测踩坑（US-041）：hide 过的窗口 showInactive 单独调用不保证回到最高层——
@@ -177,20 +187,36 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
         if (state === 'normal') {
           state = 'avoided'
           apply(true)
+          scheduleNextPoll() // 切到避让态：立刻按 2s 档重排，不等当前那轮 1s 定时器
         }
       } else if (state === 'avoided' && !tempVisible && !bannerHold) {
         state = 'normal'
         apply(false)
+        scheduleNextPoll() // 回到常态：立刻按 1s 档重排
       }
     }, DEBOUNCE_MS)
   }
 
-  /** 单发轮询：每 WATCH_INTERVAL_MS spawn 一个短命 PS 查一次前台窗口，读完整输出退出。
+  /** 自适应轮询调度（SPEC-perf-poll-throttle）：
+   * 每轮单发 PS 结束后按当前状态排下一轮——normal 1s（进全屏响应不变）、
+   * avoided 2s（全屏时前台长时间不变，别反复空转）、manual 不排（commit 里 manual 本来就 return）。
+   * 不用固定 setInterval：状态一变，下一轮就用新节奏；也避免在 avoided/manual 下按 1s 反复 spawn。 */
+  const scheduleNextPoll = (): void => {
+    if (pollTimer) {
+      clearTimeout(pollTimer)
+      pollTimer = null
+    }
+    if (pollStopped || state === 'manual') return
+    const delay = state === 'avoided' ? WATCH_INTERVAL_AVOIDED_MS : WATCH_INTERVAL_NORMAL_MS
+    pollTimer = setTimeout(pollOnce, delay)
+  }
+
+  /** 单发轮询：spawn 一个短命 PS 查一次前台窗口，读完整输出退出。
    * 不用长驻进程（见 watchScript 注释的 DevTools hang 踩坑）。PS 冷启动 150~300ms 全程异步，不阻塞主进程。
-   * 防重入：上一发未结束时跳过本轮。 */
+   * 防重入：上一发未结束时跳过本轮。结束后由 finish() 调 scheduleNextPoll() 排下一轮。 */
   let probing = false
   const pollOnce = (): void => {
-    if (probing) return
+    if (pollStopped || state === 'manual' || probing) return
     probing = true
     let child: import('node:child_process').ChildProcess | null = null
     try {
@@ -201,6 +227,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       )
     } catch {
       probing = false
+      scheduleNextPoll()
       return
     }
     watcherChild = child
@@ -211,6 +238,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       done = true
       probing = false
       watcherChild = null
+      scheduleNextPoll()
     }
     child.stdout?.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8')
@@ -236,8 +264,6 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       finish()
     })
   }
-  const pollTimer = setInterval(pollOnce, WATCH_INTERVAL_MS)
-  probeTimers.add(pollTimer)
 
   /** 现身期间的光标轮询回隐（A5 修复）。
    * 实测踩坑（US-041）：岛 showInactive 现身后 Chromium 不认为光标在窗口内（未注册
@@ -355,6 +381,8 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
   // 手动隐藏（右键/托盘菜单）
   ipcMain.on('island:manual-hide', () => {
     state = 'manual'
+    // manual 下 commit 本来就 return，全屏判定无意义 → 直接停掉轮询（SPEC-perf-poll-throttle）
+    scheduleNextPoll()
     apply(true)
   })
   // 托盘左键唤回（清手动标志）
@@ -362,6 +390,8 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     if (state !== 'manual') return
     state = 'normal'
     apply(false)
+    // 手动隐藏期间轮询已停，恢复时立即重新起一轮（pollOnce 结束会自动 scheduleNextPoll 排后续）
+    void pollOnce()
   })
 
   // 横幅临时现身（渲染层横幅/验证码弹出时调用，结束回传 false）
@@ -425,6 +455,13 @@ function destroyEdgeWindow(): void {
 
 /** 退出时停掉检测子进程与感应窗 */
 export function stopFullscreenWatch(): void {
+  // 先置停止标志：在途子进程的 finish() 会调 scheduleNextPoll()，它会因 pollStopped 直接 return，
+  // 否则退出后还会被重新排一轮（SPEC-perf-poll-throttle 自适应调度引入的新竞态）。
+  pollStopped = true
+  if (pollTimer) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
   watcherChild?.kill()
   watcherChild = null
   destroyEdgeWindow()
