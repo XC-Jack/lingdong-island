@@ -13,8 +13,10 @@ import { join } from 'node:path'
  *   2. Win32 应用：App Paths 注册表（HKLM/HKCU ...\App Paths\<短名>.exe）或开始
  *      菜单 .lnk 定位到 exe，再用 SHGetFileInfo 提 32px 图标转 PNG。
  *   3. 自家灵动岛：项目自带图标。
+ *   4. 已知系统应用别名表：AUMID 短名与 exe 名对不上时（如 SecurityCenter），
+ *      直接指向 %SystemRoot%\System32 下的系统 exe，再走第 2 条的提图标。
  *
- * 全部失败返回 null（渲染层退回应用名文字徽标）。解析结果按短名缓存在
+ * 全部失败返回 null（渲染层退回应用名文字徽标 + 首字占位方块）。解析结果按短名缓存在
  * userData/icon-cache/notify-<短名>.png；解析失败的短名记入内存 Set，不再重试。
  */
 
@@ -182,6 +184,21 @@ function exeIconPng(exePath: string, cacheKey: string): string | null {
 /* 总入口                                                              */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 已知「短名 → 系统自带 exe」别名表（SPEC-notify-icon-and-single-group）。
+ * 有些系统通知的 AUMID 短名和真实 exe 名对不上，App Paths / 开始菜单 lnk 都查不到：
+ *   Windows.Defender.SecurityCenter → 短名 SecurityCenter，
+ *   图标其实在 %SystemRoot%\System32\SecurityHealthSystray.exe（本机实测存在）。
+ * 只补实测确认过的映射，命中后复用 exeIconPng() 的 SHGetFileInfo，不新增机制。
+ */
+const SYSTEM_EXE_ALIASES: Record<string, string> = {
+  SecurityCenter: join(
+    process.env.SystemRoot ?? 'C:/Windows',
+    'System32',
+    'SecurityHealthSystray.exe'
+  )
+}
+
 /** 解析 AUMID 短名对应的图标 PNG 绝对路径；解析失败返回 null（带失败缓存不再重试） */
 export function appIcon(shortName: string): string | null {
   if (iconDir === '') return null
@@ -202,6 +219,12 @@ export function appIcon(shortName: string): string | null {
     if (existsSync(cached)) {
       result = cached
     }
+  }
+
+  // 1.5) 已知系统应用别名：短名与 exe 对不上时直接指向系统自带 exe（省掉 UWP 无效扫描）
+  if (result === null && SYSTEM_EXE_ALIASES[shortName]) {
+    const exe = SYSTEM_EXE_ALIASES[shortName]
+    if (existsSync(exe)) result = exeIconPng(exe, shortName)
   }
 
   // 2) UWP：短名即 AUMID 去 !App 段（ScreenSketch_8wekyb3d8bbwe!App → ScreenSketch_8wekyb3d8bbwe）。

@@ -1205,9 +1205,10 @@ function NotifyPanel({
     [markRead]
   )
 
-  // ===== 两级堆叠（US-040）=====
-  // 第一级：按 app 分组；第二级：组内按 title（会话名：群名/发件人）分组。
+  // ===== 单级堆叠（SPEC-notify-icon-and-single-group）=====
+  // 只按 app 分组一层；点开应用直接平铺该应用的全部具体通知，不再按 title 细分会话。
   // 纯渲染层变换——items 顺序即到达序（新→旧），分组保留该序取每组最新。
+  // （旧版 US-040 是两级堆叠：组内再按标题分「会话」，用户 2026-11-14 要求只分一次。）
   const visibleItems = useMemo(() => items.filter((it) => it.title || it.body), [items])
   const groups = useMemo(() => {
     const byApp = new Map<string, NotifyItem[]>()
@@ -1220,9 +1221,8 @@ function NotifyPanel({
     return [...byApp.values()].map((list) => ({ app: list[0].app, icon: list[0].icon, list }))
   }, [visibleItems])
 
-  // 展开状态：一级 key=app；二级 key=`app\ntitle`。Set<string>。
+  // 展开状态：只保留一级 key=app（删掉旧版 US-040 的二级会话展开态）
   const [openApps, setOpenApps] = useState<Set<string>>(new Set())
-  const [openThreads, setOpenThreads] = useState<Set<string>>(new Set())
 
   const toggleApp = useCallback((app: string) => {
     setOpenApps((prev) => {
@@ -1233,25 +1233,34 @@ function NotifyPanel({
     })
   }, [])
 
-  const toggleThread = useCallback((key: string) => {
-    setOpenThreads((prev) => {
-      const next = new Set(prev)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
-
   /**
    * 条目右侧那一列（美化-04）：相对时间 + 未读蓝点（蓝点固定在最右端）。
    * 2026-11-11 用户实机反馈后调整：①去掉原来的「打开」按钮（点了没效果，正文点击已经能打开，
-   * 组/会话条的正文点击被「展开/收起」占用，要打开就展开到底层条目再点）；②蓝点从时间左边
+   * 组条目的正文点击被「展开/收起」占用，要打开就展开到具体条目再点）；②蓝点从时间左边
    * 挪到时间右边，成为整行的最右端标记，扫一眼就能看出哪几条没读。
    */
   const renderSide = (arrival: number, unread: boolean): React.JSX.Element => (
     <span className="notify-side">
       <span className="notify-time">{fmtRel(arrival)}</span>
       {unread && <i className="notify-unread" title="未读" />}
+    </span>
+  )
+
+  /**
+   * 图标区（SPEC-notify-icon-and-single-group）：每条通知左侧固定一个方块。
+   * 有真图标 → img.notify-icon；解析不到图标 → 应用名首字的中性占位方块（title 显示完整应用名）。
+   * count>1 时图标右上角浮计数徽标（该应用堆叠了几条）。
+   * 占位方块特意用独立类名 .notify-icon-fallback，不复用 .notify-icon，
+   * 这样「图标真的解码出来了」这类只针对真 <img> 的断言不会把它算进去。
+   */
+  const renderIcon = (icon: string | null, app: string, count: number): React.JSX.Element => (
+    <span className="notify-icon-wrap">
+      {icon ? (
+        <img className="notify-icon" src={iconUrl(icon)} alt="" aria-hidden="true" />
+      ) : (
+        <span className="notify-icon-fallback" title={app} aria-label={app}>{app.slice(0, 1)}</span>
+      )}
+      {count > 1 && <span className="notify-badge">{count}</span>}
     </span>
   )
 
@@ -1311,39 +1320,22 @@ function NotifyPanel({
         </div>
       ) : (
         <ul className="notify-list">
-          {/* 两级堆叠（US-040）：一级按应用，二级点开后按会话（title）细分；再点开是具体条目 */}
+          {/* 单级堆叠（SPEC-notify-icon-and-single-group）：只按应用分一层；点开直接平铺该应用的全部通知，不再按标题细分会话 */}
           {groups.map((g) => {
             const latest = g.list[0]
             const isOpen = openApps.has(g.app)
-            // 二级会话分组：同 title 堆一起；title 为空串时用 '(无标题)' key
-            const threads = new Map<string, NotifyItem[]>()
-            for (const it of g.list) {
-              const key = it.title || '(无标题)'
-              const arr = threads.get(key)
-              if (arr) arr.push(it)
-              else threads.set(key, [it])
-            }
             return (
               <li key={g.app} className="notify-item notify-group">
                 <button
                   type="button"
-                  className={`notify-body ${g.icon ? 'has-icon' : ''}`}
+                  className="notify-body has-icon"
                   title={isOpen ? '点击收起该应用的通知' : '点击展开该应用的通知'}
                   aria-expanded={isOpen}
                   onClick={() => toggleApp(g.app)}
                 >
-                  {g.icon ? (
-                    <span className="notify-icon-wrap">
-                      <img className="notify-icon" src={iconUrl(g.icon)} alt="" aria-hidden="true" />
-                      {g.list.length > 1 && <span className="notify-badge">{g.list.length}</span>}
-                    </span>
-                  ) : (
-                    <span className="notify-app">
-                      {g.app}
-                      {g.list.length > 1 && <span className="notify-badge notify-badge-inline">{g.list.length}</span>}
-                    </span>
-                  )}
+                  {renderIcon(g.icon, g.app, g.list.length)}
                   <span className="notify-main">
+                    {!g.icon && <span className="notify-app">{g.app}</span>}
                     <span className="notify-title">
                       {latest.title}
                       {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
@@ -1354,66 +1346,24 @@ function NotifyPanel({
                 {renderSide(latest.arrival, latest.order > lastOrder)}
                 {isOpen && (
                   <ul className="notify-sublist">
-                    {[...threads.values()].map((tList) => {
-                      const tLatest = tList[0]
-                      const tKey = `${g.app}\n${tLatest.title || '(无标题)'}`
-                      const tOpen = openThreads.has(tKey)
-                      return (
-                        <li key={tKey} className="notify-item notify-thread">
-                          <button
-                            type="button"
-                            className={`notify-body ${tLatest.icon ? 'has-icon' : ''}`}
-                            title={tOpen ? '点击收起' : '点击展开'}
-                            aria-expanded={tOpen}
-                            onClick={() => toggleThread(tKey)}
-                          >
-                            {tLatest.icon ? (
-                              <span className="notify-icon-wrap">
-                                <img className="notify-icon" src={iconUrl(tLatest.icon)} alt="" aria-hidden="true" />
-                                {tList.length > 1 && <span className="notify-badge">{tList.length}</span>}
-                              </span>
-                            ) : (
-                              <span className="notify-app">
-                                {tLatest.title || '(无标题)'}
-                                {tList.length > 1 && <span className="notify-badge notify-badge-inline">{tList.length}</span>}
-                              </span>
-                            )}
-                            <span className="notify-main">
-                              <span className="notify-title">
-                                {tList.length > 1 ? `${tLatest.title}（等 ${tList.length} 条）` : tLatest.title}
-                              </span>
-                              {tLatest.body && <span className="notify-text">{tLatest.body}</span>}
-                            </span>
-                          </button>
-                          {renderSide(tLatest.arrival, tLatest.order > lastOrder)}
-                          {tOpen && (
-                            <ul className="notify-sublist">
-                              {tList.map((it) => (
-                                <li key={it.id} className="notify-item notify-leaf">
-                                  <button
-                                    type="button"
-                                    className={`notify-body ${it.icon ? 'has-icon' : ''}`}
-                                    title="点击打开来源应用"
-                                    onClick={() => openOne(it)}
-                                  >
-                                    {it.icon ? (
-                                      <img className="notify-icon" src={iconUrl(it.icon)} alt="" aria-hidden="true" />
-                                    ) : (
-                                      <span className="notify-app">{it.app}</span>
-                                    )}
-                                    <span className="notify-main">
-                                      <span className="notify-title">{it.title}</span>
-                                      {it.body && <span className="notify-text">{it.body}</span>}
-                                    </span>
-                                  </button>
-                                  {renderSide(it.arrival, it.order > lastOrder)}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </li>
-                      )
-                    })}
+                    {g.list.map((it) => (
+                      <li key={it.id} className="notify-item notify-leaf">
+                        <button
+                          type="button"
+                          className="notify-body has-icon"
+                          title="点击打开来源应用"
+                          onClick={() => openOne(it)}
+                        >
+                          {renderIcon(it.icon, it.app, 1)}
+                          <span className="notify-main">
+                            {!it.icon && <span className="notify-app">{it.app}</span>}
+                            <span className="notify-title">{it.title}</span>
+                            {it.body && <span className="notify-text">{it.body}</span>}
+                          </span>
+                        </button>
+                        {renderSide(it.arrival, it.order > lastOrder)}
+                      </li>
+                    ))}
                   </ul>
                 )}
               </li>
