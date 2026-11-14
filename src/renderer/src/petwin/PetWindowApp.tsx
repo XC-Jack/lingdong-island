@@ -210,7 +210,7 @@ export default function PetWindowApp(): JSX.Element {
   }, [])
 
   // 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）：
-  // 主进程在方向变化 / 走停切换时推一次方向（含上下与斜向，斜向按主导分量归类）。
+  // 主进程在方向变化 / 走停切换时推一次方向（巡边后只有四个纯方向 + idle，无斜向）。
   // 方向 → 视图下标：右=3(侧右)、左=1(侧左)、上=2(背面)、下=0(正面)、停=0(正面)。
   // 直接派发皮肤层内部的 pet:turn-abs 切视图，同时 setFacing 让 data 属性与画面一致；
   // walkDir 控制 .walking 这个 class（CSS 上下颠动）。

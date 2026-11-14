@@ -54,25 +54,24 @@ let quitHandler: (() => void) | null = null
 const WALK_TICK_MS = 50
 /** 每帧位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
 const WALK_STEP_PX = 2
-/** 连续走多少帧后停一会儿（60 帧 ≈ 3 秒） */
-const WALK_RUN_TICKS = 60
-/** 停下多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
+/** 走到边后停多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
 const WALK_REST_TICKS = 30
 
 /**
- * 8 个走动方向（SPEC-deskpet-walk-polish）：右 / 下 / 左 / 上 / 四个斜向。
- * 用户 2026-11-14 反馈「只会左右走太呆板」，这里每段换一个方向，
- * 4 个纯方向保证上 / 下视图真的会出现，斜向让路线不那么规整。
+ * 巡边用的 4 个纯方向：右 / 下 / 左 / 上（下标也就是目标边）。
+ *
+ * 2026-11-14 用户验收反馈：「贴边不行，哪个方向都不行，还是有距离」。
+ * 根因不是边界算错——上一版每段定时换一个方向、且开局朝屏幕中心走，
+ * 8 个方向每段只走 120px 就换，位移互相抵消，桌宠永远在屏幕中间绕圈，
+ * 上轮加的「30px 留白越界」根本没机会被看到。
+ * 改成：四条边依次当目标，朝它一直走，撞到边（真的贴住）才停一下换下一条边。
+ * 斜向先去掉：斜着走会先撞一条边、另一轴还没到，看起来仍是「贴不到边」。
  */
 const WALK_DIRS: ReadonlyArray<{ dx: number; dy: number }> = [
   { dx: 1, dy: 0 },
   { dx: 0, dy: 1 },
   { dx: -1, dy: 0 },
-  { dx: 0, dy: -1 },
-  { dx: 1, dy: 1 },
-  { dx: -1, dy: 1 },
-  { dx: -1, dy: -1 },
-  { dx: 1, dy: -1 }
+  { dx: 0, dy: -1 }
 ]
 
 type WalkDir = 'left' | 'right' | 'up' | 'down' | 'idle'
@@ -126,18 +125,29 @@ function stopWalk(): void {
 }
 
 /**
- * 走动的边界（SPEC-deskpet-walk-polish）：按「宠物可见区」算，不按整窗。
+ * 走动的边界（SPEC-deskpet-walk-polish）：按「桌宠图片」算，不按整窗。
  *
- * 窗口 190×250，但 SVG 用 xMidYMid meet，宠物可见内容是与窗口同宽的 190×190、
- * 垂直居中，上下各有 (250-190)/2 = 30px 纯透明留白（给底部旋转把手）。
- * 若按整窗钳进 workArea，宠物可见部分离屏幕上下边还差 30px——用户反馈的
- * 「透明窗口有点大，碰不到桌面端边界」就是这个。让那 30px 留白越出工作区，
- * 可见区就能贴到工作区上下边。
+ * 用户 2026-11-14 验收反馈：「透明窗口有点大，碰不到桌面端边界」「贴边不行，
+ * 哪个方向都不行，还是有距离」。窗口 190×250 里真正有画面的只有中间一小块：
+ *  - SVG viewBox 160×160，xMidYMid meet 铺进 190×250 → 内容区 190×190 居中，
+ *    上下各 30px 透明留白；
+ *  - 图片本身（skinPhoto.tsx：PAD_TOP=10、IMG_H=140、正面比例 310/515）
+ *    在 160 画布里只是中间约 84 宽、140 高的一块，左右又各留约 38 画布单位。
+ * 换算到窗口像素：scale = 190/160 = 1.1875，y 偏移 30 →
+ *    图片左 ≈ 45、右 ≈ 145、顶 ≈ 42、底 ≈ 208（窗口像素）。
+ * 也就是说按整窗贴边，桌宠**看起来**离屏幕左右边还差约 45px、上下约 42px。
  *
- * 横向窗口宽 = 可见宽（都是 PET_WIN_W），没有留白，仍按整窗算。
+ * 所以边界要放宽：让这些透明留白越出工作区，图片边缘正好贴住屏幕边。
+ * 下面两个 WALK_PAD_* 就是图片在窗口内的留白（取正面视图，停下会转回正面）。
+ *
  * 注意：这里只用于「自动走动」；拖动 / 重启仍走 prefsStore.clampPetPos 的
  * 「整窗可见」约束（e2e-deskpet-out 的 P11b 断言），不共用一套边界。
  */
+/** 图片左右各留白（窗口像素，正面视图换算，见上） */
+const WALK_PAD_X = 45
+/** 图片上下各留白（窗口像素，含 SVG 居中的 30 + 画布内 12，见上） */
+const WALK_PAD_Y = 42
+
 interface WalkLimits {
   minX: number
   maxX: number
@@ -159,38 +169,51 @@ function walkLimits(): WalkLimits {
   } catch {
     area = screen.getPrimaryDisplay().workArea
   }
-  const padY = (PET_WIN_H - PET_WIN_W) / 2
   return {
-    minX: area.x,
-    maxX: area.x + area.width - PET_WIN_W,
-    minY: area.y - padY,
-    maxY: area.y + area.height - padY - PET_WIN_W
+    // 窗口左边可越出工作区 WALK_PAD_X，图片左边缘正好贴 area.x
+    minX: area.x - WALK_PAD_X,
+    // 窗口右边可越出工作区 WALK_PAD_X，图片右边缘正好贴 area.x+area.width
+    maxX: area.x + area.width - (PET_WIN_W - WALK_PAD_X),
+    minY: area.y - WALK_PAD_Y,
+    maxY: area.y + area.height - (PET_WIN_H - WALK_PAD_Y)
   }
 }
 
 /**
  * 开走动：只在 free 模式、且窗口已存在时调。
- * 每帧读当前 bounds 往 walkVec 方向挪一步，撞到 walkLimits 边界时对应分量反弹；
- * 走满一段停一段，rest→run 时换下一个方向。不逐帧写盘：位置只在用户拖动松手时落盘。
+ *
+ * 2026-11-14 用户验收反馈「贴边不行，哪个方向都不行，还是有距离」后重写：
+ * 上一版每段定时换一个方向、开局还朝屏幕中心走，8 个方向每段只走 120px 就换，
+ * 位移互相抵消，桌宠永远在屏幕中间绕圈，根本走不到边——上轮加的「30px 留白
+ * 越界」因此没机会被看到。现在改成「巡边」：四条边依次当目标（右→下→左→上），
+ * 朝它一直走，真的贴到那条边才停 1.5 秒换下一条边。于是任意时刻桌宠都贴着
+ * 某一条边（走的那一段沿边走、停下时也贴在边上），四个方向都能贴住。
+ *
+ * 到达判定用 walkLimits() 的「桌宠图片」边界：图片上下各留 42px、左右各留 45px
+ * 透明区，允许越出工作区，所以贴上边时窗口 y 可到 area.y-42，桌宠头顶正好贴屏幕上边。
+ * 不逐帧写盘：位置只在用户拖动松手时落盘。
  */
 function startWalk(): void {
   if (walkTimer) return // 已在走，避免重复起定时器
   const win = petWindow
   if (!win || win.isDestroyed()) return
-  // 开局只走「纯方向」（右0 / 下1 / 左2 / 上3），朝离屏幕中心更远那根轴的中心方向：
-  // 斜向开局会被 dirOf 归到横向、看起来还是左右走，上下视图出现得也晚。
-  // 之后每段 rest→run 按 WALK_DIRS 顺序换下一个方向，斜向自然会出现。
+  // 开局选「离当前位置最近、且还没贴住」的那条边当第一个目标：
+  // 朝边直走，用户几秒内就能看到桌宠真的贴到屏幕边，不用先横穿半个屏幕。
   try {
     const b = win.getBounds()
-    const area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
-    const padY = (PET_WIN_H - PET_WIN_W) / 2
-    const cx = b.x + PET_WIN_W / 2
-    const cy = b.y + padY + PET_WIN_W / 2
-    const midX = area.x + area.width / 2
-    const midY = area.y + area.height / 2
-    walkSeq = Math.abs(cx - midX) >= Math.abs(cy - midY)
-      ? (cx >= midX ? 2 : 0) // 偏右往左、偏左往右
-      : (cy >= midY ? 3 : 1) // 偏下往上、偏上往下
+    const lim = walkLimits()
+    const dist = [
+      lim.maxX - b.x, // 右
+      lim.maxY - b.y, // 下
+      b.x - lim.minX, // 左
+      b.y - lim.minY // 上
+    ]
+    let best = -1
+    for (let i = 0; i < 4; i++) {
+      if (dist[i] <= 0) continue // 已经贴住的边跳过
+      if (best < 0 || dist[i] < dist[best]) best = i
+    }
+    walkSeq = best < 0 ? 0 : best
   } catch {
     walkSeq = 0
   }
@@ -212,31 +235,35 @@ function startWalk(): void {
       if (walkTicks >= WALK_REST_TICKS) {
         walkPhase = 'run'
         walkTicks = 0
+        // 贴上一条边后换下一条边，四边循环：右→下→左→上
         walkSeq = (walkSeq + 1) % WALK_DIRS.length
         walkVec = { ...WALK_DIRS[walkSeq] }
         pushWalk(currentWalkDir())
       }
       return
     }
-    // run：往当前方向挪一步，撞边界就反弹对应分量
+    // run：朝当前目标边一直走；只有真的贴到那条边才停下换边
     const lim = walkLimits()
-    let { dx, dy } = walkVec
-    let nx = b.x + dx * WALK_STEP_PX
-    let ny = b.y + dy * WALK_STEP_PX
-    let bounced = false
-    if (nx < lim.minX || nx > lim.maxX) {
-      dx = -dx
-      nx = b.x + dx * WALK_STEP_PX
-      bounced = true
-    }
-    if (ny < lim.minY || ny > lim.maxY) {
-      dy = -dy
-      ny = b.y + dy * WALK_STEP_PX
-      bounced = true
-    }
-    if (bounced) {
-      walkVec = { dx, dy }
-      pushWalk(currentWalkDir())
+    let nx = b.x + walkVec.dx * WALK_STEP_PX
+    let ny = b.y + walkVec.dy * WALK_STEP_PX
+    let reached = false
+    switch (walkSeq) {
+      case 0:
+        reached = nx >= lim.maxX
+        if (reached) nx = lim.maxX
+        break
+      case 1:
+        reached = ny >= lim.maxY
+        if (reached) ny = lim.maxY
+        break
+      case 2:
+        reached = nx <= lim.minX
+        if (reached) nx = lim.minX
+        break
+      case 3:
+        reached = ny <= lim.minY
+        if (reached) ny = lim.minY
+        break
     }
     nx = Math.min(lim.maxX, Math.max(lim.minX, nx))
     ny = Math.min(lim.maxY, Math.max(lim.minY, ny))
@@ -247,11 +274,10 @@ function startWalk(): void {
       width: PET_WIN_W,
       height: PET_WIN_H
     })
-    walkTicks++
-    if (walkTicks >= WALK_RUN_TICKS) {
+    if (reached) {
       walkPhase = 'rest'
       walkTicks = 0
-      pushWalk('idle')
+      pushWalk('idle') // 停在边上转正面，让用户看清它贴住了
     }
   }, WALK_TICK_MS)
 }
