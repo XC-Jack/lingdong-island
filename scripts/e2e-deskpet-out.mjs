@@ -14,8 +14,9 @@
  * P10 重启 → 宠物窗口出现在记录的位置（±2）
  * P11 prefs 里写一个屏幕外的坐标 → 重启后被 clamp 回工作区内（不会「丢了找不回来」）
  * P12 切回「只在岛里」→ 宠物窗口消失、岛里岛仔回来、petMode 落盘 island
- * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口自己横向移动、
- *      宽度不漂移、渲染层收到方向；随后切回 island 关窗（P14 的前提是窗口关着）
+ * P13 「自由走动」已放开：点它落盘 petMode=free、开宠物窗口、窗口在二维里自己移动
+ *      （横向+纵向都有）、方向→视图映射正确、尺寸不漂移、可见区能贴到工作区上沿；
+ *      随后切回 island 关窗（P14 的前提是窗口关着）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs。
  * CDP 9321 / 主进程 inspect 9229；spawn 时 delete ELECTRON_RUN_AS_NODE。
@@ -1341,7 +1342,7 @@ try {
     ok('P12c 岛里的岛仔回来了', count === 1, `实际 ${count}`)
   }
 
-  // ========== P13 自由走动（SPEC-deskpet-walk） ==========
+  // ========== P13 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish） ==========
   {
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="free"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petMode === 'free', 8000, '落盘 petMode=free')
@@ -1350,7 +1351,7 @@ try {
     await waitForTarget('pet', true, 15000, '宠物窗口出现')
     ok('P13b free 模式开了独立宠物窗口', true)
 
-    // 等窗口 bounds 能读到（target 存在 ≠ 页面加载完），再量走动前后的 x。
+    // 等窗口 bounds 能读到（target 存在 ≠ 页面加载完），再量走动前后的坐标。
     let b0 = null
     {
       const t0 = Date.now()
@@ -1362,42 +1363,71 @@ try {
     }
     if (!b0 || b0.none) throw new Error('free 模式宠物窗口 target 有了但主进程仍找不到该窗口')
 
-    // 渲染层应收到走动方向：根 .petwin 带 .walking，且 data-pet-walk 是 left/right。
-    // 走一段（60 帧≈3 秒）后会停一段（30 帧≈1.5 秒），停下时是 idle，所以用等待式断言
-    // 抓住「曾经在走」的那一段，而不是固定 sleep 后碰运气。
-    const walking = await waitPetExpr(`(()=>{
+    const DIRS = ['left', 'right', 'up', 'down']
+    const FACE = { right: 3, left: 1, up: 2, down: 0 }
+    // 走一段（60 帧≈3 秒）停一段（30 帧≈1.5 秒），停下时推 idle。用等待式抓
+    // 「真的在走」那一段，别固定 sleep 后碰运气；allow 限定关心的方向集合。
+    const readWalk = (allow) => `(()=>{
       const e = document.querySelector('.petwin');
       if (!e) return '';
       const cls = e.classList.contains('walking');
       const dir = e.dataset.petWalk;
-      // 只在「真的在走」时返回：free 会走一段停一段，停下的那段是 idle，
-      // 等的是走的那一段，否则会抓到 rest 相位造成假红。
-      if (!cls || (dir !== 'left' && dir !== 'right')) return '';
-      return JSON.stringify({cls, dir, facing: e.dataset.petFacing})
-    })()`, { timeoutMs: 12000, gapMs: 120, label: '渲染层收到走动方向' })
-      .then((s) => { try { return JSON.parse(s) } catch { return null } })
-    ok('P13c 渲染层收到走动方向（.walking + data-pet-walk=left/right）',
-      walking && walking.cls === true && (walking.dir === 'left' || walking.dir === 'right'),
-      JSON.stringify(walking))
-    ok('P13d 走动时朝向切到侧视（data-pet-facing=1 或 3）',
-      walking && (Number(walking.facing) === 1 || Number(walking.facing) === 3),
-      JSON.stringify(walking))
+      if (!cls || !${JSON.stringify(allow)}.includes(dir)) return '';
+      return JSON.stringify({cls, dir, facing: Number(e.dataset.petFacing)})
+    })()`
+    const parse = (s) => { try { return JSON.parse(s) } catch { return null } }
 
-    await sleep(900)
-    const b1 = await petBounds()
-    ok('P13e 窗口确实在横向自己移动（x 变了）', b1.x !== b0.x,
-      `x: ${b0.x} → ${b1.x}`)
-    // 不硬写 190×250：125% 缩放下 getBounds() 返回物理像素（实测 191×251），
-    // 和 P9c 一样用「走动前后不变」判漂移——setBounds 显式带尺寸锁的就是这个。
-    ok('P13f 走动时窗口尺寸不漂移（走动前后 width/height 一致，setBounds 显式带尺寸）',
-      b1.width === b0.width && b1.height === b0.height,
-      `走动前 ${b0.width}×${b0.height} → 走动后 ${b1.width}×${b1.height}`)
+    const walking = await waitPetExpr(readWalk(DIRS),
+      { timeoutMs: 15000, gapMs: 120, label: '渲染层收到走动方向' }).then(parse)
+    ok('P13c 渲染层收到走动方向（.walking + data-pet-walk ∈ 左/右/上/下）',
+      walking && walking.cls === true && DIRS.includes(walking.dir), JSON.stringify(walking))
+    ok('P13d 走动朝向与方向对应（右3/左1/上2/下0）',
+      walking && walking.facing === FACE[walking.dir], JSON.stringify(walking))
+
+    // 上下走真的会发生：8 方向循环，开局是纯方向之一，最多隔一段就轮到纵向。
+    const vertical = await waitPetExpr(readWalk(['up', 'down']),
+      { timeoutMs: 30000, gapMs: 120, label: '出现纵向走动（上/下）' }).then(parse)
+    ok('P13d2 会出现纵向走动（上/下），不再只会左右走',
+      vertical && (vertical.dir === 'up' || vertical.dir === 'down') && vertical.facing === FACE[vertical.dir],
+      JSON.stringify(vertical))
+
+    // 窗口在二维里真的移动：采样若干秒，x 与 y 都要变过（不能只横向）。
+    {
+      const seenX = new Set(), seenY = new Set()
+      const t0 = Date.now()
+      let b1 = b0
+      while (Date.now() - t0 < 16000) {
+        const b = await petBounds()
+        if (!b.none) { seenX.add(b.x); seenY.add(b.y); b1 = b }
+        await sleep(200)
+      }
+      ok('P13e 窗口在横向与纵向都自己移动过（二维，不是只 x 变）',
+        seenX.size > 1 && seenY.size > 1,
+        `x 取值 ${seenX.size} 种、y 取值 ${seenY.size} 种`)
+      // 不硬写 190×250：125% 缩放下 getBounds() 返回物理像素（实测 191×251），
+      // 和 P9c 一样用「走动前后不变」判漂移——setBounds 显式带尺寸锁的就是这个。
+      ok('P13f 走动时窗口尺寸不漂移（走动前后 width/height 一致，setBounds 显式带尺寸）',
+        b1.width === b0.width && b1.height === b0.height,
+        `走动前 ${b0.width}×${b0.height} → 走动后 ${b1.width}×${b1.height}`)
+    }
+
+    // 贴边（SPEC-deskpet-walk-polish）：窗口 190×250、可见内容 190×190 居中，
+    // 上下各 30px 透明留白。旧版按整窗 clamp 让可见区离屏幕上下边差 30px。
+    // 改法在 petWindow.ts 的 walkLimits() 里让 padY 留白越出工作区，可见区才能贴边。
+    // 运行时「真的贴到屏幕边」要等桌宠以 40px/秒走过千余 px，不适合 e2e 等；
+    // 这里断言改法确实在源码里，贴边观感按 SPEC A8 只有真人能验。
+    const walkSrc = readFileSync(join(ROOT, 'src', 'main', 'petWindow.ts'), 'utf8')
+    ok('P13g walkLimits 按可见区算边界、让 30px 留白越出工作区（可见区能贴边）',
+      /padY\s*=\s*\(PET_WIN_H\s*-\s*PET_WIN_W\)\s*\/\s*2/.test(walkSrc) &&
+        /minY:\s*area\.y\s*-\s*padY/.test(walkSrc) &&
+        /maxY:\s*area\.y\s*\+\s*area\.height\s*-\s*padY\s*-\s*PET_WIN_W/.test(walkSrc),
+      '源码 petWindow.ts walkLimits()')
 
     // 切回 island：关掉宠物窗口，保证 P14「窗口现在关着」的前提成立。
     await settingsEval(`(document.querySelector('.pet-set-mode[data-mode="island"]').click(), 'ok')`)
     await waitForPrefs((p) => p.petMode === 'island', 8000, '落盘 petMode=island')
     await waitForTarget('pet', false, 10000, '宠物窗口关闭')
-    ok('P13g 切回「只在岛里」后宠物窗口关掉、走动停止', true)
+    ok('P13h 切回「只在岛里」后宠物窗口关掉、走动停止', true)
   }
 
   // ========== P14 窗口属性：不进任务栏、置顶（验收条件 3） ==========

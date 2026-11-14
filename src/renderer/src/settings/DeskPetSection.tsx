@@ -30,7 +30,7 @@ const MODE_META: Record<PetMode, { label: string; desc: string; ready: boolean }
   },
   free: {
     label: '自由走动',
-    desc: '自己浮在桌面上横向溜达，走一段停一会儿，碰到屏幕边会掉头；拖它、点它、右键都照旧。',
+    desc: '自己在桌面上左右上下斜着溜达，走一段停一会儿，碰到屏幕边会掉头、换方向；拖它、点它、右键都照旧。',
     ready: true
   }
 }
@@ -144,7 +144,7 @@ export default function DeskPetSection(): ReactElement {
           )
         })}
         <div className="pet-set-tip">
-          选「独立小窗口」后它会跑到桌面右下角，拖到哪下次就在哪；选「自由走动」它会自己在桌面上横向溜达、走一段停一会儿。
+          选「独立小窗口」后它会跑到桌面右下角，拖到哪下次就在哪；选「自由走动」它会自己在桌面上上下左右斜着溜达、走一段停一会儿，也能贴到屏幕边。
           两种模式下在它身上点右键都能收回岛里。
         </div>
       </div>

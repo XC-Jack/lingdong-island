@@ -160,11 +160,15 @@ const api = {
     }
   },
   /**
-   * 自由走动方向（SPEC-deskpet-walk）：主进程在方向变化 / 走停切换时推一次。
+   * 自由走动方向（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）：
+   * 主进程在方向变化 / 走停切换时推一次，含上下与斜向（斜向按主导分量归到某一视图）。
    * 'idle' = 停下或没在走。返回取消订阅函数。
    */
-  onPetWalk(cb: (d: 'left' | 'right' | 'idle') => void): () => void {
-    const h = (_e: Electron.IpcRendererEvent, d: 'left' | 'right' | 'idle'): void => cb(d)
+  onPetWalk(cb: (d: 'left' | 'right' | 'up' | 'down' | 'idle') => void): () => void {
+    const h = (
+      _e: Electron.IpcRendererEvent,
+      d: 'left' | 'right' | 'up' | 'down' | 'idle'
+    ): void => cb(d)
     ipcRenderer.on('pet:walk', h)
     return () => {
       ipcRenderer.removeListener('pet:walk', h)

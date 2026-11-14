@@ -49,27 +49,57 @@ let dragOrigin: { cursor: PetWindowPos; win: PetWindowPos } | null = null
 /** 退出应用的回调：菜单里的「退出灵动岛」要走 index.ts 的 quitApp（要先停各轮询） */
 let quitHandler: (() => void) | null = null
 
-// ===== 自由走动（SPEC-deskpet-walk）=====
+// ===== 自由走动（SPEC-deskpet-walk / SPEC-deskpet-walk-polish）=====
 /** 走动定时器步长：50ms 一帧（约 20 帧/秒），够顺滑又不烧 CPU */
 const WALK_TICK_MS = 50
-/** 每帧横向位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
+/** 每帧位移（DIP）：2px × 20 帧 = 40px/秒，慢慢溜达 */
 const WALK_STEP_PX = 2
 /** 连续走多少帧后停一会儿（60 帧 ≈ 3 秒） */
 const WALK_RUN_TICKS = 60
 /** 停下多少帧再走（30 帧 ≈ 1.5 秒），对应「走过的地方会停下」 */
 const WALK_REST_TICKS = 30
 
-/** 当前走动方向：1=向右，-1=向左 */
-let walkDir: 1 | -1 = -1
+/**
+ * 8 个走动方向（SPEC-deskpet-walk-polish）：右 / 下 / 左 / 上 / 四个斜向。
+ * 用户 2026-11-14 反馈「只会左右走太呆板」，这里每段换一个方向，
+ * 4 个纯方向保证上 / 下视图真的会出现，斜向让路线不那么规整。
+ */
+const WALK_DIRS: ReadonlyArray<{ dx: number; dy: number }> = [
+  { dx: 1, dy: 0 },
+  { dx: 0, dy: 1 },
+  { dx: -1, dy: 0 },
+  { dx: 0, dy: -1 },
+  { dx: 1, dy: 1 },
+  { dx: -1, dy: 1 },
+  { dx: -1, dy: -1 },
+  { dx: 1, dy: -1 }
+]
+
+type WalkDir = 'left' | 'right' | 'up' | 'down' | 'idle'
+
+/** 当前走动方向分量（dx / dy 各取 -1 / 0 / 1） */
+let walkVec: { dx: number; dy: number } = { dx: -1, dy: 0 }
+/** 走到第几个方向：每段 rest→run 取下一个，循环 */
+let walkSeq = 0
 let walkTimer: NodeJS.Timeout | null = null
 let walkPhase: 'run' | 'rest' = 'run'
 let walkTicks = 0
 /** 用户正在拖窗口：冻结自动走动，免得 16ms drag 与 50ms walk 同时 setBounds 打架 */
 let walkPaused = false
 /** 最近一次推给渲染层的方向/状态（渲染层挂载后补发用） */
-let walkEmit: 'left' | 'right' | 'idle' = 'idle'
+let walkEmit: WalkDir = 'idle'
 
-type WalkDir = 'left' | 'right' | 'idle'
+/** 方向分量 → 方向名。斜向时横向优先（侧视更自然，也避开 dx/dy 相等时分不出主导） */
+function dirOf(dx: number, dy: number): WalkDir {
+  if (dx > 0) return 'right'
+  if (dx < 0) return 'left'
+  if (dy > 0) return 'down'
+  if (dy < 0) return 'up'
+  return 'idle'
+}
+function currentWalkDir(): WalkDir {
+  return dirOf(walkVec.dx, walkVec.dy)
+}
 
 /** 把走动方向/状态推给宠物窗口；同时记下来，窗口刚挂载时补发 */
 function pushWalk(dir: WalkDir): void {
@@ -96,27 +126,79 @@ function stopWalk(): void {
 }
 
 /**
+ * 走动的边界（SPEC-deskpet-walk-polish）：按「宠物可见区」算，不按整窗。
+ *
+ * 窗口 190×250，但 SVG 用 xMidYMid meet，宠物可见内容是与窗口同宽的 190×190、
+ * 垂直居中，上下各有 (250-190)/2 = 30px 纯透明留白（给底部旋转把手）。
+ * 若按整窗钳进 workArea，宠物可见部分离屏幕上下边还差 30px——用户反馈的
+ * 「透明窗口有点大，碰不到桌面端边界」就是这个。让那 30px 留白越出工作区，
+ * 可见区就能贴到工作区上下边。
+ *
+ * 横向窗口宽 = 可见宽（都是 PET_WIN_W），没有留白，仍按整窗算。
+ * 注意：这里只用于「自动走动」；拖动 / 重启仍走 prefsStore.clampPetPos 的
+ * 「整窗可见」约束（e2e-deskpet-out 的 P11b 断言），不共用一套边界。
+ */
+interface WalkLimits {
+  minX: number
+  maxX: number
+  minY: number
+  maxY: number
+}
+interface WalkArea {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+function walkLimits(): WalkLimits {
+  const win = petWindow
+  let area: WalkArea
+  try {
+    const b = win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0 }
+    area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
+  } catch {
+    area = screen.getPrimaryDisplay().workArea
+  }
+  const padY = (PET_WIN_H - PET_WIN_W) / 2
+  return {
+    minX: area.x,
+    maxX: area.x + area.width - PET_WIN_W,
+    minY: area.y - padY,
+    maxY: area.y + area.height - padY - PET_WIN_W
+  }
+}
+
+/**
  * 开走动：只在 free 模式、且窗口已存在时调。
- * 每帧读当前 bounds 往 walkDir 方向挪 WALK_STEP_PX，再用 clampPetPos 钳进工作区；
- * 「想动却没动」就是撞到左右边界，掉头。走满一段停一段，循环往复。
- * 不逐帧写盘：位置只在用户拖动松手时由 savePos 落盘，自动走动是临时的。
+ * 每帧读当前 bounds 往 walkVec 方向挪一步，撞到 walkLimits 边界时对应分量反弹；
+ * 走满一段停一段，rest→run 时换下一个方向。不逐帧写盘：位置只在用户拖动松手时落盘。
  */
 function startWalk(): void {
   if (walkTimer) return // 已在走，避免重复起定时器
   const win = petWindow
   if (!win || win.isDestroyed()) return
-  // 开局方向：靠右半屏先往左、靠左半屏先往右，避免第一帧就撞边掉头
+  // 开局只走「纯方向」（右0 / 下1 / 左2 / 上3），朝离屏幕中心更远那根轴的中心方向：
+  // 斜向开局会被 dirOf 归到横向、看起来还是左右走，上下视图出现得也晚。
+  // 之后每段 rest→run 按 WALK_DIRS 顺序换下一个方向，斜向自然会出现。
   try {
     const b = win.getBounds()
     const area = screen.getDisplayNearestPoint({ x: b.x, y: b.y }).workArea
-    walkDir = b.x + PET_WIN_W / 2 >= area.x + area.width / 2 ? -1 : 1
+    const padY = (PET_WIN_H - PET_WIN_W) / 2
+    const cx = b.x + PET_WIN_W / 2
+    const cy = b.y + padY + PET_WIN_W / 2
+    const midX = area.x + area.width / 2
+    const midY = area.y + area.height / 2
+    walkSeq = Math.abs(cx - midX) >= Math.abs(cy - midY)
+      ? (cx >= midX ? 2 : 0) // 偏右往左、偏左往右
+      : (cy >= midY ? 3 : 1) // 偏下往上、偏上往下
   } catch {
-    walkDir = -1
+    walkSeq = 0
   }
+  walkVec = { ...WALK_DIRS[walkSeq] }
   walkPhase = 'run'
   walkTicks = 0
   walkPaused = false
-  pushWalk(walkDir === 1 ? 'right' : 'left')
+  pushWalk(currentWalkDir())
   walkTimer = setInterval(() => {
     const w = petWindow
     if (!w || w.isDestroyed()) {
@@ -130,21 +212,41 @@ function startWalk(): void {
       if (walkTicks >= WALK_REST_TICKS) {
         walkPhase = 'run'
         walkTicks = 0
-        pushWalk(walkDir === 1 ? 'right' : 'left')
+        walkSeq = (walkSeq + 1) % WALK_DIRS.length
+        walkVec = { ...WALK_DIRS[walkSeq] }
+        pushWalk(currentWalkDir())
       }
       return
     }
-    // run：往当前方向挪一步
-    const nx = b.x + walkDir * WALK_STEP_PX
-    const clamped = clampPetPos({ x: nx, y: b.y }, PET_WIN_W, PET_WIN_H)
-    // 想动却没动 = 撞到工作区左右边界 → 掉头，下一帧再走
-    if (clamped.x === b.x && nx !== b.x) {
-      walkDir = walkDir === 1 ? -1 : 1
-      pushWalk(walkDir === 1 ? 'right' : 'left')
-    } else {
-      // 仍用 setBounds 显式带尺寸：125% 缩放下 setPosition 会让窗口越走越大（实测过）
-      w.setBounds({ x: clamped.x, y: b.y, width: PET_WIN_W, height: PET_WIN_H })
+    // run：往当前方向挪一步，撞边界就反弹对应分量
+    const lim = walkLimits()
+    let { dx, dy } = walkVec
+    let nx = b.x + dx * WALK_STEP_PX
+    let ny = b.y + dy * WALK_STEP_PX
+    let bounced = false
+    if (nx < lim.minX || nx > lim.maxX) {
+      dx = -dx
+      nx = b.x + dx * WALK_STEP_PX
+      bounced = true
     }
+    if (ny < lim.minY || ny > lim.maxY) {
+      dy = -dy
+      ny = b.y + dy * WALK_STEP_PX
+      bounced = true
+    }
+    if (bounced) {
+      walkVec = { dx, dy }
+      pushWalk(currentWalkDir())
+    }
+    nx = Math.min(lim.maxX, Math.max(lim.minX, nx))
+    ny = Math.min(lim.maxY, Math.max(lim.minY, ny))
+    // 仍用 setBounds 显式带尺寸：125% 缩放下 setPosition 会让窗口越走越大（实测过）
+    w.setBounds({
+      x: Math.round(nx),
+      y: Math.round(ny),
+      width: PET_WIN_W,
+      height: PET_WIN_H
+    })
     walkTicks++
     if (walkTicks >= WALK_RUN_TICKS) {
       walkPhase = 'rest'
@@ -329,7 +431,7 @@ export function setupPetWindow(opts: { onQuit: () => void }): void {
     walkPaused = false // 松手后恢复自动走动（非 free 模式没有 walkTimer，无副作用）
     // 拖动时推过 idle，松手要按当前相位补回方向/停下状态，否则渲染层一直停在正面
     if (walkTimer) {
-      pushWalk(walkPhase === 'rest' ? 'idle' : walkDir === 1 ? 'right' : 'left')
+      pushWalk(walkPhase === 'rest' ? 'idle' : currentWalkDir())
     }
     if (!win || win.isDestroyed()) return
     const b = win.getBounds()
