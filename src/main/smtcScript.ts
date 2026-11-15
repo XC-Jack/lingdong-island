@@ -1,5 +1,5 @@
 /**
- * SMTC 桥接脚本（SPEC-music-page）。
+ * SMTC 桥接脚本（SPEC-music-page / SPEC-music-controls）。
  *
  * 为什么是「一个常驻 PowerShell 子进程 + 行协议」而不是每秒起一个进程：
  * 实测单次 `powershell.exe` 启动约 755ms，每秒起进程会明显卡顿；常驻后单次往返约 19ms。
@@ -12,9 +12,14 @@
  * 不带 BOM 时 PS 5.1 按系统 ANSI 解码含中文的脚本，类型名会被解坏，
  * 报「找不到类型 [System.Runtime.WindowsRuntimeSystemExtensions]」。BOM 由 `writeBridgeScript` 加。
  *
- * 协议（每行一条 JSON，UTF-8 无 BOM 输出）：
- *   stdin  ← "poll" / "toggle" / "next" / "prev"
+ * 协议（每行一条，UTF-8 无 BOM 输出）：
+ *   stdin  ← 纯文本 "poll" / "toggle" / "next" / "prev" / "resync"
+ *            或一行 JSON：{"cmd":"seek","value":秒} / {"cmd":"shuffle","value":bool}
+ *                          / {"cmd":"repeat","value":0|1|2} / {"cmd":"volume","value":0..1}
  *   stdout → {"type":"state",...} 状态快照；{"type":"ack","cmd":...,"ok":bool} 命令回执
+ *
+ * 纯文本命令保留原样，带参数的新命令才用 JSON：两个 e2e 脚本直接发纯文本命令驱动本脚本，
+ * 全量改协议会无谓打断它们（见 SPEC-music-controls「混合行协议，最小改动」）。
  */
 export const SMTC_SCRIPT = String.raw`$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -69,6 +74,91 @@ function PickIndex($sessions) {
   return 0
 }
 
+# 系统主音量（Core Audio / IAudioEndpointVolume）。SMTC 会话接口没有音量方法，
+# 只能读写 Windows 默认音频输出设备的主音量——会影响所有程序声音，不是单个播放器音量。
+# 必须用 C# COM interop：PowerShell 5.1 直接拿不到 IAudioEndpointVolume 的 COM 接口。
+# 源码必须全 ASCII、无中文注释、here-string 结束符在行首；否则 PS 5.1 会把 C# 当 PS 解析。
+# Add-Type -TypeDefinition 在本进程（已加载 WinRT 类型）实测编译成功，无需额外辅助进程。
+$volSrc = @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace IslandVol {
+  [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IMMDeviceEnumerator {
+    [PreserveSig] int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IntPtr ppDevices);
+    [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppEndpoint);
+    [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string pwstrId, out IMMDevice ppDevice);
+    [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr pClient);
+    [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr pClient);
+  }
+
+  [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IMMDevice {
+    [PreserveSig] int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+    [PreserveSig] int OpenPropertyStore(int stgmAccess, out IntPtr ppProperties);
+    [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string ppstrId);
+    [PreserveSig] int GetState(out int pdwState);
+  }
+
+  [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioEndpointVolume {
+    [PreserveSig] int RegisterControlChangeNotify(IntPtr pNotify);
+    [PreserveSig] int UnregisterControlChangeNotify(IntPtr pNotify);
+    [PreserveSig] int GetChannelCount(out int pnChannelCount);
+    [PreserveSig] int SetMasterVolumeLevel(float fLevelDB, ref Guid pguidEventContext);
+    [PreserveSig] int SetMasterVolumeLevelScalar(float fLevel, ref Guid pguidEventContext);
+    [PreserveSig] int GetMasterVolumeLevel(out float pfLevelDB);
+    [PreserveSig] int GetMasterVolumeLevelScalar(out float pfLevel);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid pguidEventContext);
+    [PreserveSig] int GetMute(out bool pbMute);
+    [PreserveSig] int GetVolumeStepInfo(out int pnStep, out int pnStepCount);
+    [PreserveSig] int VolumeStepUp(ref Guid pguidEventContext);
+    [PreserveSig] int VolumeStepDown(ref Guid pguidEventContext);
+    [PreserveSig] int QueryHardwareSupport(out int pdwHardwareSupportMask);
+    [PreserveSig] int GetVolumeRange(out float pflVolumeMindB, out float pflVolumeMaxdB, out float pflVolumeIncrementdB);
+  }
+
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  public class MMDeviceEnumeratorComObject { }
+
+  public static class Vol {
+    private static IAudioEndpointVolume Endpoint() {
+      var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+      IMMDevice device;
+      int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+      Marshal.ThrowExceptionForHR(hr);
+      Guid iid = typeof(IAudioEndpointVolume).GUID;
+      object o;
+      hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+      Marshal.ThrowExceptionForHR(hr);
+      return (IAudioEndpointVolume)o;
+    }
+
+    public static float Get() {
+      float level;
+      int hr = Endpoint().GetMasterVolumeLevelScalar(out level);
+      Marshal.ThrowExceptionForHR(hr);
+      return level;
+    }
+
+    public static void Set(float f) {
+      Guid g = Guid.Empty;
+      int hr = Endpoint().SetMasterVolumeLevelScalar(f, ref g);
+      Marshal.ThrowExceptionForHR(hr);
+    }
+  }
+}
+'@
+Add-Type -TypeDefinition $volSrc
+
+$repeatEnumT = [Windows.Media.MediaPlaybackAutoRepeatMode, Windows.Media, ContentType=WindowsRuntime]
+
+# 读系统主音量：失败时回 0（不让音量读不到连累整份状态快照）
+function GetVolume() {
+  try { return [math]::Round([double][IslandVol.Vol]::Get(), 3) } catch { return 0 }
+}
+
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
 Emit @{ type = "ready" }
 
@@ -78,7 +168,21 @@ while ($true) {
   $line = $line.Trim()
   if ($line -eq "") { continue }
 
-  if ($line -eq "resync") {
+  # 带参数的新命令用一行 JSON；其余整行就是一个纯文本命令。
+  # 解析失败按未知命令处理，只回一条 ack，不让坏输入把循环带崩。
+  $cmd = $line
+  $val = $null
+  if ($line.StartsWith("{")) {
+    try {
+      $j = $line | ConvertFrom-Json
+      $cmd = [string]$j.cmd
+      $val = $j.value
+    } catch {
+      $cmd = ""
+    }
+  }
+
+  if ($cmd -eq "resync") {
     # 媒体会话列表变化（播放器刚打开/关闭）时重取管理器句柄
     try {
       $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
@@ -89,12 +193,27 @@ while ($true) {
     continue
   }
 
+  # 音量不依赖 SMTC 会话：没有播放器时也要能调（改的是系统主音量）
+  if ($cmd -eq "volume") {
+    try {
+      $v = [double]$val
+      if ($v -lt 0) { $v = 0 }
+      if ($v -gt 1) { $v = 1 }
+      [IslandVol.Vol]::Set([float]$v)
+      Emit @{ type = "ack"; cmd = "volume"; ok = $true }
+    } catch {
+      Emit @{ type = "ack"; cmd = "volume"; ok = $false }
+    }
+    continue
+  }
+
   $sessions = $mgr.GetSessions()
   $idx = PickIndex $sessions
 
-  if ($line -eq "poll") {
+  if ($cmd -eq "poll") {
     if ($idx -lt 0) {
-      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = "" }
+      # 空态也要把新字段补齐，渲染层才不会读到 undefined
+      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = (GetVolume); canSeek = $false; canShuffle = $false; canRepeat = $false }
       continue
     }
     # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
@@ -103,6 +222,11 @@ while ($true) {
       $props = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
       $tl = $s.GetTimelineProperties()
       $info = $s.GetPlaybackInfo()
+      $ctrl = $info.Controls
+      # PS 5.1 把 Nullable<bool> / Nullable<enum> 自动解包成普通值：直接强转即可，
+      # 不要写 .HasValue / .Value（实测为空）。见 .tmp/probe-smtc-controls.mjs。
+      $shuffle = [bool]$info.IsShuffleActive
+      $repeat = [int]$info.AutoRepeatMode
       Emit ([ordered]@{
         type = "state"
         active = $true
@@ -113,6 +237,12 @@ while ($true) {
         duration = [math]::Round($tl.EndTime.TotalSeconds, 1)
         playing = ($info.PlaybackStatus.ToString() -eq "Playing")
         app = [string]$s.SourceAppUserModelId
+        shuffle = $shuffle
+        repeat = $repeat
+        volume = (GetVolume)
+        canSeek = [bool]$ctrl.IsPlaybackPositionEnabled
+        canShuffle = [bool]$ctrl.IsShuffleEnabled
+        canRepeat = [bool]$ctrl.IsRepeatEnabled
       })
     } catch {
       # 把异常文本吐出去，别再静默发空态——静默会让人误以为「本机没有播放器」
@@ -121,26 +251,38 @@ while ($true) {
     continue
   }
 
-  if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $line; ok = $false }; continue }
+  if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $cmd; ok = $false }; continue }
 
   # 未知命令先挡掉，否则 switch 的 default 里 continue 之后还会落到下面那条 Emit，吐两条 ack
-  if ($line -ne "toggle" -and $line -ne "next" -and $line -ne "prev") {
-    Emit @{ type = "ack"; cmd = $line; ok = $false }
+  if ($cmd -ne "toggle" -and $cmd -ne "next" -and $cmd -ne "prev" -and
+      $cmd -ne "seek" -and $cmd -ne "shuffle" -and $cmd -ne "repeat") {
+    Emit @{ type = "ack"; cmd = $cmd; ok = $false }
     continue
   }
 
   $s = @($sessions)[$idx]
   $ok = $false
   try {
-    switch ($line) {
-      "toggle" { $ok = Await ($s.TryTogglePlayPauseAsync()) ([bool]) }
-      "next"   { $ok = Await ($s.TrySkipNextAsync()) ([bool]) }
-      "prev"   { $ok = Await ($s.TrySkipPreviousAsync()) ([bool]) }
+    switch ($cmd) {
+      "toggle"  { $ok = Await ($s.TryTogglePlayPauseAsync()) ([bool]) }
+      "next"    { $ok = Await ($s.TrySkipNextAsync()) ([bool]) }
+      "prev"    { $ok = Await ($s.TrySkipPreviousAsync()) ([bool]) }
+      "seek"    {
+        # TryChangePlaybackPositionAsync 收 100 纳秒 ticks，不是秒
+        $ticks = [int64][TimeSpan]::FromSeconds([double]$val).Ticks
+        $ok = Await ($s.TryChangePlaybackPositionAsync($ticks)) ([bool])
+      }
+      "shuffle" { $ok = Await ($s.TryChangeShuffleActiveAsync([bool]$val)) ([bool]) }
+      "repeat"  {
+        $name = switch ([int]$val) { 0 { "None" } 1 { "Track" } default { "List" } }
+        $mode = [Enum]::Parse($repeatEnumT, $name)
+        $ok = Await ($s.TryChangeAutoRepeatModeAsync($mode)) ([bool])
+      }
     }
   } catch {
-    Emit @{ type = "ack"; cmd = $line; ok = $false }
+    Emit @{ type = "ack"; cmd = $cmd; ok = $false }
     continue
   }
-  Emit @{ type = "ack"; cmd = $line; ok = [bool]$ok }
+  Emit @{ type = "ack"; cmd = $cmd; ok = [bool]$ok }
 }
 `

@@ -2409,3 +2409,107 @@ div.pm-row[draggable='true'] {
   outline: 2px solid rgba(255, 143, 163, 0.7);
   outline-offset: 2px;
 }
+
+/* 进度条拖拽热区：条子本身只有 3px，用一层更高的透明容器接鼠标事件 */
+.music-seek {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  height: 14px;
+  cursor: default;
+  touch-action: none;
+}
+.music-seek.seekable {
+  cursor: pointer;
+}
+
+/* 第二行控件：随机 / 循环 / 音量。刻意不用 .music-btn / .music-ctl，
+   免得影响既有 e2e 对「三个播放控制按钮」的断言 */
+.music-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding-top: 2px;
+}
+.music-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  color: rgba(242, 243, 245, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+}
+.music-chip:hover:not(:disabled) {
+  color: #f2f3f5;
+  background: rgba(255, 255, 255, 0.13);
+}
+.music-chip.on {
+  color: #ff8fa3;
+  background: rgba(255, 143, 163, 0.16);
+}
+.music-chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.music-chip:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}
+.music-chip-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: #ff8fa3;
+}
+.music-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(242, 243, 245, 0.6);
+}
+.music-volume input[type='range'] {
+  width: 92px;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.music-volume input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.music-volume input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border: none;
+  border-radius: 50%;
+  background: #ff8fa3;
+}
+.music-volume input[type='range']:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}
+.music-volume-num {
+  min-width: 32px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(242, 243, 245, 0.38);
+  text-align: right;
+}

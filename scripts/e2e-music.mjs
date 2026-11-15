@@ -232,6 +232,14 @@ try {
       readable, `真实会话 ${realSessions} 个，但 musicGet().active = ${active}`)
     const canCheckSession = active
 
+    // 第 1 批新增字段：无论有会话还是空态，musicGet() 都必须带齐，不能出现 undefined
+    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 三个 can* 布尔）',
+      state && typeof state.shuffle === 'boolean' &&
+      typeof state.repeat === 'number' && state.repeat >= 0 && state.repeat <= 2 &&
+      typeof state.volume === 'number' && state.volume >= 0 && state.volume <= 1 &&
+      typeof state.canSeek === 'boolean' && typeof state.canShuffle === 'boolean' && typeof state.canRepeat === 'boolean',
+      JSON.stringify(state))
+
     const hasBar = await islandEval(`document.querySelectorAll('.music-bar-fill').length`)
     const btns = await islandEval(`document.querySelectorAll('.music-ctl .music-btn').length`)
     if (canCheckSession) {
@@ -248,6 +256,15 @@ try {
         state && typeof state.title === 'string' && typeof state.position === 'number' &&
         typeof state.duration === 'number' && typeof state.playing === 'boolean' && typeof state.app === 'string',
         JSON.stringify(state))
+      // 第 1 批新增控件：独立 .music-extra 行，不占用 .music-ctl 的三个按钮
+      const chips = await islandEval(`document.querySelectorAll('.music-extra .music-chip').length`)
+      ok('M2h 有会话时渲染两个新开关（随机 / 循环）', chips === 2, `实际 ${chips}`)
+      const volRange = await islandEval(`document.querySelectorAll('.music-volume input[type="range"]').length`)
+      ok('M2i 有会话时渲染音量滑块', volRange === 1, `实际 ${volRange}`)
+      const seekBox = await islandEval(`document.querySelectorAll('.music-seek').length`)
+      ok('M2j 有会话时渲染进度条拖拽热区', seekBox === 1, `实际 ${seekBox}`)
+      const shuffleDisabled = await islandEval(`(() => { const b = document.querySelectorAll('.music-extra .music-chip')[0]; return b ? b.disabled : null })()`)
+      ok('M2k 随机按钮按 canShuffle 能力位禁用', shuffleDisabled === (state.canShuffle !== true), `禁用=${shuffleDisabled} / canShuffle=${state.canShuffle}`)
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)

@@ -255,6 +255,36 @@ const IcoPause = (): React.JSX.Element => (
   </svg>
 )
 
+/** 随机播放（交叉箭头） */
+const IcoShuffle = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 7h3.2c3.6 0 5.6 10 9.6 10H20" />
+    <path d="M17 14l3 3-3 3" />
+    <path d="M4 17h3.2c1.7 0 3-1.6 4.2-3.6" />
+    <path d="M14 9.6c1-1.7 1.8-2.6 2.8-2.6H20" />
+    <path d="M17 4l3 3-3 3" />
+  </svg>
+)
+
+/** 循环（双箭头闭环）；单曲循环时由文字角标 1 区分 */
+const IcoRepeat = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 3l3 3-3 3" />
+    <path d="M20 6H8a4 4 0 0 0-4 4v1" />
+    <path d="M7 21l-3-3 3-3" />
+    <path d="M4 18h12a4 4 0 0 0 4-4v-1" />
+  </svg>
+)
+
+/** 小喇叭（音量行图标） */
+const IcoVolume = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none" />
+    <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M19 6a8.5 8.5 0 0 1 0 12" />
+  </svg>
+)
+
 /** 文件夹（在文件夹中显示） */
 const IcoFolder = (): React.JSX.Element => (
   <IconSvg>
@@ -1745,7 +1775,29 @@ function MusicPanel(): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
   const [live, setLive] = useState(0)
-  const [busy, setBusy] = useState<MusicCommand | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  // 拖进度条 / 拖音量时，本地值先跟上，等下一次 poll 回来再对齐真实值
+  const [seeking, setSeeking] = useState(false)
+  const [volLocal, setVolLocal] = useState<number | null>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
+  // 音量滑块拖动时会连发 onChange，用 120ms 防抖只把最后一个值发去主进程；
+  // 不走 ctl 的 busy 锁（那是给「点一下按钮」防连点用的，会把拖动中的事件全吃掉）
+  const volTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const volPending = useRef<number | null>(null)
+
+  const sendVolume = useCallback((v: number) => {
+    volPending.current = v
+    if (volTimer.current !== null) clearTimeout(volTimer.current)
+    volTimer.current = setTimeout(() => {
+      volTimer.current = null
+      if (volPending.current !== null) void window.island.musicControl({ cmd: 'volume', value: volPending.current }).catch(() => false)
+      volPending.current = null
+    }, 120)
+  }, [])
+
+  useEffect(() => () => {
+    if (volTimer.current !== null) clearTimeout(volTimer.current)
+  }, [])
 
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
   useEffect(() => {
@@ -1760,14 +1812,19 @@ function MusicPanel(): React.JSX.Element {
     }
   }, [])
 
-  // 每次收到新快照就把插值重置到采样点
+  // 每次收到新快照就把插值重置到采样点；拖动中不打断，免得条子往回跳
   useEffect(() => {
-    if (music) setLive(music.position)
-  }, [music?.position, music?.title, music?.playing])
+    if (music && !seeking) setLive(music.position)
+  }, [music?.position, music?.title, music?.playing, seeking])
+
+  // 主进程采样回来后清掉音量本地值，让滑块对齐系统真实音量
+  useEffect(() => {
+    if (music) setVolLocal(null)
+  }, [music?.volume])
 
   // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动
   useEffect(() => {
-    if (!music || !music.active || !music.playing) return
+    if (!music || !music.active || !music.playing || seeking) return
     const id = setInterval(() => {
       setLive((v) => {
         const next = v + 1
@@ -1775,12 +1832,13 @@ function MusicPanel(): React.JSX.Element {
       })
     }, 1000)
     return () => clearInterval(id)
-  }, [music?.active, music?.playing, music?.duration, music])
+  }, [music?.active, music?.playing, music?.duration, music, seeking])
 
   const ctl = useCallback(
     (cmd: MusicCommand) => {
       if (busy) return
-      setBusy(cmd)
+      const key = typeof cmd === 'string' ? cmd : cmd.cmd
+      setBusy(key)
       void window.island
         .musicControl(cmd)
         .catch(() => false)
@@ -1794,6 +1852,38 @@ function MusicPanel(): React.JSX.Element {
 
   const active = music?.active === true
   const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
+
+  /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
+  const secAt = (clientX: number): number => {
+    const el = barRef.current
+    if (!el || !music || music.duration <= 0) return 0
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0) return 0
+    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+    return ratio * music.duration
+  }
+
+  const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!music?.canSeek || music.duration <= 0 || busy) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setSeeking(true)
+    setLive(secAt(e.clientX))
+  }
+  const onSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!seeking) return
+    setLive(secAt(e.clientX))
+  }
+  const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!seeking) return
+    const sec = secAt(e.clientX)
+    setLive(sec)
+    setSeeking(false)
+    ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
+  }
+
+  const repeatLabel = music?.repeat === 1 ? '单曲循环' : music?.repeat === 2 ? '列表循环' : '不循环'
+  const nextRepeat = ((music?.repeat ?? 0) + 1) % 3 as 0 | 1 | 2
+  const volume = volLocal ?? music?.volume ?? 0
 
   if (!active) {
     return (
@@ -1839,8 +1929,17 @@ function MusicPanel(): React.JSX.Element {
       </div>
 
       <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-        <div className="music-bar">
-          <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+        <div
+          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''}`}
+          ref={barRef}
+          onPointerDown={onSeekPointerDown}
+          onPointerMove={onSeekPointerMove}
+          onPointerUp={onSeekPointerUp}
+        >
+          <div className="music-bar">
+            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+          </div>
         </div>
         <div className="music-times">
           <span className="music-time">{fmtDuration(live)}</span>
@@ -1880,6 +1979,48 @@ function MusicPanel(): React.JSX.Element {
         >
           <IcoNext />
         </button>
+      </div>
+
+      <div className="music-extra">
+        <button
+          type="button"
+          className={`music-chip ${music?.shuffle ? 'on' : ''}`}
+          title={music?.canShuffle ? (music?.shuffle ? '随机播放：开' : '随机播放：关') : '当前播放器不支持随机'}
+          aria-label="随机播放"
+          aria-pressed={music?.shuffle === true}
+          disabled={!music?.canShuffle || busy !== null}
+          onClick={() => ctl({ cmd: 'shuffle', value: !music?.shuffle })}
+        >
+          <IcoShuffle />
+        </button>
+        <button
+          type="button"
+          className={`music-chip ${(music?.repeat ?? 0) > 0 ? 'on' : ''}`}
+          title={music?.canRepeat ? `循环：${repeatLabel}（点击切换）` : '当前播放器不支持循环'}
+          aria-label={`循环：${repeatLabel}`}
+          disabled={!music?.canRepeat || busy !== null}
+          onClick={() => ctl({ cmd: 'repeat', value: nextRepeat })}
+        >
+          <IcoRepeat />
+          {music?.repeat === 1 ? <span className="music-chip-badge">1</span> : null}
+        </button>
+        <div className="music-volume" title="系统音量（会影响所有程序声音）">
+          <IcoVolume />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            aria-label="系统音量"
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setVolLocal(v)
+              sendVolume(v)
+            }}
+          />
+          <span className="music-volume-num">{Math.round(volume * 100)}%</span>
+        </div>
       </div>
     </div>
   )
