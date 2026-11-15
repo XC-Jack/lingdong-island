@@ -5,6 +5,7 @@
 - 关联：用户 m00072「全都补、分批做」；用户 m01471「下一批」＝开工第 2 批
 - 上游规格：`docs/Spec/SPEC-music-page.md`（第 5 页音乐页）、`docs/Spec/SPEC-music-controls.md`（第 1 批，已验收合并）
 - 历史卡点：`docs/facts/本机约束与踩坑.md:87`、`docs/facts/技术方案.md:84` 曾记「PS 5.1 拿不到 SMTC 封面字节，用音符占位，后续如需封面另开 SPEC 走 C# 原生辅助进程」——**本批实测推翻，见第七节，结论须作废**。
+- **合并/上线状态（2026-11-15 16:15，最新，覆盖下方「六、不做什么」与「八、边界」的历史表述）**：用户 m01786「合并打包」明确授权后，本批已合并回 `main`（合并提交 `d04b4e5`，`git diff --stat music-cover main` 为空），并已 `npm run dist` 打包、静默安装到 `D:\软件\灵动岛\`（装入 `app.asar` `10967021 B` / SHA256 `FFFA8492…9060`，与 win-unpacked 逐字节一致）、干净环境启动安装版 4 进程主窗口正常、包内复核命中 `IslandCoverGrab`/`coverCacheKey`/`music-cover-img`。详见第九节。下方「不合并、不打包、不装机」是开发阶段的历史状态，已被本条取代。
 
 ## 一、目标
 
@@ -58,7 +59,7 @@
 - 不做封面缓存落盘、不做封面淡入动画、不做封面点击放大。
 - 不改音量（仍是按应用音频会话）、不改点播、不加回随机/循环按钮（用户已拍板删除）。
 - 不引入新依赖、不加原生辅助进程、不改行协议（`cover` 只是 state 快照里多一个字段）。
-- 不合并回 `main`、不打包、不装机（各需用户单独点头）。
+- ~~不合并回 `main`、不打包、不装机（各需用户单独点头）~~（历史表述，已于 2026-11-15 16:15 由用户 m01786 授权合并打包完成，见抬头与第九节）。
 
 ## 七、开工前实测结论（推翻历史卡点）
 
@@ -85,4 +86,12 @@
 5. [已核验] `node .tmp/probe-music-controls-render.mjs` → `PASS（18 过 / 0 败）`，含 P2b/P13 与既有 D1–D5 拖动回归。
 6. [已核验] `node .tmp/probe-prod-bridge-cover.mjs` → `PASS（5 过 / 0 败）`：真实封面 46512 字节 PNG、`magic=89504e470d0a1a0a`、第二次 poll `cover=null`（缓存生效）。
 7. [未核验] 真人预览版：封面显示效果、换歌时封面切换、无封面回落音符、拖动进度/调音量不受影响——需用户在本机预览版实测。
-8. 边界：本批未合并回 `main`、未 `npm run dist` 打包、未装机；`music-cover` 分支工作区已提交后干净（以 `git status --short` 为准）。
+8. 边界：~~本批未合并回 `main`、未 `npm run dist` 打包、未装机~~（历史状态，已由用户 m01786 授权完成，见第九节）；`music-cover` 分支工作区已提交后干净（以 `git status --short` 为准）。
+
+## 九、合并与上线记录（2026-11-15 16:15，用户 m01786「合并打包」）
+
+1. [已核验] 合并：`git switch main` → `git merge --no-ff music-cover -m "merge: 音乐页真实封面（第 2 批，用户授权合并打包）"` 无冲突 → 合并提交 **`d04b4e5`**；合并后在 `main` 上重跑 `npm run typecheck` / `npm run build` EXIT=0，`git diff --stat music-cover main` 为空＝逐字节一致。
+2. [已核验] 打包：双镜像 `npm run dist` **DIST_EXIT=0**（打包前先停预览版 electron 释放内存，避免 7-Zip 32 位 `ERROR: Can't allocate required memory!`）。安装包 `release\灵动岛 Setup 0.1.0.exe` **123670976 B** / 16:13:28 / SHA256 `56473A20741D16BEB49E0D8DC9FD5133C624336A19968457C0E1F1FC82C6E72A`；`release\win-unpacked\resources\app.asar` **10967021 B** / SHA256 `FFFA8492F1E902A375D649BDF4DBD67EA20D722B3F646CB882C2FFB3B0249060`。
+3. [已核验] 装机：静默安装 `Start-Process -FilePath 'release\灵动岛 Setup 0.1.0.exe' -ArgumentList '/S','/D=D:\软件\灵动岛' -Wait`（`INSTALLER_EXIT=0`）；装后 `D:\软件\灵动岛\resources\app.asar` **10967021 B** / SHA256 `FFFA8492…9060` 与 win-unpacked 逐字节一致（`ASAR_MATCH=True`）；旧包 10937922 B / `070AC860…EF44` 已被覆盖。
+4. [已核验] 启动与包内复核：干净子进程 `Remove-Item Env:ELECTRON_RUN_AS_NODE` 后 `Start-Process 'D:\软件\灵动岛\灵动岛.exe'` → **4 进程**、主窗口「灵动岛」pid 2904 Responding=True、开发预览版 0 进程；UTF8 解码安装版 `app.asar` 命中 `IslandCoverGrab` / `function GetCover` / `coverCacheKey` / `music-cover-img` / `AsStreamForRead` / `IslandAppVol` / `seekGuardRef` ⇒ 本批封面代码与第 1 批控制代码确实进包。
+5. 边界：独立验收按 `docs/工程规则.md` 三.5 攒批、本批未做（验收记录留空，与历史先例一致）；未打新生产锚点标签（沿用 `prod-20261113`）；任务分支 `music-cover` 保留未删；[未核验] 真人上手看安装版封面显示/换歌切换/无封面回落/控制不受影响。
