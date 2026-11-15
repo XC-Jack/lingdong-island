@@ -28,6 +28,7 @@
   seek/shuffle/repeat/volume 协议**保留**（删它们会连带掀动大量测试且不影响界面，属「不做」）。
   **第一/三/五节及第九/十节里「补齐随机 / 循环」「按钮可点 / 高亮 / 乐观反馈」等描述全部作废**，以本节与第十一节为准；
   音量三层匹配、按应用音量语义、点播三项不变。详见第十一节三次修复自检。
+- **四次修复（2026-11-15，用户 m01234 报「拖动进度条会回缩再到目标刻度，很怪」）**：进度条点播虽能跳到目标，但拖动/松手瞬间会先缩回拖动前的位置、再滑到目标。根因两处叠加：① `MusicPanel` 里「收到新快照就 `setLive(music.position)`」的 useEffect 依赖含 `seeking`，松手 `seeking` 翻 false 那一帧用**旧 position** 把 `live` 拽回；② `.music-bar-fill` 的 `transition: transform 960ms linear` 把「回缩—再滑」放成约 1 秒慢动作，拖动时条子也不跟手。改法：加 `seekGuardRef` 保护窗口（松手后到播放器回传「跳到目标附近」的快照前忽略旧 position，换歌/2.5s 超时兜底放弃保护）+ `seekingRef` 同步镜像（拖动中 effect 不打断）+ 拖动期间 `.music-seek.dragging .music-bar-fill { transition: none }` 关缓动。新增探针 D1–D5 真驱动 PointerEvent 并做 A/B 自证：旧代码下 D2/D3/D5 必失败（scale 只到 0.24、时间文本跳回 0:07），新代码 16/0 全过，证明不是假绿。详见第十二节。本次只改 `App.tsx` 与 `styles.css`（及一次性探针），桥接层与两个正式 e2e 零改动。
 
 ## 一、目标
 
@@ -275,4 +276,28 @@
 
 未验证（只有真人能验）：真实播放器下拖进度条确实跳到指定秒、拖音量滑块只改当前播放器音量且其它程序声音不变、
 对不上号的播放器音量滑块置灰显示 `--`。随机/循环按钮已删除，无需再验其「生效」。交预览版由用户实测。
+本批不合并回 `main`、不打包安装，按 `docs/工程规则.md` 等用户单独授权。
+
+## 十二、四次修复自检（2026-11-15，用户 m01234 进度条回缩）
+
+现场与根因见头部「四次修复」段。改法只动 `src/renderer/src/App.tsx` 与 `src/renderer/src/styles.css`，
+桥接层 `src/main/smtcScript.ts` / `src/shared/types.ts` / `src/main/musicStore.ts` / `src/preload/index.ts`
+及两个正式 e2e `scripts/e2e-music.mjs` / `scripts/e2e-music-session.mjs` **一字未改**。
+
+自检命令与结果（全部 [已核验]）：
+1. `npm run typecheck`：node + web 两个 `tsc --noEmit` 无输出通过。
+2. `npm run build`：`electron-vite build` 通过，`out/main/index.js 142.82 kB`、`out/renderer/assets/index-DyORRla1.css 61.09 kB`、`out/renderer/assets/index-Bv_yRcvz.js 106.76 kB`。
+3. `node .tmp/probe-music-controls-render.mjs` → `PROBE MUSIC CONTROLS RENDER: PASS（16 过 / 0 败）`，
+   含新增 D1–D5：拖动中挂 `.dragging`、拖到 0.75 实时跟手、松手后 1.7s 内 scale 不低于 0.70 不回缩、
+   松手后 `.dragging` 移除、时间文本停在目标刻度（≈22.5s）不被旧快照拽回。
+4. **A/B 自证（防假绿）**：把修复版暂存到 `.tmp/seekfix-*`，`git checkout HEAD -- App.tsx styles.css` 回退到本批基线
+   `986d9de` 后重建跑同一探针 → `FAIL（12 过 / 4 败）`，D1/D2/D3/D5 全失败（D2 scale 仅 0.24、
+   D3 采样 0.24→0.21 回缩、D5 时间文本跳回 0:07）；拷回修复版重建复跑 → `PASS（16 过 / 0 败）`。
+   证明 D1–D5 真能抓到用户所报的回缩现象，不是「探针条件太理想」的假绿。
+5. `node scripts/e2e-music.mjs` → `E2E MUSIC: PASS（30 过 / 0 败）`（本机真实会话 1：「时过境迁 / 汽水音乐 / 暂停」，
+   M2a–M2l / M3 / M4 全跑到未跳过）。
+6. `node scripts/e2e-music-session.mjs` → `E2E MUSIC SESSION: PASS（18 过 / 0 败）`（本次 `PLAYING_IDX=1`，S2 通过）。
+
+未验证（只有真人能验）：在「汽水音乐」等真实播放器上按住进度条拖到任意秒，条子全程跟手、松手不缩回再滑；
+拖动中时间文本实时跟随；不同播放器（网页 / 商店应用）下行为一致。交预览版由用户实测。
 本批不合并回 `main`、不打包安装，按 `docs/工程规则.md` 等用户单独授权。

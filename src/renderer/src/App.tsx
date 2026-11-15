@@ -1756,9 +1756,15 @@ function MusicPanel(): React.JSX.Element {
   const [live, setLive] = useState(0)
   const [busy, setBusy] = useState<string | null>(null)
   // 拖进度条 / 拖音量时，本地值先跟上，等下一次 poll 回来再对齐真实值
+  // seeking 用于挂 .dragging 类（关掉位移动画）与停掉本地每秒插值；
+  // effect 里要立刻读到最新拖动状态，故另用同步的 seekingRef
   const [seeking, setSeeking] = useState(false)
   const [volLocal, setVolLocal] = useState<number | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
+  const seekingRef = useRef(false)
+  // 松手后的「防回缩」保护：记下拖动目标、时间与当时的歌名，在播放器把 Position
+  // 跳到目标前忽略 seek 生效前的旧快照（否则条子先缩回拖动前的位置、再滑到目标）
+  const seekGuardRef = useRef<{ target: number; at: number; title: string } | null>(null)
   // 音量滑块拖动时会连发 onChange，用 120ms 防抖只把最后一个值发去主进程；
   // 不走 ctl 的 busy 锁（那是给「点一下按钮」防连点用的，会把拖动中的事件全吃掉）
   const volTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1791,20 +1797,39 @@ function MusicPanel(): React.JSX.Element {
     }
   }, [])
 
-  // 每次收到新快照就把插值重置到采样点；拖动中不打断，免得条子往回跳
+  // 每次收到新快照就把插值重置到采样点。两点防「回缩」：
+  // ①拖动中（seekingRef）完全不打断本地值；②松手后 seek 生效前，播放器还会连续回传
+  //   拖动前的旧 position，若照单全收，条子会先缩回去、等 seek 生效再滑到目标。
+  //   这段保护窗口内忽略旧快照，直到 position 跳到目标附近（=seek 生效）才恢复跟随。
   useEffect(() => {
-    if (music && !seeking) setLive(music.position)
-  }, [music?.position, music?.title, music?.playing, seeking])
+    if (!music || seekingRef.current) return
+    const guard = seekGuardRef.current
+    if (guard) {
+      if (music.title !== guard.title || Date.now() - guard.at > 2500) {
+        // 换歌 / 超时（比如播放器拒绝 seek）→ 放弃保护，诚实跟随真实位置，不永久卡住
+        seekGuardRef.current = null
+      } else if (Math.abs(music.position - guard.target) > 2) {
+        // 还没跳到目标：这条是 seek 生效前的旧快照，忽略，保持拖动目标值
+        return
+      } else {
+        // 位置已到目标附近 = seek 生效，结束保护
+        seekGuardRef.current = null
+      }
+    }
+    setLive(music.position)
+  }, [music?.position, music?.title, music?.playing])
 
   // 主进程采样回来后清掉音量本地值，让滑块对齐当前应用音频会话的真实音量
   useEffect(() => {
     if (music) setVolLocal(null)
   }, [music?.volume])
 
-  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动
+  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
+  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂
   useEffect(() => {
     if (!music || !music.active || !music.playing || seeking) return
     const id = setInterval(() => {
+      if (seekGuardRef.current) return
       setLive((v) => {
         const next = v + 1
         return music.duration > 0 ? Math.min(next, music.duration) : next
@@ -1845,18 +1870,24 @@ function MusicPanel(): React.JSX.Element {
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!music?.canSeek || music.duration <= 0 || busy) return
     e.currentTarget.setPointerCapture(e.pointerId)
+    seekingRef.current = true
+    seekGuardRef.current = null
     setSeeking(true)
     setLive(secAt(e.clientX))
   }
   const onSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!seeking) return
+    if (!seekingRef.current) return
     setLive(secAt(e.clientX))
   }
   const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!seeking) return
+    if (!seekingRef.current) return
     const sec = secAt(e.clientX)
-    setLive(sec)
+    seekingRef.current = false
     setSeeking(false)
+    setLive(sec)
+    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
+    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
+    seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
     ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
   }
 
@@ -1908,7 +1939,7 @@ function MusicPanel(): React.JSX.Element {
       <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
         {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
         <div
-          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''}`}
+          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
           ref={barRef}
           onPointerDown={onSeekPointerDown}
           onPointerMove={onSeekPointerMove}

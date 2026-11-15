@@ -2358,6 +2358,10 @@ div.pm-row[draggable='true'] {
   transition: transform 960ms linear;
   will-change: transform;
 }
+/* 拖动进度条时关掉位移动画：条子必须实时跟手，否则 960ms 的缓动会让人觉得「拖不动/回缩」 */
+.music-seek.dragging .music-bar-fill {
+  transition: none;
+}
 .music-times {
   display: flex;
   justify-content: space-between;
