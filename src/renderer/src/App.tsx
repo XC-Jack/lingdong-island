@@ -1772,8 +1772,8 @@ function MusicPanel(): React.JSX.Element {
   // 封面 data URL 万一解码失败，记下「哪一个封面坏了」，只回落到音符占位；
   // 换歌拿到新 data URL 时这个旧值不相等，会自然再试一次图片。
   const [coverFailedFor, setCoverFailedFor] = useState<string | null>(null)
-  // 音量横向滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
-  // m02652 参考图改为横向，保留「平时隐形、点喇叭显现」这条交互）
+  // 音量竖直滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
+  // m02917 纠正回竖直，保留「平时隐形、点喇叭显现」这条交互）
   const [volOpen, setVolOpen] = useState(false)
 
   const sendVolume = useCallback((v: number) => {
@@ -2018,7 +2018,7 @@ function MusicPanel(): React.JSX.Element {
             className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
             title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
           >
-            {/* 平时只留喇叭按钮；点一下展开横向音量条，再点收起（用户 m02462 / m02652） */}
+            {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462 / m02917） */}
             <button
               type="button"
               className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
@@ -2029,7 +2029,7 @@ function MusicPanel(): React.JSX.Element {
             >
               <IcoVolume />
             </button>
-            {/* 横向弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
+            {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
             <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
               <input
                 type="range"

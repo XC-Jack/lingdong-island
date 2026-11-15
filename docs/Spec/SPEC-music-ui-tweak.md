@@ -2,12 +2,16 @@
 
 > **重大修订（2026-11-15 20:50）**：用户 m02652「参考这个截图，做这个样子的」＋选「整页照图重排」，
 > 已在**同一分支** `music-ui-tweak` 上按参考图把整页重排，**推翻了下面第一~七节的 m02462 旧目标**
-> （播放按钮右上、音量竖直弹出）。最新目标、范围、自检见**第九节**；第一~八节保留作历史留痕，
-> 其中「播放按钮在封面行右侧」「竖直音量」等表述均已作废，不再代表当前代码。
+> （播放按钮右上、音量竖直弹出）。当时目标、范围、自检见**第九节**；第一~八节保留作历史留痕。
+>
+> **最新修订（2026-11-15 22:00，见第十节）**：用户 m02917「音量调节用不了，还有就是我要竖线调节，不要横线」。
+> 第九节中「音量由竖直改横向」这一条被**明确推翻**——诊断证实写入链路没坏、「用不了」是方向错配，
+> 音量已改回**竖直向上弹出**。第九节其余结论（播放按钮居中、诚实歌词占位、负数剩余、控制行三列）继续有效。
+> **当前代码以第十节为准**：第一~八节的「按钮右上」、第九节的「横向音量」均为历史、不代表当前代码。
 
 - 基线：`main` @ `5a855b9`
 - 分支：`music-ui-tweak`
-- 用户消息：m02462「把音量弄成竖跳的，音量条隐形，点声标时显现；还有就是这个播放等这一块ui移到上面的右边，和音乐条对其」；m02652「参考这个截图，做这个样子的」＋选「整页照图重排」；m02676「继续」
+- 用户消息：m02462「把音量弄成竖跳的，音量条隐形，点声标时显现；还有就是这个播放等这一块ui移到上面的右边，和音乐条对其」；m02652「参考这个截图，做这个样子的」＋选「整页照图重排」；m02676「继续」；m02917「音量调节用不了，还有就是我要竖线调节，不要横线；」
 - 用户截图：m02462 `sha256:a206382f4867a698d22498e82c9c1ccc10f27fa94943554fdfec16fe052ec1ba`；m02652 参考图 `sha256:86cf24a60186c2a898371c509598e4a6d7cd8b33add2cc7b7a166a3f33973bae`
 - 关联：SPEC-music-controls.md（第 1 批控制）、SPEC-music-cover.md（第 2 批封面）
 
@@ -121,3 +125,43 @@
 6. 实施期修掉一个真隐患：`.music-ctl` 一度既嵌在封面行又独立存在（两份，共 6 个按钮，M2b 必挂）；用整段锚点删掉旧块，grep 复查 `music-ctl` 仅 1 处 JSX。`.tmp/check-jsx.mjs` 自写正则首版把 `=>` 的 `>` 误当标签报 9 处假错，改整段 `s` 标志匹配 + 人工 read 核对结构配对。
 7. [未核验] 真人预览版观感：与参考图的相似度、横向音量条向左弹出的手感与不越界、负数剩余时间读数是否合意、不同分辨率/`zoom` 下浮层是否始终在岛内。只有真人能验，待用户试预览版确认。
 8. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机；安装版仍是第 1+2 批产物。合并与打包各需用户单独授权。
+
+## 十、音量竖直回归 + 「用不了」诊断（2026-11-15 22:00，取代第九节第 2、4 条横向表述）
+
+### 缘起与结论
+
+1. 用户 m02917 追加两项纠正：「音量调节用不了」「我要竖线调节，不要横线」。m02462 最早就是「竖跳」，第九节照参考图重排时我把音量改成了横向，**是改错方向**，本次改回。
+2. [已核验] 写入链路没坏：`.tmp/diagnose-volume.mjs` 端到端回读三条路径，真实应用音量都跟着变——直接 IPC `musicControl({cmd:'volume',value:0.37})` 后 `1→0.37`、UI 事件 `→0.62`、真鼠标拖 `→0.27`；浮层可见、`elementFromPoint` 命中 `input` 本身、未被遮挡。
+3. [推断] 「用不了」最可能是方向错配：用户按竖直上下拖去操作只有约 11px 高的横条，竖直方向无有效热区 ⇒ 表现为拖不动。与「我要竖线」是同一件事；无法 100% 还原当时那一下操作，但修复方向一致且明确。
+4. 决议：音量浮层由「向左横向弹出」改回「**向上竖直弹出**」，滑块 `writing-mode: vertical-lr; direction: rtl` 竖直、平时隐形/点喇叭显现的交互保留；播放按钮居中、诚实歌词占位、负数剩余、控制行三列等第九节其余结论不变。
+
+### 修改范围（同一分支增量）
+
+| 文件 | 改动 |
+|---|---|
+| `src/renderer/src/App.tsx` | 仅三处注释「横向」→「竖直」（:1775-1776 `:2021` `:2032`）；DOM 结构不变，`input` 仍常驻 `.music-vol-pop`（保住 M2i/M2l） |
+| `src/renderer/src/styles.css` | `.music-vol-pop` 由向左（`right:calc(100%+8px); top:50%; translateY(-50%); flex-direction:row`）改回向上（`bottom:calc(100%+8px); left:50%; translateX(-50%); flex-direction:column; align-items:center; gap:6px; padding:8px 6px`）；`input[type=range]` 由 `width:92px; height:14px` 改回 `width:14px; height:84px; writing-mode:vertical-lr; direction:rtl`；track `width:3px`（删 height）、thumb `margin-left:-3.5px`（删 margin-top）；`.music-volume-num` `text-align:center`。`visibility/opacity/pointer-events` 切换、`.open`、`.off`、`:disabled`、`reduced-motion` 全保留 |
+| `scripts/e2e-music.mjs` | U2/U3 标签「横条」→「竖条」；U3 判定由 `w > 60` 改 `h > 60 && w < 60`（竖直口径）+ 保留 `inside`；:289 注释同步。旧 M2b/M2g/M2i/M2l/M3 一行未动 |
+| `.tmp/probe-music-controls-render.mjs` | 同步 U2/U3 标签与 `h > 60 && w < 60`，保住 U1/U4/U5 与 D1–D5（一次性，不进提交） |
+| `docs/状态.md` | 顶部新增一句话状态，20:50 条标历史 |
+
+### 预期行为与验收
+
+1. 音量竖条平时 `visibility:hidden`，点喇叭后显现、`h>60 && w<60` 且浮层矩形完全在岛内，再点收起。
+2. 竖条 `writing-mode: vertical-lr`、`direction: rtl`，高 > 宽 ×2，浮层向上弹出（`bottom <= toggle.top`）。
+3. 真鼠标沿 Y 轴上下拖动，真实应用音量跟着变（端到端回读，不是只看 DOM）。
+4. `canVolume===false` 仍置灰 + `disabled` + `--`（第 1 批行为不回归）。
+5. 三个播放按钮仍恰好 3、音量 `input[type=range]` 恰好 1、进度热区恰好 1（旧 e2e 选择器不破）。
+6. 第九节其余结论（U1 控制行居中、U4 诚实歌词占位、U5 负数剩余）不回归。
+
+### 自检记录（本轮竖直回归）
+
+1. [已核验] `npm run typecheck`（node + web 两个 tsc）无输出通过。
+2. [已核验] `npm run build` EXIT=0：`index-PZJEvrUM.css 63.78 kB`、`index-CJV2HPIw.js 108.22 kB`。
+3. [已核验] `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**：U1–U5 全绿，U3 现按竖直口径 `h>60 && w<60` 判定通过；M2b/M2i/M2l/M3/M4/M5 全不回归。
+4. [已核验] `node scripts/e2e-music-session.mjs` → **PASS（20 过 / 0 败）**：协议未动、S1–S19 不回归。
+5. [已核验] `node .tmp/probe-music-controls-render.mjs` → **PASS（23 过 / 0 败）**：P0–P14、U1–U5、D1–D5（拖动不回缩）全绿。
+6. [已核验] `.tmp/capture-vertical-volume.mjs` 真实画面自证：`SESSION={"active":true,"app":"汽水音乐","canVolume":true,"volume":1}`；`GEOM={"vertical":true,"writingMode":"vertical-lr","input":{"x":319,"y":33,"w":11,"h":63},"popAboveToggle":true,"popInside":true,"vis":"visible","pe":"auto","disabled":false,"hitIsInput":true,"num":"100%"}`；真鼠标沿 Y 轴上下拖 `DRAG={"before":1,"volume":0.91,"num":"91%","inp":"0.91","changed":true}`；截图 `.tmp/music-ui-vertical.png`（20096 B）。
+7. [已核验] `vision_describe` 看展开态真实画面：喇叭在下方靠右、上方弹出竖直滑块浮层、竖条完整可见未被裁掉一截、未超出面板；三个播放按钮居中成行。浮层与上方内容「轻微重叠」是弹出层盖在内容之上的正常表现（点开才显现、收起即恢复），几何 `popInside=true` 已确认不越界。
+8. [未核验] 真人预览版观感：竖直拖动手感、浮层向上弹出的位置是否合意、真实播放器下的整体相似度。只有真人能验，待用户试预览版确认。
+9. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机；安装版仍是第 1+2 批产物。合并与打包各需用户单独授权。

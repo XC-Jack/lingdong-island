@@ -287,7 +287,7 @@ try {
           `src 前缀=${coverUi?.imgPrefix}`)
       }
       // 用户 m02652 整页照参考图重排：播放按钮回到进度条下方独立控制行、相对整岛居中；
-      // 音量由竖直改横向弹出；封面行右侧只留诚实「暂无歌词」占位；进度右端用负数剩余时间
+      // 音量保持竖直弹出（m02917 纠正回竖线）；封面行右侧只留诚实「暂无歌词」占位；进度右端用负数剩余时间
       const ctlPos = await islandEval(`(() => {
         const row = document.querySelector('.music-control-row');
         const ctl = row?.querySelector('.music-ctl');
@@ -307,7 +307,7 @@ try {
         Math.abs(ctlPos.ctlCenterX - ctlPos.islandCenterX) <= 6,
         JSON.stringify(ctlPos))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
-      ok('U2 音量横条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
+      ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
       await sleep(250)
       const popShown = await islandEval(`(() => {
@@ -317,8 +317,8 @@ try {
         const pr = p.getBoundingClientRect(), ir = island.getBoundingClientRect();
         return { visibility: getComputedStyle(p).visibility, inside: pr.left >= ir.left - 1 && pr.right <= ir.right + 1 && pr.top >= ir.top - 1 && pr.bottom <= ir.bottom + 1, w: pr.width, h: pr.height };
       })()`)
-      ok('U3 点喇叭后横条显现且完整落在岛内（不被 overflow 裁）',
-        popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.w > 60,
+      ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
+        popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 60 && popShown.w < 60,
         JSON.stringify(popShown))
       // 收起，避免影响后续 M3/M4
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
