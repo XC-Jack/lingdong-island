@@ -2377,14 +2377,16 @@ div.pm-row[draggable='true'] {
   color: rgba(242, 243, 245, 0.38);
 }
 
-/* 控制条：三个按钮居中。主按钮（播放/暂停）实心、比两侧大一档 */
+/* 控制条：三个按钮移到封面行右侧、与封面/歌名垂直居中对齐（用户 m02462）。
+   不再独立占满一行：宽度由内容决定、靠右，gap 收紧避免把封面行撑宽；
+   主按钮（播放/暂停）实心、比两侧大一档 */
 .music-ctl {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  width: 100%;
-  padding-top: 2px;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .music-btn {
   display: flex;
@@ -2435,8 +2437,11 @@ div.pm-row[draggable='true'] {
   cursor: pointer;
 }
 
-/* 第二行控件：音量（当前播放应用）。刻意不用 .music-btn / .music-ctl，
-   免得影响既有 e2e 对「三个播放控制按钮」的断言 */
+/* 控件行：音量（当前播放应用）。刻意不用 .music-btn / .music-ctl，
+   免得影响既有 e2e 对「三个播放控制按钮」的断言。
+   用户 m02462：平时只留喇叭按钮，点一下向上弹出竖直音量条；
+   用 visibility/opacity/pointer-events 切换而非 display:none，
+   这样 input 常驻 DOM（e2e 量得到），也不会隐形时误接鼠标 */
 .music-extra {
   display: flex;
   align-items: center;
@@ -2446,35 +2451,88 @@ div.pm-row[draggable='true'] {
   padding-top: 2px;
 }
 .music-volume {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   color: rgba(242, 243, 245, 0.6);
 }
-.music-volume input[type='range'] {
-  width: 92px;
-  height: 14px;
+.music-vol-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: rgba(242, 243, 245, 0.75);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+}
+.music-vol-toggle:hover,
+.music-vol-toggle.open {
+  color: #f2f3f5;
+  background: rgba(255, 143, 163, 0.16);
+}
+.music-vol-toggle:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}
+.music-vol-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+.music-vol-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(28, 26, 34, 0.96);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.music-vol-pop.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+.music-vol-pop input[type='range'] {
+  width: 14px;
+  height: 84px;
   margin: 0;
   appearance: none;
   -webkit-appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
   background: transparent;
   cursor: pointer;
 }
-.music-volume input[type='range']::-webkit-slider-runnable-track {
-  height: 3px;
+.music-vol-pop input[type='range']::-webkit-slider-runnable-track {
+  width: 3px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
 }
-.music-volume input[type='range']::-webkit-slider-thumb {
+.music-vol-pop input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 10px;
   height: 10px;
-  margin-top: -3.5px;
+  margin-left: -3.5px;
   border: none;
   border-radius: 50%;
   background: #ff8fa3;
 }
-.music-volume input[type='range']:focus-visible {
+.music-vol-pop input[type='range']:focus-visible {
   outline: 2px solid rgba(255, 143, 163, 0.7);
   outline-offset: 2px;
 }
@@ -2483,15 +2541,20 @@ div.pm-row[draggable='true'] {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: rgba(242, 243, 245, 0.38);
-  text-align: right;
+  text-align: center;
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {
   opacity: 0.4;
 }
-.music-volume input[type='range']:disabled {
+.music-vol-pop input[type='range']:disabled {
   cursor: default;
 }
-.music-volume input[type='range']:disabled::-webkit-slider-thumb {
+.music-vol-pop input[type='range']:disabled::-webkit-slider-thumb {
   background: rgba(242, 243, 245, 0.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-vol-pop {
+    transition: none;
+  }
 }

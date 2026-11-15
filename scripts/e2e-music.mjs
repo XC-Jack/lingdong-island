@@ -286,6 +286,34 @@ try {
           /^data:image\/(png|jpeg);base64,/.test(coverUi?.imgPrefix ?? ''),
           `src 前缀=${coverUi?.imgPrefix}`)
       }
+      // 用户 m02462 UI 微调：播放按钮挪到封面行右侧；音量改竖直弹出层、平时隐形
+      const ctlPos = await islandEval(`(() => {
+        const main = document.querySelector('.music-main');
+        const ctl = main?.querySelector('.music-ctl');
+        const meta = main?.querySelector('.music-meta');
+        if (!ctl || !meta) return null;
+        const c = ctl.getBoundingClientRect(), m = meta.getBoundingClientRect();
+        return { inMain: true, ctlRight: c.right, metaRight: m.right, ctlTop: c.top, metaTop: m.top, metaBottom: m.bottom };
+      })()`)
+      ok('U1 播放按钮在封面行（.music-main）内且靠右对齐',
+        ctlPos && ctlPos.ctlRight >= ctlPos.metaRight - 2 && ctlPos.ctlTop >= ctlPos.metaTop - 20 && ctlPos.ctlTop <= ctlPos.metaBottom + 20,
+        JSON.stringify(ctlPos))
+      const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
+      ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
+      await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
+      await sleep(250)
+      const popShown = await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        const island = document.querySelector('.island');
+        if (!p || !island) return null;
+        const pr = p.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        return { visibility: getComputedStyle(p).visibility, inside: pr.left >= ir.left - 1 && pr.right <= ir.right + 1 && pr.top >= ir.top - 1 && pr.bottom <= ir.bottom + 1, w: pr.width, h: pr.height };
+      })()`)
+      ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
+        popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 40,
+        JSON.stringify(popShown))
+      // 收起，避免影响后续 M3/M4
+      await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)
