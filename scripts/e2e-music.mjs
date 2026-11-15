@@ -257,19 +257,14 @@ try {
         state && typeof state.title === 'string' && typeof state.position === 'number' &&
         typeof state.duration === 'number' && typeof state.playing === 'boolean' && typeof state.app === 'string',
         JSON.stringify(state))
-      // 第 1 批新增控件：独立 .music-extra 行，不占用 .music-ctl 的三个按钮
+      // 三次修复（用户 m01006）：随机/循环在真实播放器上无法真执行也读不到状态，
+      // 已直接删掉这两个假按钮。护栏：绝不允许它们再加回来。
       const chips = await islandEval(`document.querySelectorAll('.music-extra .music-chip').length`)
-      ok('M2h 有会话时渲染两个新开关（随机 / 循环）', chips === 2, `实际 ${chips}`)
+      ok('M2h 不再渲染随机 / 循环假按钮', chips === 0, `实际 ${chips}`)
       const volRange = await islandEval(`document.querySelectorAll('.music-volume input[type="range"]').length`)
       ok('M2i 有会话时渲染音量滑块', volRange === 1, `实际 ${volRange}`)
       const seekBox = await islandEval(`document.querySelectorAll('.music-seek').length`)
       ok('M2j 有会话时渲染进度条拖拽热区', seekBox === 1, `实际 ${seekBox}`)
-      // 能力位只是建议性声明，实测不少播放器（如汽水音乐）不声明却仍能收命令；
-      // 随机/循环按钮一律可点（仅命令进行中 busy 时禁用），改用本地乐观反馈显示状态
-      const chipDisabled = await islandEval(`(() => { const b = document.querySelectorAll('.music-extra .music-chip'); return [b[0] ? b[0].disabled : null, b[1] ? b[1].disabled : null] })()`)
-      ok('M2k 随机/循环按钮一律可点（不按能力位置灰）',
-        chipDisabled && chipDisabled[0] === false && chipDisabled[1] === false,
-        `禁用=${JSON.stringify(chipDisabled)} / canShuffle=${state.canShuffle} / canRepeat=${state.canRepeat}`)
       // 音量：只对得上当前播放应用的音频会话才允许拖，对不上号必须置灰且显示 --
       const volUi = await islandEval(`(() => { const i = document.querySelector('.music-volume input[type="range"]'); const n = document.querySelector('.music-volume-num'); return { disabled: i ? i.disabled : null, text: n ? n.textContent.trim() : null } })()`)
       ok('M2l 音量滑块按 canVolume 置灰、对不上号显示 --',

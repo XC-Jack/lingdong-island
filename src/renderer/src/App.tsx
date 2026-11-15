@@ -255,27 +255,6 @@ const IcoPause = (): React.JSX.Element => (
   </svg>
 )
 
-/** 随机播放（交叉箭头） */
-const IcoShuffle = (): React.JSX.Element => (
-  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 7h3.2c3.6 0 5.6 10 9.6 10H20" />
-    <path d="M17 14l3 3-3 3" />
-    <path d="M4 17h3.2c1.7 0 3-1.6 4.2-3.6" />
-    <path d="M14 9.6c1-1.7 1.8-2.6 2.8-2.6H20" />
-    <path d="M17 4l3 3-3 3" />
-  </svg>
-)
-
-/** 循环（双箭头闭环）；单曲循环时由文字角标 1 区分 */
-const IcoRepeat = (): React.JSX.Element => (
-  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M17 3l3 3-3 3" />
-    <path d="M20 6H8a4 4 0 0 0-4 4v1" />
-    <path d="M7 21l-3-3 3-3" />
-    <path d="M4 18h12a4 4 0 0 0 4-4v-1" />
-  </svg>
-)
-
 /** 小喇叭（音量行图标） */
 const IcoVolume = (): React.JSX.Element => (
   <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -1779,11 +1758,6 @@ function MusicPanel(): React.JSX.Element {
   // 拖进度条 / 拖音量时，本地值先跟上，等下一次 poll 回来再对齐真实值
   const [seeking, setSeeking] = useState(false)
   const [volLocal, setVolLocal] = useState<number | null>(null)
-  // 随机/循环的本地乐观值：实测很多播放器（如汽水音乐）收了 TryChange* 命令却始终不上报
-  // IsShuffleActive / AutoRepeatMode，界面若只信 poll 会「点了没反应」。点一下先本地翻转，
-  // 命令被拒（ack ok=false）才回退；换歌/换播放器时清掉，重新跟随播放器。
-  const [shuffleOverride, setShuffleOverride] = useState<boolean | null>(null)
-  const [repeatOverride, setRepeatOverride] = useState<0 | 1 | 2 | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
   // 音量滑块拖动时会连发 onChange，用 120ms 防抖只把最后一个值发去主进程；
   // 不走 ctl 的 busy 锁（那是给「点一下按钮」防连点用的，会把拖动中的事件全吃掉）
@@ -1827,12 +1801,6 @@ function MusicPanel(): React.JSX.Element {
     if (music) setVolLocal(null)
   }, [music?.volume])
 
-  // 换歌 / 换播放器时放弃本地乐观值，重新跟随播放器；同一首歌的每次 poll 不会触发（依赖不变）
-  useEffect(() => {
-    setShuffleOverride(null)
-    setRepeatOverride(null)
-  }, [music?.title, music?.app])
-
   // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动
   useEffect(() => {
     if (!music || !music.active || !music.playing || seeking) return
@@ -1846,20 +1814,13 @@ function MusicPanel(): React.JSX.Element {
   }, [music?.active, music?.playing, music?.duration, music, seeking])
 
   const ctl = useCallback(
-    (cmd: MusicCommand, onReject?: () => void) => {
+    (cmd: MusicCommand) => {
       if (busy) return
       const key = typeof cmd === 'string' ? cmd : cmd.cmd
       setBusy(key)
       void window.island
         .musicControl(cmd)
-        .then((accepted) => {
-          // IPC 只回报「命令是否通过校验并写出」，不是播放器的 ack；
-          // 仅当这里被拒才回退乐观值（播放器侧拒收在此拿不到，靠换歌时清掉自然纠正）
-          if (!accepted && onReject) onReject()
-        })
-        .catch(() => {
-          if (onReject) onReject()
-        })
+        .catch(() => false)
         .finally(() => {
           // 给播放器 300ms 反应时间再解锁，防连点把播放器按懵
           setTimeout(() => setBusy(null), 300)
@@ -1899,22 +1860,7 @@ function MusicPanel(): React.JSX.Element {
     ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
   }
 
-  // 有本地乐观值时优先显示它（播放器不上报状态，界面不能「点了没反应」）
-  const shuffleOn = shuffleOverride ?? music?.shuffle ?? false
-  const repeatVal = (repeatOverride ?? music?.repeat ?? 0) as 0 | 1 | 2
-  const repeatLabel = repeatVal === 1 ? '单曲循环' : repeatVal === 2 ? '列表循环' : '不循环'
   const volume = volLocal ?? music?.volume ?? 0
-
-  const clickShuffle = (): void => {
-    const next = !shuffleOn
-    setShuffleOverride(next)
-    ctl({ cmd: 'shuffle', value: next }, () => setShuffleOverride(shuffleOn))
-  }
-  const clickRepeat = (): void => {
-    const next = ((repeatVal + 1) % 3) as 0 | 1 | 2
-    setRepeatOverride(next)
-    ctl({ cmd: 'repeat', value: next }, () => setRepeatOverride(repeatVal))
-  }
 
   if (!active) {
     return (
@@ -2013,28 +1959,6 @@ function MusicPanel(): React.JSX.Element {
       </div>
 
       <div className="music-extra">
-        <button
-          type="button"
-          className={`music-chip ${shuffleOn ? 'on' : ''}`}
-          title={shuffleOn ? '随机播放：开（部分播放器不反馈状态，以界面显示为准）' : '随机播放：关（点击切换）'}
-          aria-label="随机播放"
-          aria-pressed={shuffleOn}
-          disabled={busy !== null}
-          onClick={clickShuffle}
-        >
-          <IcoShuffle />
-        </button>
-        <button
-          type="button"
-          className={`music-chip ${repeatVal > 0 ? 'on' : ''}`}
-          title={`循环：${repeatLabel}（点击切换；部分播放器不反馈状态，以界面显示为准）`}
-          aria-label={`循环：${repeatLabel}`}
-          disabled={busy !== null}
-          onClick={clickRepeat}
-        >
-          <IcoRepeat />
-          {repeatVal === 1 ? <span className="music-chip-badge">1</span> : null}
-        </button>
         <div
           className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
           title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
