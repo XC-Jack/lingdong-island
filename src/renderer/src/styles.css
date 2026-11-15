@@ -2280,8 +2280,8 @@ div.pm-row[draggable='true'] {
   min-width: 0;
 }
 
-/* 封面占位（不是真封面）：SMTC 缩略图在 PS 5.1 里取不到字节，这里用音符块，
-   播放时轻微呼吸，给「在放」一点活气 */
+/* 真实封面：主进程把 SMTC Thumbnail 读成 data URL 后由 <img> 显示；
+   取不到或图片解码失败时，仍回落成原来的音符块占位。播放时轻微呼吸，给「在放」一点活气 */
 .music-cover {
   flex: 0 0 auto;
   width: 44px;
@@ -2290,6 +2290,7 @@ div.pm-row[draggable='true'] {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   color: #ff8fa3;
   background: linear-gradient(145deg, rgba(255, 143, 163, 0.22), rgba(255, 143, 163, 0.08));
   border: 1px solid rgba(255, 143, 163, 0.25);
@@ -2297,6 +2298,12 @@ div.pm-row[draggable='true'] {
 .music-cover svg {
   width: 22px;
   height: 22px;
+}
+.music-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .music-cover.playing {
   animation: music-breathe 2.6s ease-in-out infinite;
