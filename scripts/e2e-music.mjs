@@ -233,11 +233,12 @@ try {
     const canCheckSession = active
 
     // 第 1 批新增字段：无论有会话还是空态，musicGet() 都必须带齐，不能出现 undefined
-    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 三个 can* 布尔）',
+    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 四个 can* 布尔）',
       state && typeof state.shuffle === 'boolean' &&
       typeof state.repeat === 'number' && state.repeat >= 0 && state.repeat <= 2 &&
       typeof state.volume === 'number' && state.volume >= 0 && state.volume <= 1 &&
-      typeof state.canSeek === 'boolean' && typeof state.canShuffle === 'boolean' && typeof state.canRepeat === 'boolean',
+      typeof state.canSeek === 'boolean' && typeof state.canShuffle === 'boolean' &&
+      typeof state.canRepeat === 'boolean' && typeof state.canVolume === 'boolean',
       JSON.stringify(state))
 
     const hasBar = await islandEval(`document.querySelectorAll('.music-bar-fill').length`)
@@ -265,6 +266,12 @@ try {
       ok('M2j 有会话时渲染进度条拖拽热区', seekBox === 1, `实际 ${seekBox}`)
       const shuffleDisabled = await islandEval(`(() => { const b = document.querySelectorAll('.music-extra .music-chip')[0]; return b ? b.disabled : null })()`)
       ok('M2k 随机按钮按 canShuffle 能力位禁用', shuffleDisabled === (state.canShuffle !== true), `禁用=${shuffleDisabled} / canShuffle=${state.canShuffle}`)
+      // 音量：只对得上当前播放应用的音频会话才允许拖，对不上号必须置灰且显示 --
+      const volUi = await islandEval(`(() => { const i = document.querySelector('.music-volume input[type="range"]'); const n = document.querySelector('.music-volume-num'); return { disabled: i ? i.disabled : null, text: n ? n.textContent.trim() : null } })()`)
+      ok('M2l 音量滑块按 canVolume 置灰、对不上号显示 --',
+        volUi && volUi.disabled === (state.canVolume !== true) &&
+        (state.canVolume === true ? /^\d+%$/.test(volUi.text ?? '') : volUi.text === '--'),
+        `禁用=${volUi?.disabled} / canVolume=${state.canVolume} / 显示=${volUi?.text}`)
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)

@@ -1817,7 +1817,7 @@ function MusicPanel(): React.JSX.Element {
     if (music && !seeking) setLive(music.position)
   }, [music?.position, music?.title, music?.playing, seeking])
 
-  // 主进程采样回来后清掉音量本地值，让滑块对齐系统真实音量
+  // 主进程采样回来后清掉音量本地值，让滑块对齐当前应用音频会话的真实音量
   useEffect(() => {
     if (music) setVolLocal(null)
   }, [music?.volume])
@@ -2004,7 +2004,10 @@ function MusicPanel(): React.JSX.Element {
           <IcoRepeat />
           {music?.repeat === 1 ? <span className="music-chip-badge">1</span> : null}
         </button>
-        <div className="music-volume" title="系统音量（会影响所有程序声音）">
+        <div
+          className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
+          title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
+        >
           <IcoVolume />
           <input
             type="range"
@@ -2012,14 +2015,15 @@ function MusicPanel(): React.JSX.Element {
             max={1}
             step={0.01}
             value={volume}
-            aria-label="系统音量"
+            disabled={music?.canVolume !== true}
+            aria-label="当前播放应用的音量"
             onChange={(e) => {
               const v = Number(e.target.value)
               setVolLocal(v)
               sendVolume(v)
             }}
           />
-          <span className="music-volume-num">{Math.round(volume * 100)}%</span>
+          <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
         </div>
       </div>
     </div>

@@ -41,7 +41,8 @@ const EMPTY_STATE: MusicState = {
   volume: 0,
   canSeek: false,
   canShuffle: false,
-  canRepeat: false
+  canRepeat: false,
+  canVolume: false
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -93,6 +94,7 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.canSeek === b.canSeek &&
     a.canShuffle === b.canShuffle &&
     a.canRepeat === b.canRepeat &&
+    a.canVolume === b.canVolume &&
     // 进度按整秒比：SMTC 给的是带小数的秒，每毫秒都在变，逐位比会每秒重渲染
     Math.round(a.position) === Math.round(b.position) &&
     Math.round(a.duration) === Math.round(b.duration)
@@ -128,7 +130,8 @@ function handleLine(text: string): void {
     volume: Math.min(1, Math.max(0, Number(msg.volume ?? 0) || 0)),
     canSeek: Boolean(msg.canSeek),
     canShuffle: Boolean(msg.canShuffle),
-    canRepeat: Boolean(msg.canRepeat)
+    canRepeat: Boolean(msg.canRepeat),
+    canVolume: Boolean(msg.canVolume)
   }
   if (sameState(cache, next)) return
   cache = next

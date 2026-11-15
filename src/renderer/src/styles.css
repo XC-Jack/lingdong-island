@@ -2513,3 +2513,13 @@ div.pm-row[draggable='true'] {
   color: rgba(242, 243, 245, 0.38);
   text-align: right;
 }
+/* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
+.music-volume.off {
+  opacity: 0.4;
+}
+.music-volume input[type='range']:disabled {
+  cursor: default;
+}
+.music-volume input[type='range']:disabled::-webkit-slider-thumb {
+  background: rgba(242, 243, 245, 0.4);
+}
