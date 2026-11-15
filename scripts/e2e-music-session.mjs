@@ -150,7 +150,8 @@ try {
   mkdirSync(TMP, { recursive: true })
   makeSilentWav(WAV_A)
   makeSilentWav(WAV_B)
-  writePs1(PS_BRIDGE, extractBridgeScript())
+  const bridgeScript = extractBridgeScript()
+  writePs1(PS_BRIDGE, bridgeScript)
   writePs1(PS_SCENE, SCENE_PS1)
 
   sceneProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', PS_SCENE], {
@@ -239,6 +240,60 @@ try {
   await sleep(1200)
   const acks = lines.filter((l) => l.includes('"ack"') && l.includes('bogus')).length
   ok('S10 未知命令只回一条 ack', acks === 1, `实际 ${acks} 条`)
+
+  // ========== 第 1 批：混合行协议（带参数命令用一行 JSON，纯文本命令保持原样） ==========
+  const lastState = states[states.length - 1] ?? null
+  ok('S11 poll 状态带齐新字段（shuffle/repeat/volume/can* 无 undefined）',
+    lastState && typeof lastState.shuffle === 'boolean' &&
+    typeof lastState.repeat === 'number' && lastState.repeat >= 0 && lastState.repeat <= 2 &&
+    typeof lastState.volume === 'number' && lastState.volume >= 0 && lastState.volume <= 1 &&
+    typeof lastState.canSeek === 'boolean' && typeof lastState.canShuffle === 'boolean' &&
+    typeof lastState.canRepeat === 'boolean' && typeof lastState.canVolume === 'boolean',
+    JSON.stringify(lastState))
+
+  // 用户 m00534 明确否决「绑成系统主音量」：桥接脚本正文里不得再出现系统主音量接口。
+  // 这是静态护栏，防止以后有人又把 IAudioEndpointVolume / GetMasterVolumeLevelScalar 加回来。
+  ok('S11b 桥接脚本不含系统主音量接口（音量只走按应用音频会话）',
+    !/IAudioEndpointVolume|GetMasterVolumeLevelScalar|SetMasterVolumeLevelScalar/.test(bridgeScript),
+    '正文出现系统主音量接口即判失败')
+
+  // 发一条 JSON 命令，收最后一条 ack 返回。只断言「有 ack 且 ok 是布尔」，
+  // 不断言 ok=true：能力位不同的播放器可以合法拒绝（假播放器 shuffle 能力位就是 False）。
+  const jsonAck = async (cmd, value) => {
+    lines.length = 0
+    send(JSON.stringify({ cmd, value }))
+    await sleep(900)
+    let a = null
+    for (const l of lines) {
+      try { const o = JSON.parse(l); if (o.type === 'ack') a = o } catch { /* 非 JSON 行忽略 */ }
+    }
+    return a
+  }
+  for (const [id, cmd, value] of [
+    ['S12', 'seek', 5],
+    ['S13', 'shuffle', false],
+    ['S14', 'repeat', 1],
+    // 把 poll 读到的应用音量原样写回：命令通道被验证，且不改任何应用的最终音量。
+    // 对不上号时桥接回 ack ok=false（合法），断言只要求 ok 是布尔。
+    ['S15', 'volume', lastState?.volume ?? 0],
+  ]) {
+    const a = await jsonAck(cmd, value)
+    ok(`${id} ${cmd} 命令收到一条 ack（ok 为布尔）`,
+      a !== null && a.cmd === cmd && typeof a.ok === 'boolean', JSON.stringify(a))
+  }
+
+  // 畸形 JSON 走解析失败分支（$cmd=""），仍只回一条 ack，不能把桥接循环带崩
+  lines.length = 0
+  send('{"cmd":')
+  await sleep(900)
+  const badAcks = lines.filter((l) => l.includes('"ack"')).length
+  ok('S16 畸形 JSON 只回一条 ack ok=false', badAcks === 1, `实际 ${badAcks} 条`)
+  // 桥接还活着：紧接着的纯文本 poll 仍能回 state
+  lines.length = 0
+  send('poll')
+  await sleep(1200)
+  const alive = lines.some((l) => { try { return JSON.parse(l).type === 'state' } catch { return false } })
+  ok('S17 畸形输入后桥接仍存活（纯文本 poll 回 state）', alive, JSON.stringify(lines.slice(0, 3)))
 } catch (e) {
   failed++
   console.log('  ✗ 异常：' + (e?.stack ?? e?.message ?? e))

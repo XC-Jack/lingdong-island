@@ -232,6 +232,15 @@ try {
       readable, `真实会话 ${realSessions} 个，但 musicGet().active = ${active}`)
     const canCheckSession = active
 
+    // 第 1 批新增字段：无论有会话还是空态，musicGet() 都必须带齐，不能出现 undefined
+    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 四个 can* 布尔）',
+      state && typeof state.shuffle === 'boolean' &&
+      typeof state.repeat === 'number' && state.repeat >= 0 && state.repeat <= 2 &&
+      typeof state.volume === 'number' && state.volume >= 0 && state.volume <= 1 &&
+      typeof state.canSeek === 'boolean' && typeof state.canShuffle === 'boolean' &&
+      typeof state.canRepeat === 'boolean' && typeof state.canVolume === 'boolean',
+      JSON.stringify(state))
+
     const hasBar = await islandEval(`document.querySelectorAll('.music-bar-fill').length`)
     const btns = await islandEval(`document.querySelectorAll('.music-ctl .music-btn').length`)
     if (canCheckSession) {
@@ -248,6 +257,20 @@ try {
         state && typeof state.title === 'string' && typeof state.position === 'number' &&
         typeof state.duration === 'number' && typeof state.playing === 'boolean' && typeof state.app === 'string',
         JSON.stringify(state))
+      // 三次修复（用户 m01006）：随机/循环在真实播放器上无法真执行也读不到状态，
+      // 已直接删掉这两个假按钮。护栏：绝不允许它们再加回来。
+      const chips = await islandEval(`document.querySelectorAll('.music-extra .music-chip').length`)
+      ok('M2h 不再渲染随机 / 循环假按钮', chips === 0, `实际 ${chips}`)
+      const volRange = await islandEval(`document.querySelectorAll('.music-volume input[type="range"]').length`)
+      ok('M2i 有会话时渲染音量滑块', volRange === 1, `实际 ${volRange}`)
+      const seekBox = await islandEval(`document.querySelectorAll('.music-seek').length`)
+      ok('M2j 有会话时渲染进度条拖拽热区', seekBox === 1, `实际 ${seekBox}`)
+      // 音量：只对得上当前播放应用的音频会话才允许拖，对不上号必须置灰且显示 --
+      const volUi = await islandEval(`(() => { const i = document.querySelector('.music-volume input[type="range"]'); const n = document.querySelector('.music-volume-num'); return { disabled: i ? i.disabled : null, text: n ? n.textContent.trim() : null } })()`)
+      ok('M2l 音量滑块按 canVolume 置灰、对不上号显示 --',
+        volUi && volUi.disabled === (state.canVolume !== true) &&
+        (state.canVolume === true ? /^\d+%$/.test(volUi.text ?? '') : volUi.text === '--'),
+        `禁用=${volUi?.disabled} / canVolume=${state.canVolume} / 显示=${volUi?.text}`)
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)

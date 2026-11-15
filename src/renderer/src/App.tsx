@@ -255,6 +255,15 @@ const IcoPause = (): React.JSX.Element => (
   </svg>
 )
 
+/** 小喇叭（音量行图标） */
+const IcoVolume = (): React.JSX.Element => (
+  <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none" />
+    <path d="M16.5 8.5a5 5 0 0 1 0 7" />
+    <path d="M19 6a8.5 8.5 0 0 1 0 12" />
+  </svg>
+)
+
 /** 文件夹（在文件夹中显示） */
 const IcoFolder = (): React.JSX.Element => (
   <IconSvg>
@@ -1745,7 +1754,35 @@ function MusicPanel(): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
   const [live, setLive] = useState(0)
-  const [busy, setBusy] = useState<MusicCommand | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  // 拖进度条 / 拖音量时，本地值先跟上，等下一次 poll 回来再对齐真实值
+  // seeking 用于挂 .dragging 类（关掉位移动画）与停掉本地每秒插值；
+  // effect 里要立刻读到最新拖动状态，故另用同步的 seekingRef
+  const [seeking, setSeeking] = useState(false)
+  const [volLocal, setVolLocal] = useState<number | null>(null)
+  const barRef = useRef<HTMLDivElement | null>(null)
+  const seekingRef = useRef(false)
+  // 松手后的「防回缩」保护：记下拖动目标、时间与当时的歌名，在播放器把 Position
+  // 跳到目标前忽略 seek 生效前的旧快照（否则条子先缩回拖动前的位置、再滑到目标）
+  const seekGuardRef = useRef<{ target: number; at: number; title: string } | null>(null)
+  // 音量滑块拖动时会连发 onChange，用 120ms 防抖只把最后一个值发去主进程；
+  // 不走 ctl 的 busy 锁（那是给「点一下按钮」防连点用的，会把拖动中的事件全吃掉）
+  const volTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const volPending = useRef<number | null>(null)
+
+  const sendVolume = useCallback((v: number) => {
+    volPending.current = v
+    if (volTimer.current !== null) clearTimeout(volTimer.current)
+    volTimer.current = setTimeout(() => {
+      volTimer.current = null
+      if (volPending.current !== null) void window.island.musicControl({ cmd: 'volume', value: volPending.current }).catch(() => false)
+      volPending.current = null
+    }, 120)
+  }, [])
+
+  useEffect(() => () => {
+    if (volTimer.current !== null) clearTimeout(volTimer.current)
+  }, [])
 
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
   useEffect(() => {
@@ -1760,27 +1797,52 @@ function MusicPanel(): React.JSX.Element {
     }
   }, [])
 
-  // 每次收到新快照就把插值重置到采样点
+  // 每次收到新快照就把插值重置到采样点。两点防「回缩」：
+  // ①拖动中（seekingRef）完全不打断本地值；②松手后 seek 生效前，播放器还会连续回传
+  //   拖动前的旧 position，若照单全收，条子会先缩回去、等 seek 生效再滑到目标。
+  //   这段保护窗口内忽略旧快照，直到 position 跳到目标附近（=seek 生效）才恢复跟随。
   useEffect(() => {
-    if (music) setLive(music.position)
+    if (!music || seekingRef.current) return
+    const guard = seekGuardRef.current
+    if (guard) {
+      if (music.title !== guard.title || Date.now() - guard.at > 2500) {
+        // 换歌 / 超时（比如播放器拒绝 seek）→ 放弃保护，诚实跟随真实位置，不永久卡住
+        seekGuardRef.current = null
+      } else if (Math.abs(music.position - guard.target) > 2) {
+        // 还没跳到目标：这条是 seek 生效前的旧快照，忽略，保持拖动目标值
+        return
+      } else {
+        // 位置已到目标附近 = seek 生效，结束保护
+        seekGuardRef.current = null
+      }
+    }
+    setLive(music.position)
   }, [music?.position, music?.title, music?.playing])
 
-  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动
+  // 主进程采样回来后清掉音量本地值，让滑块对齐当前应用音频会话的真实音量
   useEffect(() => {
-    if (!music || !music.active || !music.playing) return
+    if (music) setVolLocal(null)
+  }, [music?.volume])
+
+  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
+  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂
+  useEffect(() => {
+    if (!music || !music.active || !music.playing || seeking) return
     const id = setInterval(() => {
+      if (seekGuardRef.current) return
       setLive((v) => {
         const next = v + 1
         return music.duration > 0 ? Math.min(next, music.duration) : next
       })
     }, 1000)
     return () => clearInterval(id)
-  }, [music?.active, music?.playing, music?.duration, music])
+  }, [music?.active, music?.playing, music?.duration, music, seeking])
 
   const ctl = useCallback(
     (cmd: MusicCommand) => {
       if (busy) return
-      setBusy(cmd)
+      const key = typeof cmd === 'string' ? cmd : cmd.cmd
+      setBusy(key)
       void window.island
         .musicControl(cmd)
         .catch(() => false)
@@ -1794,6 +1856,42 @@ function MusicPanel(): React.JSX.Element {
 
   const active = music?.active === true
   const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
+
+  /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
+  const secAt = (clientX: number): number => {
+    const el = barRef.current
+    if (!el || !music || music.duration <= 0) return 0
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0) return 0
+    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+    return ratio * music.duration
+  }
+
+  const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!music?.canSeek || music.duration <= 0 || busy) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    seekingRef.current = true
+    seekGuardRef.current = null
+    setSeeking(true)
+    setLive(secAt(e.clientX))
+  }
+  const onSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!seekingRef.current) return
+    setLive(secAt(e.clientX))
+  }
+  const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!seekingRef.current) return
+    const sec = secAt(e.clientX)
+    seekingRef.current = false
+    setSeeking(false)
+    setLive(sec)
+    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
+    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
+    seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
+    ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
+  }
+
+  const volume = volLocal ?? music?.volume ?? 0
 
   if (!active) {
     return (
@@ -1839,8 +1937,17 @@ function MusicPanel(): React.JSX.Element {
       </div>
 
       <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-        <div className="music-bar">
-          <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+        <div
+          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+          ref={barRef}
+          onPointerDown={onSeekPointerDown}
+          onPointerMove={onSeekPointerMove}
+          onPointerUp={onSeekPointerUp}
+        >
+          <div className="music-bar">
+            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+          </div>
         </div>
         <div className="music-times">
           <span className="music-time">{fmtDuration(live)}</span>
@@ -1880,6 +1987,30 @@ function MusicPanel(): React.JSX.Element {
         >
           <IcoNext />
         </button>
+      </div>
+
+      <div className="music-extra">
+        <div
+          className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
+          title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
+        >
+          <IcoVolume />
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={volume}
+            disabled={music?.canVolume !== true}
+            aria-label="当前播放应用的音量"
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setVolLocal(v)
+              sendVolume(v)
+            }}
+          />
+          <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+        </div>
       </div>
     </div>
   )

@@ -2358,6 +2358,10 @@ div.pm-row[draggable='true'] {
   transition: transform 960ms linear;
   will-change: transform;
 }
+/* 拖动进度条时关掉位移动画：条子必须实时跟手，否则 960ms 的缓动会让人觉得「拖不动/回缩」 */
+.music-seek.dragging .music-bar-fill {
+  transition: none;
+}
 .music-times {
   display: flex;
   justify-content: space-between;
@@ -2408,4 +2412,79 @@ div.pm-row[draggable='true'] {
 .music-btn:focus-visible {
   outline: 2px solid rgba(255, 143, 163, 0.7);
   outline-offset: 2px;
+}
+
+/* 进度条拖拽热区：条子本身只有 3px，用一层更高的透明容器接鼠标事件 */
+.music-seek {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
+  height: 14px;
+  cursor: default;
+  touch-action: none;
+}
+.music-seek.seekable {
+  cursor: pointer;
+}
+
+/* 第二行控件：音量（当前播放应用）。刻意不用 .music-btn / .music-ctl，
+   免得影响既有 e2e 对「三个播放控制按钮」的断言 */
+.music-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding-top: 2px;
+}
+.music-volume {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(242, 243, 245, 0.6);
+}
+.music-volume input[type='range'] {
+  width: 92px;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.music-volume input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.music-volume input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border: none;
+  border-radius: 50%;
+  background: #ff8fa3;
+}
+.music-volume input[type='range']:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}
+.music-volume-num {
+  min-width: 32px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(242, 243, 245, 0.38);
+  text-align: right;
+}
+/* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
+.music-volume.off {
+  opacity: 0.4;
+}
+.music-volume input[type='range']:disabled {
+  cursor: default;
+}
+.music-volume input[type='range']:disabled::-webkit-slider-thumb {
+  background: rgba(242, 243, 245, 0.4);
 }

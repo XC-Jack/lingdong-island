@@ -35,7 +35,14 @@ const EMPTY_STATE: MusicState = {
   position: 0,
   duration: 0,
   playing: false,
-  app: ''
+  app: '',
+  shuffle: false,
+  repeat: 0,
+  volume: 0,
+  canSeek: false,
+  canShuffle: false,
+  canRepeat: false,
+  canVolume: false
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -81,6 +88,13 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.album === b.album &&
     a.playing === b.playing &&
     a.app === b.app &&
+    a.shuffle === b.shuffle &&
+    a.repeat === b.repeat &&
+    a.volume === b.volume &&
+    a.canSeek === b.canSeek &&
+    a.canShuffle === b.canShuffle &&
+    a.canRepeat === b.canRepeat &&
+    a.canVolume === b.canVolume &&
     // 进度按整秒比：SMTC 给的是带小数的秒，每毫秒都在变，逐位比会每秒重渲染
     Math.round(a.position) === Math.round(b.position) &&
     Math.round(a.duration) === Math.round(b.duration)
@@ -110,19 +124,51 @@ function handleLine(text: string): void {
     position: Number(msg.position ?? 0) || 0,
     duration: Number(msg.duration ?? 0) || 0,
     playing: Boolean(msg.playing),
-    app: String(msg.app ?? '')
+    app: String(msg.app ?? ''),
+    shuffle: Boolean(msg.shuffle),
+    repeat: Math.min(2, Math.max(0, Number(msg.repeat ?? 0) || 0)),
+    volume: Math.min(1, Math.max(0, Number(msg.volume ?? 0) || 0)),
+    canSeek: Boolean(msg.canSeek),
+    canShuffle: Boolean(msg.canShuffle),
+    canRepeat: Boolean(msg.canRepeat),
+    canVolume: Boolean(msg.canVolume)
   }
   if (sameState(cache, next)) return
   cache = next
   broadcast(cache)
 }
 
-function send(cmd: string): void {
+/**
+ * 写一行命令到桥接子进程。
+ * 纯文本命令（poll / toggle / next / prev / resync）沿用原行协议；
+ * 带参数的新命令序列化成一行 JSON（见 SPEC-music-controls「混合行协议」）。
+ */
+function send(cmd: string | MusicCommand): void {
   if (!child || !child.stdin.writable) return
   try {
-    child.stdin.write(cmd + '\n')
+    const line = typeof cmd === 'string' ? cmd : JSON.stringify(cmd)
+    child.stdin.write(line + '\n')
   } catch {
     /* 管道已断：交给看门狗重拉 */
+  }
+}
+
+/** IPC 边界的运行时校验：渲染层传来的东西不能原样拼进子进程 stdin */
+function isValidCommand(cmd: unknown): cmd is MusicCommand {
+  if (cmd === 'toggle' || cmd === 'next' || cmd === 'prev') return true
+  if (!cmd || typeof cmd !== 'object') return false
+  const c = cmd as Record<string, unknown>
+  switch (c.cmd) {
+    case 'seek':
+      return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0
+    case 'shuffle':
+      return typeof c.value === 'boolean'
+    case 'repeat':
+      return c.value === 0 || c.value === 1 || c.value === 2
+    case 'volume':
+      return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0 && c.value <= 1
+    default:
+      return false
   }
 }
 
@@ -235,8 +281,8 @@ export function setupMusicStore(): void {
     return cache
   })
 
-  ipcMain.handle('music:control', (_e, cmd: MusicCommand): boolean => {
-    if (cmd !== 'toggle' && cmd !== 'next' && cmd !== 'prev') return false
+  ipcMain.handle('music:control', (_e, cmd: unknown): boolean => {
+    if (!isValidCommand(cmd)) return false
     startBridge()
     send(cmd)
     return true

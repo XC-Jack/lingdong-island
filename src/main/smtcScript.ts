@@ -1,5 +1,5 @@
 /**
- * SMTC 桥接脚本（SPEC-music-page）。
+ * SMTC 桥接脚本（SPEC-music-page / SPEC-music-controls）。
  *
  * 为什么是「一个常驻 PowerShell 子进程 + 行协议」而不是每秒起一个进程：
  * 实测单次 `powershell.exe` 启动约 755ms，每秒起进程会明显卡顿；常驻后单次往返约 19ms。
@@ -12,9 +12,22 @@
  * 不带 BOM 时 PS 5.1 按系统 ANSI 解码含中文的脚本，类型名会被解坏，
  * 报「找不到类型 [System.Runtime.WindowsRuntimeSystemExtensions]」。BOM 由 `writeBridgeScript` 加。
  *
- * 协议（每行一条 JSON，UTF-8 无 BOM 输出）：
- *   stdin  ← "poll" / "toggle" / "next" / "prev"
+ * 协议（每行一条，UTF-8 无 BOM 输出）：
+ *   stdin  ← 纯文本 "poll" / "toggle" / "next" / "prev" / "resync"
+ *            或一行 JSON：{"cmd":"seek","value":秒} / {"cmd":"shuffle","value":bool}
+ *                          / {"cmd":"repeat","value":0|1|2} / {"cmd":"volume","value":0..1}
  *   stdout → {"type":"state",...} 状态快照；{"type":"ack","cmd":...,"ok":bool} 命令回执
+ *
+ * 纯文本命令保留原样，带参数的新命令才用 JSON：两个 e2e 脚本直接发纯文本命令驱动本脚本，
+ * 全量改协议会无谓打断它们（见 SPEC-music-controls「混合行协议，最小改动」）。
+ *
+ * 音量（2026-11-15 用户纠正后重做，同日实测又修正匹配）：只读写「当前播放应用的那条
+ * Core Audio 音频会话」，绝不碰系统主音量。SMTC 会话本身没有音量方法，靠
+ * SourceAppUserModelId 与音频会话 PID 对号入座。真实播放器的标识未必等于进程名——
+ * 实测「汽水音乐」的 SMTC 标识是中文名，音频会话进程却叫 SodaMusic，按名字相等会漏配，
+ * 滑块被误置灰。故匹配分三层：exe/AUMID 精确比对 → 按窗口标题/产品名/描述扫进程得到
+ * 候选进程名集合再比 ProcessName → 全场仅一条 active 音频会话时直接用它（仍是应用音量）。
+ * 仍对不上号 → canVolume=false → 界面置灰滑块，不读写任何音量，绝不回退系统音量。
  */
 export const SMTC_SCRIPT = String.raw`$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -69,6 +82,256 @@ function PickIndex($sessions) {
   return 0
 }
 
+# 按应用音量（Core Audio 音频会话 / ISimpleAudioVolume）。
+# 与「系统主音量」是两套不同接口：这里枚举默认输出设备上的
+# 音频会话，用 IAudioSessionControl2.GetProcessId 拿 PID，再与 SMTC 的
+# SourceAppUserModelId 对号入座；显示名不可靠（实测空串或系统资源串），不能用来匹配。
+# 源码必须全 ASCII、无中文注释、here-string 结束符在行首；否则 PS 5.1 会把 C# 当 PS 解析。
+# Add-Type -TypeDefinition 在本进程（已加载 WinRT 类型）实测编译成功，无需额外辅助进程。
+# IID 与方法顺序来自 audiopolicy.h / windows-rs，并经本机探针 .tmp/probe-app-volume.mjs 实测。
+$volSrc = @'
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+namespace IslandAppVol {
+  [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IMMDeviceEnumerator {
+    [PreserveSig] int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IntPtr ppDevices);
+    [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppEndpoint);
+    [PreserveSig] int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string pwstrId, out IMMDevice ppDevice);
+    [PreserveSig] int RegisterEndpointNotificationCallback(IntPtr pClient);
+    [PreserveSig] int UnregisterEndpointNotificationCallback(IntPtr pClient);
+  }
+  [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IMMDevice {
+    [PreserveSig] int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+    [PreserveSig] int OpenPropertyStore(int stgmAccess, out IntPtr ppProperties);
+    [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string ppstrId);
+    [PreserveSig] int GetState(out int pdwState);
+  }
+  [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+  public class MMDeviceEnumeratorComObject { }
+
+  [Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioSessionManager2 {
+    [PreserveSig] int NotImpl1();
+    [PreserveSig] int NotImpl2();
+    [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator SessionEnum);
+  }
+  [Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioSessionEnumerator {
+    [PreserveSig] int GetCount(out int SessionCount);
+    [PreserveSig] int GetSession(int Index, out IAudioSessionControl Session);
+  }
+  [Guid("F4B1A599-7266-4319-A8CA-E70ACB11E8CD"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioSessionControl {
+    [PreserveSig] int GetState(out int state);
+    [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, ref Guid ctx);
+    [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string path);
+    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid ctx);
+    [PreserveSig] int GetGroupingParam(out Guid p);
+    [PreserveSig] int SetGroupingParam(ref Guid p, ref Guid ctx);
+    [PreserveSig] int RegisterAudioSessionNotification(IntPtr client);
+    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr client);
+  }
+  [Guid("BFB7FF88-7239-4FC9-8FA2-07C950BE9C6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioSessionControl2 {
+    [PreserveSig] int GetState(out int state);
+    [PreserveSig] int GetDisplayName([MarshalAs(UnmanagedType.LPWStr)] out string name);
+    [PreserveSig] int SetDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, ref Guid ctx);
+    [PreserveSig] int GetIconPath([MarshalAs(UnmanagedType.LPWStr)] out string path);
+    [PreserveSig] int SetIconPath([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid ctx);
+    [PreserveSig] int GetGroupingParam(out Guid p);
+    [PreserveSig] int SetGroupingParam(ref Guid p, ref Guid ctx);
+    [PreserveSig] int RegisterAudioSessionNotification(IntPtr client);
+    [PreserveSig] int UnregisterAudioSessionNotification(IntPtr client);
+    [PreserveSig] int GetSessionIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string id);
+    [PreserveSig] int GetSessionInstanceIdentifier([MarshalAs(UnmanagedType.LPWStr)] out string id);
+    [PreserveSig] int GetProcessId(out int pid);
+    [PreserveSig] int IsSystemSoundsSession();
+    [PreserveSig] int SetDuckingPreference([MarshalAs(UnmanagedType.Bool)] bool optOut);
+  }
+  [Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface ISimpleAudioVolume {
+    [PreserveSig] int SetMasterVolume(float fLevel, ref Guid ctx);
+    [PreserveSig] int GetMasterVolume(out float pfLevel);
+    [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid ctx);
+    [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+  }
+
+  public static class AppVol {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern int GetApplicationUserModelId(IntPtr hProcess, ref uint len, StringBuilder sb);
+
+    static string ProcAumid(int pid) {
+      IntPtr h = IntPtr.Zero;
+      try {
+        h = OpenProcess(0x1000, false, pid);
+        if (h == IntPtr.Zero) return "";
+        uint len = 1024;
+        var sb = new StringBuilder((int)len);
+        int r = GetApplicationUserModelId(h, ref len, sb);
+        if (r == 0) return sb.ToString() ?? "";
+        return "";
+      } catch { return ""; }
+      finally { if (h != IntPtr.Zero) CloseHandle(h); }
+    }
+
+    static string Exe(string smtc) {
+      string s = (smtc ?? "").Trim();
+      int slash = Math.Max(s.LastIndexOf('\\'), s.LastIndexOf('/'));
+      if (slash >= 0) s = s.Substring(slash + 1);
+      if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) s = s.Substring(0, s.Length - 4);
+      return s;
+    }
+    static string Pname(int pid) { try { return Process.GetProcessById(pid).ProcessName; } catch { return ""; } }
+    static bool Contains(string hay, string needle) {
+      if (string.IsNullOrEmpty(hay) || string.IsNullOrEmpty(needle)) return false;
+      return hay.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    // Cache candidate ProcessNames per SMTC id: scanning all processes is not free, and poll runs 1/s.
+    // Real players often report a localized SMTC id that differs from the exe name (measured:
+    // "汽水音乐" vs SodaMusic). We look for processes whose window title / product info contains
+    // the SMTC id and collect their ProcessNames. Cached for the bridge lifetime; Find() retries
+    // with a refreshed cache when nothing matched.
+    static readonly Dictionary<string, HashSet<string>> NameCache = new Dictionary<string, HashSet<string>>();
+    static HashSet<string> Candidates(string smtc, bool refresh) {
+      if (!refresh && NameCache.ContainsKey(smtc)) return NameCache[smtc];
+      var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+      string exe = Exe(smtc);
+      if (exe.Length > 0) set.Add(exe);
+      if (!string.IsNullOrEmpty(smtc)) {
+        try {
+          foreach (var p in Process.GetProcesses()) {
+            try {
+              bool hit = false;
+              try { if (Contains(p.MainWindowTitle, smtc)) hit = true; } catch { }
+              try {
+                var fv = p.MainModule.FileVersionInfo;
+                if (Contains(fv.ProductName, smtc) || Contains(fv.FileDescription, smtc)) hit = true;
+              } catch { }
+              if (hit && !string.IsNullOrEmpty(p.ProcessName)) set.Add(p.ProcessName);
+            } catch { }
+          }
+        } catch { }
+      }
+      NameCache[smtc] = set;
+      return set;
+    }
+
+    // Desktop players: SMTC id vs ProcessName / candidate names. Store apps: compare AUMID / package family name.
+    static bool AppMatches(string smtc, int pid, HashSet<string> names) {
+      if (pid <= 0 || string.IsNullOrEmpty(smtc)) return false;
+      string s = smtc.Trim();
+      string pname = Pname(pid);
+      if (pname.Length > 0 && names.Contains(pname)) return true;
+      string pa = ProcAumid(pid);
+      if (pa.Length > 0 && !pa.StartsWith("ERR")) {
+        if (string.Equals(pa, s, StringComparison.OrdinalIgnoreCase)) return true;
+        int bi = s.IndexOf('!'), pi = pa.IndexOf('!');
+        string sf = bi > 0 ? s.Substring(0, bi) : s;
+        string pf = pi > 0 ? pa.Substring(0, pi) : pa;
+        if (string.Equals(sf, pf, StringComparison.OrdinalIgnoreCase)) return true;
+      }
+      return false;
+    }
+
+    // Tier 1: active (state==1) session of a name-matched app. Tier 2: any name-matched session.
+    // Tier 3: exactly one active session with a real PID -> that is the only app producing sound,
+    // use it. Still an application audio session, never the system master volume. Multiple active
+    // sessions with no name match stay unresolved (slider disabled), so we never guess wrong.
+    static ISimpleAudioVolume Find(string smtc) {
+      try {
+        return FindOnce(smtc, Candidates(smtc, false)) ?? FindOnce(smtc, Candidates(smtc, true));
+      } catch { return null; }
+    }
+    static ISimpleAudioVolume FindOnce(string smtc, HashSet<string> names) {
+      var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+      IMMDevice device;
+      int hr = en.GetDefaultAudioEndpoint(0, 1, out device);
+      Marshal.ThrowExceptionForHR(hr);
+      Guid iid = typeof(IAudioSessionManager2).GUID;
+      object o;
+      hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+      Marshal.ThrowExceptionForHR(hr);
+      var mgr = (IAudioSessionManager2)o;
+      IAudioSessionEnumerator e;
+      hr = mgr.GetSessionEnumerator(out e);
+      Marshal.ThrowExceptionForHR(hr);
+      int count;
+      hr = e.GetCount(out count);
+      if (hr != 0) return null;
+      ISimpleAudioVolume namedActive = null, namedIdle = null;
+      var active = new List<ISimpleAudioVolume>();
+      for (int i = 0; i < count; i++) {
+        IAudioSessionControl ctl;
+        hr = e.GetSession(i, out ctl);
+        if (hr != 0 || ctl == null) continue;
+        int pid = -1, state = -1;
+        try {
+          var c2 = (IAudioSessionControl2)ctl;
+          c2.GetProcessId(out pid);
+          c2.GetState(out state);
+        } catch { continue; }
+        var sv = ctl as ISimpleAudioVolume;
+        if (sv == null) continue;
+        if (state == 1 && pid > 0) active.Add(sv);
+        if (AppMatches(smtc, pid, names)) {
+          if (state == 1) namedActive = sv;
+          else if (namedIdle == null) namedIdle = sv;
+        }
+      }
+      if (namedActive != null) return namedActive;
+      if (namedIdle != null) return namedIdle;
+      if (active.Count == 1) return active[0];
+      return null;
+    }
+
+    // -1 means no matching audio session: caller must disable the slider and never touch system volume.
+    public static float Get(string smtc) {
+      try {
+        var sv = Find(smtc);
+        if (sv == null) return -1f;
+        float v;
+        int hr = sv.GetMasterVolume(out v);
+        if (hr != 0) return -1f;
+        return v;
+      } catch { return -1f; }
+    }
+
+    public static bool Set(string smtc, float f) {
+      try {
+        var sv = Find(smtc);
+        if (sv == null) return false;
+        Guid g = Guid.Empty;
+        int hr = sv.SetMasterVolume(f, ref g);
+        Marshal.ThrowExceptionForHR(hr);
+        return true;
+      } catch { return false; }
+    }
+  }
+}
+'@
+Add-Type -TypeDefinition $volSrc
+
+$repeatEnumT = [Windows.Media.MediaPlaybackAutoRepeatMode, Windows.Media, ContentType=WindowsRuntime]
+
+# 读当前播放应用的音频会话音量：-1 表示对不上号（或读取失败），界面会置灰滑块。
+# 绝不读系统主音量，也绝不因为读不到就回退到系统音量。
+function GetAppVolume($app) {
+  try { return [double][IslandAppVol.AppVol]::Get([string]$app) } catch { return -1 }
+}
+
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
 Emit @{ type = "ready" }
 
@@ -78,7 +341,21 @@ while ($true) {
   $line = $line.Trim()
   if ($line -eq "") { continue }
 
-  if ($line -eq "resync") {
+  # 带参数的新命令用一行 JSON；其余整行就是一个纯文本命令。
+  # 解析失败按未知命令处理，只回一条 ack，不让坏输入把循环带崩。
+  $cmd = $line
+  $val = $null
+  if ($line.StartsWith("{")) {
+    try {
+      $j = $line | ConvertFrom-Json
+      $cmd = [string]$j.cmd
+      $val = $j.value
+    } catch {
+      $cmd = ""
+    }
+  }
+
+  if ($cmd -eq "resync") {
     # 媒体会话列表变化（播放器刚打开/关闭）时重取管理器句柄
     try {
       $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
@@ -92,9 +369,28 @@ while ($true) {
   $sessions = $mgr.GetSessions()
   $idx = PickIndex $sessions
 
-  if ($line -eq "poll") {
+  # 音量依赖当前播放应用：用正在播放（或当前选中）的会话的 SourceAppUserModelId
+  # 去找它自己的音频会话。没有会话、或对不上号时只回 ack ok=false，不碰任何音量。
+  if ($cmd -eq "volume") {
+    if ($idx -lt 0) { Emit @{ type = "ack"; cmd = "volume"; ok = $false }; continue }
+    try {
+      $s = @($sessions)[$idx]
+      $app = [string]$s.SourceAppUserModelId
+      $v = [double]$val
+      if ($v -lt 0) { $v = 0 }
+      if ($v -gt 1) { $v = 1 }
+      $ok = [IslandAppVol.AppVol]::Set($app, [float]$v)
+      Emit @{ type = "ack"; cmd = "volume"; ok = [bool]$ok }
+    } catch {
+      Emit @{ type = "ack"; cmd = "volume"; ok = $false }
+    }
+    continue
+  }
+
+  if ($cmd -eq "poll") {
     if ($idx -lt 0) {
-      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = "" }
+      # 空态也要把新字段补齐，渲染层才不会读到 undefined
+      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false }
       continue
     }
     # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
@@ -103,6 +399,16 @@ while ($true) {
       $props = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
       $tl = $s.GetTimelineProperties()
       $info = $s.GetPlaybackInfo()
+      $ctrl = $info.Controls
+      # PS 5.1 把 Nullable<bool> / Nullable<enum> 自动解包成普通值：直接强转即可，
+      # 不要写 .HasValue / .Value（实测为空）。见 .tmp/probe-smtc-controls.mjs。
+      $shuffle = [bool]$info.IsShuffleActive
+      $repeat = [int]$info.AutoRepeatMode
+      $appId = [string]$s.SourceAppUserModelId
+      $volRaw = GetAppVolume $appId
+      $canVol = $false
+      $vol = 0
+      if ($volRaw -ge 0) { $canVol = $true; $vol = [math]::Round($volRaw, 3) }
       Emit ([ordered]@{
         type = "state"
         active = $true
@@ -112,7 +418,14 @@ while ($true) {
         position = [math]::Round($tl.Position.TotalSeconds, 1)
         duration = [math]::Round($tl.EndTime.TotalSeconds, 1)
         playing = ($info.PlaybackStatus.ToString() -eq "Playing")
-        app = [string]$s.SourceAppUserModelId
+        app = $appId
+        shuffle = $shuffle
+        repeat = $repeat
+        volume = $vol
+        canSeek = [bool]$ctrl.IsPlaybackPositionEnabled
+        canShuffle = [bool]$ctrl.IsShuffleEnabled
+        canRepeat = [bool]$ctrl.IsRepeatEnabled
+        canVolume = $canVol
       })
     } catch {
       # 把异常文本吐出去，别再静默发空态——静默会让人误以为「本机没有播放器」
@@ -121,26 +434,38 @@ while ($true) {
     continue
   }
 
-  if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $line; ok = $false }; continue }
+  if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $cmd; ok = $false }; continue }
 
   # 未知命令先挡掉，否则 switch 的 default 里 continue 之后还会落到下面那条 Emit，吐两条 ack
-  if ($line -ne "toggle" -and $line -ne "next" -and $line -ne "prev") {
-    Emit @{ type = "ack"; cmd = $line; ok = $false }
+  if ($cmd -ne "toggle" -and $cmd -ne "next" -and $cmd -ne "prev" -and
+      $cmd -ne "seek" -and $cmd -ne "shuffle" -and $cmd -ne "repeat") {
+    Emit @{ type = "ack"; cmd = $cmd; ok = $false }
     continue
   }
 
   $s = @($sessions)[$idx]
   $ok = $false
   try {
-    switch ($line) {
-      "toggle" { $ok = Await ($s.TryTogglePlayPauseAsync()) ([bool]) }
-      "next"   { $ok = Await ($s.TrySkipNextAsync()) ([bool]) }
-      "prev"   { $ok = Await ($s.TrySkipPreviousAsync()) ([bool]) }
+    switch ($cmd) {
+      "toggle"  { $ok = Await ($s.TryTogglePlayPauseAsync()) ([bool]) }
+      "next"    { $ok = Await ($s.TrySkipNextAsync()) ([bool]) }
+      "prev"    { $ok = Await ($s.TrySkipPreviousAsync()) ([bool]) }
+      "seek"    {
+        # TryChangePlaybackPositionAsync 收 100 纳秒 ticks，不是秒
+        $ticks = [int64][TimeSpan]::FromSeconds([double]$val).Ticks
+        $ok = Await ($s.TryChangePlaybackPositionAsync($ticks)) ([bool])
+      }
+      "shuffle" { $ok = Await ($s.TryChangeShuffleActiveAsync([bool]$val)) ([bool]) }
+      "repeat"  {
+        $name = switch ([int]$val) { 0 { "None" } 1 { "Track" } default { "List" } }
+        $mode = [Enum]::Parse($repeatEnumT, $name)
+        $ok = Await ($s.TryChangeAutoRepeatModeAsync($mode)) ([bool])
+      }
     }
   } catch {
-    Emit @{ type = "ack"; cmd = $line; ok = $false }
+    Emit @{ type = "ack"; cmd = $cmd; ok = $false }
     continue
   }
-  Emit @{ type = "ack"; cmd = $line; ok = [bool]$ok }
+  Emit @{ type = "ack"; cmd = $cmd; ok = [bool]$ok }
 }
 `

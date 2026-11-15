@@ -111,7 +111,32 @@ export interface MusicState {
   playing: boolean
   /** 播放器进程名，例如 `PotPlayerMini64.exe`；用于让用户知道是谁在放 */
   app: string
+  /** 当前是否随机播放（来自 SMTC PlaybackInfo.IsShuffleActive） */
+  shuffle: boolean
+  /** 循环模式：0=不循环 / 1=单曲循环 / 2=列表循环（来自 SMTC AutoRepeatMode） */
+  repeat: number
+  /** 当前播放应用的音频会话音量 0..1（Core Audio ISimpleAudioVolume；对不上号时为 0 且 canVolume=false） */
+  volume: number
+  /** 当前会话是否支持拖进度（Controls.IsPlaybackPositionEnabled） */
+  canSeek: boolean
+  /** 当前会话是否支持随机（Controls.IsShuffleEnabled） */
+  canShuffle: boolean
+  /** 当前会话是否支持循环（Controls.IsRepeatEnabled） */
+  canRepeat: boolean
+  /** 是否成功对上当前播放应用的音频会话；false 时音量滑块置灰、不读写任何音量 */
+  canVolume: boolean
 }
 
-/** 音乐控制命令（渲染层 → 主进程 → SMTC） */
-export type MusicCommand = 'toggle' | 'next' | 'prev'
+/**
+ * 音乐控制命令（渲染层 → 主进程 → SMTC）。
+ * 纯文本命令沿用桥接脚本原有的行协议；带参数的新命令用一行 JSON 传输。
+ * 见 docs/Spec/SPEC-music-controls.md「控制命令（混合行协议，最小改动）」。
+ */
+export type MusicCommand =
+  | 'toggle'
+  | 'next'
+  | 'prev'
+  | { cmd: 'seek'; value: number }
+  | { cmd: 'shuffle'; value: boolean }
+  | { cmd: 'repeat'; value: 0 | 1 | 2 }
+  | { cmd: 'volume'; value: number }

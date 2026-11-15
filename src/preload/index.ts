@@ -182,7 +182,10 @@ const api = {
   musicGet(): Promise<MusicState> {
     return ipcRenderer.invoke('music:get')
   },
-  /** 音乐控制：'toggle' 播放/暂停、'next' 下一首、'prev' 上一首。返回是否已把命令发出 */
+  /**
+   * 音乐控制：'toggle' 播放/暂停、'next' 下一首、'prev' 上一首，
+   * 或带参数命令对象 { cmd:'seek'|'shuffle'|'repeat'|'volume', value }。返回是否已把命令发出。
+   */
   musicControl(cmd: MusicCommand): Promise<boolean> {
     return ipcRenderer.invoke('music:control', cmd)
   },
