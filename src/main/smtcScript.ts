@@ -21,10 +21,13 @@
  * 纯文本命令保留原样，带参数的新命令才用 JSON：两个 e2e 脚本直接发纯文本命令驱动本脚本，
  * 全量改协议会无谓打断它们（见 SPEC-music-controls「混合行协议，最小改动」）。
  *
- * 音量（2026-11-15 用户纠正后重做）：只读写「当前播放应用的那条 Core Audio 音频会话」，
- * 绝不碰系统主音量。SMTC 会话本身没有音量方法，但会话的 SourceAppUserModelId
- * 可与音频会话进程对上号（桌面播放器是 exe 名，商店应用比 AUMID）。
- * 对不上号 → canVolume=false → 界面置灰滑块，不读写任何音量，绝不回退系统音量。
+ * 音量（2026-11-15 用户纠正后重做，同日实测又修正匹配）：只读写「当前播放应用的那条
+ * Core Audio 音频会话」，绝不碰系统主音量。SMTC 会话本身没有音量方法，靠
+ * SourceAppUserModelId 与音频会话 PID 对号入座。真实播放器的标识未必等于进程名——
+ * 实测「汽水音乐」的 SMTC 标识是中文名，音频会话进程却叫 SodaMusic，按名字相等会漏配，
+ * 滑块被误置灰。故匹配分三层：exe/AUMID 精确比对 → 按窗口标题/产品名/描述扫进程得到
+ * 候选进程名集合再比 ProcessName → 全场仅一条 active 音频会话时直接用它（仍是应用音量）。
+ * 仍对不上号 → canVolume=false → 界面置灰滑块，不读写任何音量，绝不回退系统音量。
  */
 export const SMTC_SCRIPT = String.raw`$ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -88,6 +91,7 @@ function PickIndex($sessions) {
 # IID 与方法顺序来自 audiopolicy.h / windows-rs，并经本机探针 .tmp/probe-app-volume.mjs 实测。
 $volSrc = @'
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -182,19 +186,57 @@ namespace IslandAppVol {
       finally { if (h != IntPtr.Zero) CloseHandle(h); }
     }
 
-    // Desktop players: SMTC id is the exe name. Store apps: compare AUMID / package family name.
-    static bool AppMatches(string smtc, int pid) {
+    static string Exe(string smtc) {
+      string s = (smtc ?? "").Trim();
+      int slash = Math.Max(s.LastIndexOf('\\'), s.LastIndexOf('/'));
+      if (slash >= 0) s = s.Substring(slash + 1);
+      if (s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) s = s.Substring(0, s.Length - 4);
+      return s;
+    }
+    static string Pname(int pid) { try { return Process.GetProcessById(pid).ProcessName; } catch { return ""; } }
+    static bool Contains(string hay, string needle) {
+      if (string.IsNullOrEmpty(hay) || string.IsNullOrEmpty(needle)) return false;
+      return hay.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    // Cache candidate ProcessNames per SMTC id: scanning all processes is not free, and poll runs 1/s.
+    // Real players often report a localized SMTC id that differs from the exe name (measured:
+    // "汽水音乐" vs SodaMusic). We look for processes whose window title / product info contains
+    // the SMTC id and collect their ProcessNames. Cached for the bridge lifetime; Find() retries
+    // with a refreshed cache when nothing matched.
+    static readonly Dictionary<string, HashSet<string>> NameCache = new Dictionary<string, HashSet<string>>();
+    static HashSet<string> Candidates(string smtc, bool refresh) {
+      if (!refresh && NameCache.ContainsKey(smtc)) return NameCache[smtc];
+      var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+      string exe = Exe(smtc);
+      if (exe.Length > 0) set.Add(exe);
+      if (!string.IsNullOrEmpty(smtc)) {
+        try {
+          foreach (var p in Process.GetProcesses()) {
+            try {
+              bool hit = false;
+              try { if (Contains(p.MainWindowTitle, smtc)) hit = true; } catch { }
+              try {
+                var fv = p.MainModule.FileVersionInfo;
+                if (Contains(fv.ProductName, smtc) || Contains(fv.FileDescription, smtc)) hit = true;
+              } catch { }
+              if (hit && !string.IsNullOrEmpty(p.ProcessName)) set.Add(p.ProcessName);
+            } catch { }
+          }
+        } catch { }
+      }
+      NameCache[smtc] = set;
+      return set;
+    }
+
+    // Desktop players: SMTC id vs ProcessName / candidate names. Store apps: compare AUMID / package family name.
+    static bool AppMatches(string smtc, int pid, HashSet<string> names) {
       if (pid <= 0 || string.IsNullOrEmpty(smtc)) return false;
       string s = smtc.Trim();
-      string pname = "";
-      try { pname = Process.GetProcessById(pid).ProcessName; } catch { }
-      string exe = s;
-      int slash = Math.Max(s.LastIndexOf('\\'), s.LastIndexOf('/'));
-      if (slash >= 0) exe = s.Substring(slash + 1);
-      if (exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) exe = exe.Substring(0, exe.Length - 4);
-      if (pname.Length > 0 && string.Equals(pname, exe, StringComparison.OrdinalIgnoreCase)) return true;
+      string pname = Pname(pid);
+      if (pname.Length > 0 && names.Contains(pname)) return true;
       string pa = ProcAumid(pid);
-      if (pa.Length > 0) {
+      if (pa.Length > 0 && !pa.StartsWith("ERR")) {
         if (string.Equals(pa, s, StringComparison.OrdinalIgnoreCase)) return true;
         int bi = s.IndexOf('!'), pi = pa.IndexOf('!');
         string sf = bi > 0 ? s.Substring(0, bi) : s;
@@ -204,8 +246,16 @@ namespace IslandAppVol {
       return false;
     }
 
-    // Prefer the active (state==1) session of the matching app; skip pid<=0 system-sounds session.
+    // Tier 1: active (state==1) session of a name-matched app. Tier 2: any name-matched session.
+    // Tier 3: exactly one active session with a real PID -> that is the only app producing sound,
+    // use it. Still an application audio session, never the system master volume. Multiple active
+    // sessions with no name match stay unresolved (slider disabled), so we never guess wrong.
     static ISimpleAudioVolume Find(string smtc) {
+      try {
+        return FindOnce(smtc, Candidates(smtc, false)) ?? FindOnce(smtc, Candidates(smtc, true));
+      } catch { return null; }
+    }
+    static ISimpleAudioVolume FindOnce(string smtc, HashSet<string> names) {
       var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
       IMMDevice device;
       int hr = en.GetDefaultAudioEndpoint(0, 1, out device);
@@ -221,7 +271,8 @@ namespace IslandAppVol {
       int count;
       hr = e.GetCount(out count);
       if (hr != 0) return null;
-      ISimpleAudioVolume fallback = null;
+      ISimpleAudioVolume namedActive = null, namedIdle = null;
+      var active = new List<ISimpleAudioVolume>();
       for (int i = 0; i < count; i++) {
         IAudioSessionControl ctl;
         hr = e.GetSession(i, out ctl);
@@ -232,13 +283,18 @@ namespace IslandAppVol {
           c2.GetProcessId(out pid);
           c2.GetState(out state);
         } catch { continue; }
-        if (!AppMatches(smtc, pid)) continue;
         var sv = ctl as ISimpleAudioVolume;
         if (sv == null) continue;
-        if (state == 1) return sv;
-        if (fallback == null) fallback = sv;
+        if (state == 1 && pid > 0) active.Add(sv);
+        if (AppMatches(smtc, pid, names)) {
+          if (state == 1) namedActive = sv;
+          else if (namedIdle == null) namedIdle = sv;
+        }
       }
-      return fallback;
+      if (namedActive != null) return namedActive;
+      if (namedIdle != null) return namedIdle;
+      if (active.Count == 1) return active[0];
+      return null;
     }
 
     // -1 means no matching audio session: caller must disable the slider and never touch system volume.

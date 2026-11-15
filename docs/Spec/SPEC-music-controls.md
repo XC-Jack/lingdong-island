@@ -11,6 +11,12 @@
   音量改为只读写「当前播放应用的那条 Core Audio 音频会话」，绝不碰系统主音量；对不上应用时
   `canVolume=false`、滑块置灰、不读写任何音量，绝不回退系统音量。详见下方「音量语义（修订后）」与
   第九节修订自检。点播 / 随机 / 循环三项不变。
+- **二次修复（2026-11-15，用户 m00809 报「按钮音量都动不了」）**：按应用音量第一版（提交 `928c22c`）在真实播放器上
+  音量滑块置灰、随机/循环按钮也点不动，是真 bug 不是「对不上号」的设计降级。根因：SMTC 标识是中文
+  「汽水音乐」、音频会话进程名却是 `SodaMusic`，旧逻辑按名字相等匹配必失败；且能力位 `canShuffle/canRepeat`
+  被播放器报成 False 就硬禁用按钮。改法：对号入座改三层匹配（精确名 → 扫进程窗口标题/产品名建候选名集合 →
+  全场仅一条 active 会话直接用），随机/循环按钮去硬禁用改本地乐观反馈。详见第十节。
+  第九节里「对号入座＝进程名相等」「不支持的能力必须禁用按钮」两处结论随之作废。
 
 ## 一、目标
 
@@ -74,20 +80,31 @@
    `IAudioSessionManager2` → `IAudioSessionEnumerator` → `IAudioSessionControl2.GetProcessId` → `ISimpleAudioVolume.GetMasterVolume/SetMasterVolume`。
    [已核验] `.tmp/probe-app-volume.mjs` 在本机 PS 5.1 同进程 `Add-Type` 编译成功、枚举到会话、拿到 PID、按应用读写并还原
    （`RW_ORIG=1 → RW_TEST=0.3 → RW_AFTER_SET=0.3 → RW_RESTORED=1`、`RW_EFFECTIVE=True`）。
-3. **对号入座**：SMTC `SourceAppUserModelId` 对桌面播放器就是进程可执行名（如 `powershell.exe`），音频会话按 PID 取进程名比对；
-   商店应用再比 `GetApplicationUserModelId` 包族名。显示名不可靠（实测空串 / `@%SystemRoot%\System32\AudioSrv.Dll,-202`），绝不按显示名匹配。
+3. **对号入座（二次修订，2026-11-15）**：~~SMTC `SourceAppUserModelId` 对桌面播放器就是进程可执行名，按 PID 取进程名相等比对即可~~
+   —— 这是第一版以偏概全（只验过自造的 `powershell.exe` 假会话），真实播放器会失败。实测「汽水音乐」SMTC 标识是中文名、
+   音频会话进程名却是 `SodaMusic`，名字相等匹配不上。改为三层：①精确名（`Exe(smtc)` 去路径去 `.exe`）与 AUMID/包族名比对；
+   ②扫全进程，把窗口标题 / `ProductName` / `FileDescription` 含 SMTC 标识的进程的 `ProcessName` 收进候选集合再比（按 smtc 缓存，
+   `poll` 1/s 不重复全扫）；③全场仅一条 `state==1 && pid>0` 的 active 音频会话时直接用它（声音物理上只能从这条出，仍是应用音量，
+   不是系统主音量）。多条 active 且无匹配仍禁用。显示名不可靠（实测空串 / `@%SystemRoot%\System32\AudioSrv.Dll,-202`），绝不按显示名匹配。
 4. **对不上号怎么办（用户已拍板）**：`canVolume=false` → 音量滑块置灰、数字显示 `--`、不读写任何音量，**绝不回退系统主音量**。
 5. 音乐页音量控件 `title` 注明「当前播放应用的音量（只影响这个应用）」；交付说明不再说「会影响所有程序声音」。
 
-### 能力位禁用（[已核验] 的必要性）
+### 能力位与按钮可用性（二次修订，2026-11-15）
 
-`.tmp/probe-smtc-controls.mjs` 实测假 MediaPlayer 会话 `IsShuffleEnabled=False`、`IsRepeatEnabled=True`、`IsPlaybackPositionEnabled=True`。不支持的能力必须禁用对应按钮，不能一律可点；否则点了没反应又无提示。音量控件按 `canVolume` 能力位置灰：对不上当前播放应用的音频会话时禁用，不显示可拖的假滑块。
+~~`.tmp/probe-smtc-controls.mjs` 实测假 MediaPlayer 会话 `IsShuffleEnabled=False`，故「不支持的能力必须禁用对应按钮」~~
+—— 这是第一版基于假会话的误判。真实播放器诊断（`.tmp/diag-app-volume.mjs` / `.tmp/diag-match.mjs`）：「汽水音乐」
+把 `canShuffle/canRepeat` 都报成 `False`，但 `TryChangeShuffleActiveAsync`/`TryChangeAutoRepeatModeAsync`/`TryChangePlaybackPositionAsync`
+实测都回 `True`；能力位只是建议性声明、各播放器报得不一致。故随机/循环按钮**一律可点**（仅命令进行中 `busy` 时禁用），
+不再按 `canShuffle/canRepeat` 硬禁用。又因很多播放器收了命令却始终不上报 `IsShuffleActive/AutoRepeatMode`
+（`CMD_SHUFFLE_STATE_FOLLOWS=False`），点击后界面用**本地乐观值**立即翻转显示，命令被 IPC 拒绝才回退，换歌/换播放器时清空重跟随；
+`title` 诚实注明「部分播放器不反馈状态，以界面显示为准」。进度条 `canSeek` 仍按能力位决定是否响应（诊断 `canSeek=True`）。
+音量控件仍按 `canVolume` 置灰：对不上当前播放应用的音频会话时禁用，不显示可拖的假滑块。
 
 ### 渲染层
 
 1. 进度条改成可点击 / 可拖拽：用一个透明热区覆盖（3px 的 `.music-bar` 太细，热区做到至少 14px 高），按下 / 拖动时按 `clientX` 换算秒数，松手发 `seek`；拖动期间本地 `live` 跟随、暂停每秒插值避免跳回。`duration<=0` 或 `canSeek=false` 时不响应。
 2. 控件行布局：原 3 个按钮保持居中一行；随机 / 循环 / 音量另起一行（`.music-extra`），避免把 470×320 固定面板撑破（实测内容区约 422×280 布局 px，当前音乐页约 168px，加一行 32px 仍有余量）。
-3. 随机 / 循环按钮带 `.on` 高亮（跟随 `shuffle` / `repeat`）；循环按钮点击在 `None → Track → List → None` 间轮换，仅在 `canRepeat` 为真时发命令。
+3. 随机 / 循环按钮带 `.on` 高亮（优先跟随本地乐观值 `shuffleOverride` / `repeatOverride`，否则跟随 `shuffle` / `repeat`）；循环按钮点击在 `None → Track → List → None` 间轮换，一律发命令（不按 `canRepeat` 硬禁用）。
 4. 音量用 `<input type="range" min=0 max=1 step=0.01>`，旁边小喇叭图标；拖动时本地立即显示数值，`onChange` 120ms 防抖发 `volume`。`canVolume=false` 时加 `.off` 类整块置灰、input `disabled`、数字显示 `--`，不发命令。
 5. 空态（`active=false`）保持原样，不渲染新控件。
 
@@ -102,9 +119,9 @@
 
 1. `npm run typecheck` 与 `npm run build` 通过。
 2. 有真实 SMTC 会话时，`poll` 返回的新字段齐全且类型正确（`shuffle` 布尔、`repeat` 0/1/2、`volume` 0..1、四个 `can*` 布尔含 `canVolume`）；无会话时 `poll` 空态同样带全部新字段（不出现 `undefined`）。
-3. `scripts/e2e-music.mjs` 通过（混合行协议下 M2b 断言零改动仍全绿），`scripts/e2e-music-session.mjs` 通过（纯文本命令保留，S1–S10 不回归）。
+3. `scripts/e2e-music.mjs` 通过（混合行协议下 M2b 断言零改动仍全绿；M2k 改为断言随机/循环按钮一律可点），`scripts/e2e-music-session.mjs` 通过（纯文本命令保留，S1–S10 不回归）。
 4. 新增协议断言：seek / shuffle / repeat / volume 四条命令各收到一条 `ack`，`ok` 为布尔；未知命令仍只回一条 `ack ok=false`（原 S10 语义不变）；静态护栏断言桥接脚本正文不含系统主音量接口（`IAudioEndpointVolume` / `GetMasterVolumeLevelScalar` / `SetMasterVolumeLevelScalar`）。
-5. 本机实测（真人验证，助手不代验）：打开任意播放器放歌 → 展开岛切到音乐页 → 拖进度条能跳、随机/循环按钮按能力位禁用或高亮正确、拖音量滑块**只改这个播放器**的音量（其它程序声音不变）；对不上号的播放器音量滑块置灰显示 `--`。
+5. 本机实测（真人验证，助手不代验）：打开任意播放器放歌 → 展开岛切到音乐页 → 拖进度条能跳、随机/循环按钮可点且高亮立即翻转、拖音量滑块**只改这个播放器**的音量（其它程序声音不变）；对不上号的播放器音量滑块置灰显示 `--`。生产桥接脚本在真实「汽水音乐」会话上的 `canVolume=true` 已由 `.tmp/probe-prod-bridge-volume.mjs` 自动核验。
 6. 音量语义在 UI 上有可见提示（`title` 含「当前播放应用」、不含「系统」），交付说明里明说只影响当前播放应用、绝不碰系统主音量。
 7. 不改原三按钮的 aria-label / title 文案与 `music-btn` class，避免影响既有 e2e 与无障碍。
 8. 自检记录写明跑了哪些命令、结果、**哪些没验证**（真机独占项按工程规则注明只有真人能验）。
@@ -155,3 +172,42 @@
 6. [已核验] `.tmp/probe-app-volume.mjs` → `ADDTYPE=OK`、`RW_EFFECTIVE=True`、SMTC AUMID 与音频会话进程名对号入座成功（修订前置证据）。
 7. **未验证（只有真人能验）**：真实播放器下拖进度条 / 随机 / 循环 / 音量只改当前应用音量、对不上号置灰。交预览版由用户实测。
 8. 本批不合并回 `main`、不打包安装，按 `docs/工程规则.md` 等用户单独授权。
+
+## 十、二次修复自检记录（2026-11-15，用户 m00809 报「按钮音量都动不了」后）
+
+> 第九节记录的是按应用音量第一版（提交 `928c22c`）的自检，当时脚本与探针用的是「自造假会话 + 名字相等匹配」，
+> 没覆盖真实播放器，结论过于乐观。用户实测发现音量滑块置灰、随机/循环按钮也点不动（真 bug），本节为二次修复后的最新自检。
+
+现场与根因（[已核验]）：
+1. 用户截图（附件 `sha256:099286b37e0909efc431e8f25e79c153b1f0c77e1c6691d2eb09fc5fb5d3785c`）：音乐页正在放歌
+   （`1:21 / 4:20`、暂停键粉色亮），随机按钮暗、音量滑块灰且显示 `--`。
+2. `.tmp/diag-app-volume.mjs`（只读）：真实会话 `SMTC_0 aumid=汽水音乐 canShuffle=False canRepeat=False`；
+   音频会话 `pid=13928 pname=SodaMusic state=1`；三条候选对「汽水音乐」全 `match=False` → `canVolume=false` → 置灰。
+   根因＝SMTC 中文标识与进程名 `SodaMusic` 不相等，旧逻辑按名字相等匹配必漏配。
+3. `.tmp/diag-match.mjs`（只读+可还原）：扫进程命中 `pid=14816 pname=SodaMusic hit=windowTitle`（窗口标题含「汽水音乐」），
+   证明可用「扫窗口标题/产品名建候选进程名集合」把中文标识映射到 `SodaMusic`；`CMD_SHUFFLE_SAME_OK=True`、
+   `CMD_REPEAT_SAME_OK=True`、`CMD_SEEK_SAME_OK=True`，但 `CMD_SHUFFLE_STATE_FOLLOWS=False`（播放器不上报随机状态）。
+
+改法（[已核验] 已落盘）：
+1. `src/main/smtcScript.ts` 内嵌 C# 匹配改三层（精确名/AUMID → 候选进程名集合 → 全场唯一 active 会话），`using System.Collections.Generic;`，
+   `Dictionary<string, HashSet<string>> NameCache` 按 smtc 缓存；找不到仍禁用、绝不碰系统主音量。
+2. `src/renderer/src/App.tsx`：随机/循环按钮去掉 `canShuffle/canRepeat` 硬 `disabled`，新增 `shuffleOverride`/`repeatOverride`
+   本地乐观值（点击即翻转、IPC 拒绝回退、换歌清空）；`ctl` 加可选 `onReject` 回调。
+3. `scripts/e2e-music.mjs` M2k 与 `.tmp/probe-music-controls-render.mjs` P8/P9 同步改为断言「按钮一律可点」。
+
+自检命令与结果（全部 [已核验]）：
+1. `.tmp/probe-prod-bridge-volume.mjs`（抽取生产 `String.raw` 正文写带 BOM 的 .ps1、真实 `poll`、只读）→
+   `PROBE PROD BRIDGE VOLUME: PASS（5 过 / 0 败）`；真实会话 `app="汽水音乐"`、`canVolume=true volume=1`、
+   无 error 帧（C# `Add-Type` 编译成功、桥接循环活着）。**这是本次 bug 最直接的证据：修复前 `canVolume=false`。**
+2. `npm run typecheck`：node + web 两个 `tsc --noEmit` 无输出通过。
+3. `npm run build`：`electron-vite build` 通过，`out/main/index.js 142.82 kB`、`out/renderer/assets/index-DzBps6-z.js 109.69 kB`。
+4. `node scripts/e2e-music.mjs` → `E2E MUSIC: PASS（31 过 / 0 败）`。本次本机真实有会话（汽水音乐），
+   故 M2a–M2e/M2h–M2l/M3/M4 全部跑到未跳过：含 M2k「随机/循环按钮一律可点」、M2l「音量滑块按 canVolume 置灰」。
+5. `node scripts/e2e-music-session.mjs` → `E2E MUSIC SESSION: PASS（18 过 / 0 败）`（这次 `PLAYING_IDX=1`，S2 也通过，
+   印证第八/九节的 S2 失败确为 `SCENE_PS1` 会话顺序偶发、非回归）。
+6. `.tmp/probe-music-controls-render.mjs` → `PROBE MUSIC CONTROLS RENDER: PASS（13 过 / 0 败）`，含 P8/P9「按钮一律可点」、
+   P10「当前播放应用」不含「系统」、P12「canVolume 置灰与 `--`」。
+
+未验证（只有真人能验）：拖进度条实际跳到指定秒、点随机/循环后播放器内部状态真的切换（播放器不上报状态，界面只能给乐观反馈）、
+拖音量滑块只改当前播放器音量且其它程序声音不变、对不上号的播放器音量滑块置灰。交预览版由用户实测。
+本批不合并回 `main`、不打包安装，按 `docs/工程规则.md` 等用户单独授权。
