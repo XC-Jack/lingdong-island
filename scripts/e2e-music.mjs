@@ -232,14 +232,19 @@ try {
       readable, `真实会话 ${realSessions} 个，但 musicGet().active = ${active}`)
     const canCheckSession = active
 
-    // 第 1 批新增字段：无论有会话还是空态，musicGet() 都必须带齐，不能出现 undefined
-    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 四个 can* 布尔）',
+    // 第 1 批 + 第 2 批新增字段：无论有会话还是空态，musicGet() 都必须带齐，不能出现 undefined
+    ok('M2a1 新字段齐全（shuffle 布尔 / repeat 0..2 / volume 0..1 / 四个 can* 布尔 / cover 字符串）',
       state && typeof state.shuffle === 'boolean' &&
       typeof state.repeat === 'number' && state.repeat >= 0 && state.repeat <= 2 &&
       typeof state.volume === 'number' && state.volume >= 0 && state.volume <= 1 &&
       typeof state.canSeek === 'boolean' && typeof state.canShuffle === 'boolean' &&
-      typeof state.canRepeat === 'boolean' && typeof state.canVolume === 'boolean',
+      typeof state.canRepeat === 'boolean' && typeof state.canVolume === 'boolean' &&
+      typeof state.cover === 'string',
       JSON.stringify(state))
+    // 第 2 批：封面 data URL 格式必须合法（要么是空串，要么是合法 data:image）
+    ok('M2a2 cover 是空串或合法 data:image（png/jpeg）',
+      state && (state.cover === '' || /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(state.cover)),
+      `cover 长度=${String(state?.cover ?? '').length}`)
 
     const hasBar = await islandEval(`document.querySelectorAll('.music-bar-fill').length`)
     const btns = await islandEval(`document.querySelectorAll('.music-ctl .music-btn').length`)
@@ -271,6 +276,16 @@ try {
         volUi && volUi.disabled === (state.canVolume !== true) &&
         (state.canVolume === true ? /^\d+%$/.test(volUi.text ?? '') : volUi.text === '--'),
         `禁用=${volUi?.disabled} / canVolume=${state.canVolume} / 显示=${volUi?.text}`)
+      // 第 2 批：有封面时 .music-cover 里是 <img>，没封面时回落音符 svg，二者必居其一
+      const coverUi = await islandEval(`(() => { const c = document.querySelector('.music-cover'); const i = c?.querySelector('img.music-cover-img'); const s = c?.querySelector('svg'); return { hasImg: !!i, hasSvg: !!s, imgPrefix: i ? (i.getAttribute('src') || '').slice(0, 24) : '' } })()`)
+      ok('M2m 封面容器渲染（有封面用 img / 无封面回落音符 svg）',
+        coverUi && (state.cover !== '' ? (coverUi.hasImg === true && coverUi.hasSvg === false) : (coverUi.hasImg === false && coverUi.hasSvg === true)),
+        `cover=${state.cover ? '有' : '无'} / hasImg=${coverUi?.hasImg} / hasSvg=${coverUi?.hasSvg}`)
+      if (state.cover !== '') {
+        ok('M2n 封面 img 的 src 是合法 data:image 前缀',
+          /^data:image\/(png|jpeg);base64,/.test(coverUi?.imgPrefix ?? ''),
+          `src 前缀=${coverUi?.imgPrefix}`)
+      }
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)

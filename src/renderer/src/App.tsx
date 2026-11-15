@@ -1769,6 +1769,9 @@ function MusicPanel(): React.JSX.Element {
   // 不走 ctl 的 busy 锁（那是给「点一下按钮」防连点用的，会把拖动中的事件全吃掉）
   const volTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const volPending = useRef<number | null>(null)
+  // 封面 data URL 万一解码失败，记下「哪一个封面坏了」，只回落到音符占位；
+  // 换歌拿到新 data URL 时这个旧值不相等，会自然再试一次图片。
+  const [coverFailedFor, setCoverFailedFor] = useState<string | null>(null)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -1921,10 +1924,18 @@ function MusicPanel(): React.JSX.Element {
   return (
     <div className="todo-panel music-panel">
       <div className="music-main">
-        {/* 封面占位：SMTC 的缩略图在 PowerShell 5.1 里拿不到字节（已实测三条路全失败），
-            这里用音符块代替，不做假封面 */}
+        {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
         <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
-          <IcoMusic />
+          {music?.cover && coverFailedFor !== music.cover ? (
+            <img
+              className="music-cover-img"
+              src={music.cover}
+              alt=""
+              onError={() => setCoverFailedFor(music.cover)}
+            />
+          ) : (
+            <IcoMusic />
+          )}
         </div>
         <div className="music-meta">
           <div className="music-title" title={music?.title || '未知曲目'}>

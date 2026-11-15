@@ -34,6 +34,8 @@ $ProgressPreference = "SilentlyContinue"
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 [void][Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType=WindowsRuntime]
+# 封面：OpenReadAsync() 的异步结果类型，Await 需要它作为 AsTask 的泛型参数
+[void][Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType=WindowsRuntime]
 
 $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
   $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and
@@ -324,7 +326,74 @@ namespace IslandAppVol {
 '@
 Add-Type -TypeDefinition $volSrc
 
+# 真实封面（2026-11-15 第 2 批，SPEC-music-cover）。
+# 历史结论「PS 5.1 拿不到封面字节」作废：Thumbnail.OpenReadAsync() 返回 System.__ComObject，
+# 直接强转成 IRandomAccessStream 会失败，但把原始 __ComObject 传给「已加载程序集里反射出来的」
+# WindowsRuntimeStreamExtensions.AsStreamForRead，CLR 会自己完成 COM 接口协商，就能 CopyTo 成字节。
+# 编译期不引用任何 .winmd，绕开历史踩坑里的 CS1701 / CS0012；无需额外辅助进程。
+$coverSrc = @'
+using System;
+using System.IO;
+using System.Reflection;
+public static class IslandCoverGrab {
+  public static string Grab(object st) {
+    try {
+      Assembly asm = null;
+      foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies()) {
+        if (a.GetName().Name == "System.Runtime.WindowsRuntime") { asm = a; break; }
+      }
+      if (asm == null) return "";
+      Type ext = asm.GetType("System.IO.WindowsRuntimeStreamExtensions", false);
+      if (ext == null) return "";
+      MethodInfo mi = null;
+      foreach (MethodInfo m in ext.GetMethods(BindingFlags.Public | BindingFlags.Static)) {
+        if (m.Name == "AsStreamForRead" && m.GetParameters().Length == 1) { mi = m; break; }
+      }
+      if (mi == null) return "";
+      object nsObj;
+      try { nsObj = mi.Invoke(null, new object[] { st }); }
+      catch (TargetInvocationException) { return ""; }
+      Stream ns = nsObj as Stream;
+      if (ns == null) return "";
+      MemoryStream ms = new MemoryStream();
+      ns.CopyTo(ms);
+      byte[] b = ms.ToArray();
+      if (b.Length < 8 || b.Length > 524288) return "";
+      string mime;
+      if (b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) mime = "image/png";
+      else if (b[0] == 0xFF && b[1] == 0xD8) mime = "image/jpeg";
+      else return "";
+      return "data:" + mime + ";base64," + Convert.ToBase64String(b);
+    } catch { return ""; }
+  }
+}
+'@
+Add-Type -TypeDefinition $coverSrc
+
 $repeatEnumT = [Windows.Media.MediaPlaybackAutoRepeatMode, Windows.Media, ContentType=WindowsRuntime]
+
+# 封面缓存：同一首歌只在换歌时重新读一次缩略图，避免每秒 poll 都去拉 WinRT 流。
+# key 用 app|title|artist|album（至少含 3 个竖线，永不等于 ""）。
+# 关键点：封面 data URL 可能几十 KB；未换歌时返回 $null（JSON 里是 null），主进程沿用
+# 上一次的封面，避免每秒往 stdout 写一遍大字符串。换歌才返回完整 data URL（或 "" 表示没有）。
+# 任何一步失败都只回空串，绝不让封面问题连累整份状态快照。
+# 陷阱（实测踩过）：在 -File 脚本里主脚本体就是 script 作用域，poll 分支里若也用
+# $coverKey 这种无前缀变量，会直接覆盖 $script:coverKey，导致首帧就被误判为「未换歌」
+# 而恒返回 $null。故缓存键一律用 $script:coverCacheKey，poll 里算键用 $coverId，绝不同名。
+$script:coverCacheKey = ""
+function GetCover($props, $key) {
+  if ($key -eq $script:coverCacheKey) { return $null }
+  $data = ""
+  try {
+    $thumb = $props.Thumbnail
+    if ($null -ne $thumb) {
+      $stream = Await ($thumb.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
+      $data = [IslandCoverGrab]::Grab($stream)
+    }
+  } catch { $data = "" }
+  $script:coverCacheKey = $key
+  return $data
+}
 
 # 读当前播放应用的音频会话音量：-1 表示对不上号（或读取失败），界面会置灰滑块。
 # 绝不读系统主音量，也绝不因为读不到就回退到系统音量。
@@ -390,7 +459,7 @@ while ($true) {
   if ($cmd -eq "poll") {
     if ($idx -lt 0) {
       # 空态也要把新字段补齐，渲染层才不会读到 undefined
-      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false }
+      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false; cover = "" }
       continue
     }
     # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
@@ -409,12 +478,17 @@ while ($true) {
       $canVol = $false
       $vol = 0
       if ($volRaw -ge 0) { $canVol = $true; $vol = [math]::Round($volRaw, 3) }
+      $titleStr = [string]$props.Title
+      $artistStr = [string]$props.Artist
+      $albumStr = [string]$props.AlbumTitle
+      $coverId = $appId + "|" + $titleStr + "|" + $artistStr + "|" + $albumStr
+      $cover = GetCover $props $coverId
       Emit ([ordered]@{
         type = "state"
         active = $true
-        title = [string]$props.Title
-        artist = [string]$props.Artist
-        album = [string]$props.AlbumTitle
+        title = $titleStr
+        artist = $artistStr
+        album = $albumStr
         position = [math]::Round($tl.Position.TotalSeconds, 1)
         duration = [math]::Round($tl.EndTime.TotalSeconds, 1)
         playing = ($info.PlaybackStatus.ToString() -eq "Playing")
@@ -426,6 +500,7 @@ while ($true) {
         canShuffle = [bool]$ctrl.IsShuffleEnabled
         canRepeat = [bool]$ctrl.IsRepeatEnabled
         canVolume = $canVol
+        cover = $cover
       })
     } catch {
       # 把异常文本吐出去，别再静默发空态——静默会让人误以为「本机没有播放器」

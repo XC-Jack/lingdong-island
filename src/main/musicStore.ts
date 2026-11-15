@@ -42,7 +42,8 @@ const EMPTY_STATE: MusicState = {
   canSeek: false,
   canShuffle: false,
   canRepeat: false,
-  canVolume: false
+  canVolume: false,
+  cover: ''
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -95,6 +96,7 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.canShuffle === b.canShuffle &&
     a.canRepeat === b.canRepeat &&
     a.canVolume === b.canVolume &&
+    a.cover === b.cover &&
     // 进度按整秒比：SMTC 给的是带小数的秒，每毫秒都在变，逐位比会每秒重渲染
     Math.round(a.position) === Math.round(b.position) &&
     Math.round(a.duration) === Math.round(b.duration)
@@ -131,7 +133,18 @@ function handleLine(text: string): void {
     canSeek: Boolean(msg.canSeek),
     canShuffle: Boolean(msg.canShuffle),
     canRepeat: Boolean(msg.canRepeat),
-    canVolume: Boolean(msg.canVolume)
+    canVolume: Boolean(msg.canVolume),
+    // 封面：桥接只在「换歌」时回传完整 data URL（或 "" 表示这张没封面）；
+    // 未换歌时回 null（JSON），沿用缓存，避免每秒往 stdout 重发几十 KB 的 base64。
+    // 空态（active=false）时强制清掉封面，否则下次开播会短暂显示上一首歌的封面。
+    // 只放行合法的 data:image 前缀，挡住异常输入。
+    cover: !Boolean(msg.active)
+      ? ''
+      : (msg.cover === null || msg.cover === undefined
+          ? cache.cover
+          : (typeof msg.cover === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(msg.cover)
+              ? msg.cover
+              : ''))
   }
   if (sameState(cache, next)) return
   cache = next

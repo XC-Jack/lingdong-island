@@ -125,6 +125,8 @@ export interface MusicState {
   canRepeat: boolean
   /** 是否成功对上当前播放应用的音频会话；false 时音量滑块置灰、不读写任何音量 */
   canVolume: boolean
+  /** 当前歌曲的真实封面（data:image/png;base64,... 或 data:image/jpeg;base64,...）；取不到为空串，界面回落音符占位 */
+  cover: string
 }
 
 /**

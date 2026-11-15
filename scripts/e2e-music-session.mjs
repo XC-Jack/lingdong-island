@@ -243,19 +243,32 @@ try {
 
   // ========== 第 1 批：混合行协议（带参数命令用一行 JSON，纯文本命令保持原样） ==========
   const lastState = states[states.length - 1] ?? null
-  ok('S11 poll 状态带齐新字段（shuffle/repeat/volume/can* 无 undefined）',
+  ok('S11 poll 状态带齐新字段（shuffle/repeat/volume/can*/cover 无 undefined）',
     lastState && typeof lastState.shuffle === 'boolean' &&
     typeof lastState.repeat === 'number' && lastState.repeat >= 0 && lastState.repeat <= 2 &&
     typeof lastState.volume === 'number' && lastState.volume >= 0 && lastState.volume <= 1 &&
     typeof lastState.canSeek === 'boolean' && typeof lastState.canShuffle === 'boolean' &&
-    typeof lastState.canRepeat === 'boolean' && typeof lastState.canVolume === 'boolean',
-    JSON.stringify(lastState))
+    typeof lastState.canRepeat === 'boolean' && typeof lastState.canVolume === 'boolean' &&
+    'cover' in lastState,
+    JSON.stringify({ ...lastState, cover: typeof lastState?.cover === 'string' && lastState.cover.startsWith('data:') ? lastState.cover.slice(0, 24) + '…' : lastState?.cover }))
 
   // 用户 m00534 明确否决「绑成系统主音量」：桥接脚本正文里不得再出现系统主音量接口。
   // 这是静态护栏，防止以后有人又把 IAudioEndpointVolume / GetMasterVolumeLevelScalar 加回来。
   ok('S11b 桥接脚本不含系统主音量接口（音量只走按应用音频会话）',
     !/IAudioEndpointVolume|GetMasterVolumeLevelScalar|SetMasterVolumeLevelScalar/.test(bridgeScript),
     '正文出现系统主音量接口即判失败')
+
+  // ========== 第 2 批：真实封面 ==========
+  // 桥接直接读的是原始脚本，未换歌的 poll 里 cover 是 null（沿用缓存）、换歌首帧是 "" 或 data URL。
+  // 三种都合法；只要不是 undefined / 非法字符串即可。假 MediaPlayer 会话通常没有缩略图 → ""。
+  ok('S18 桥接脚本含封面读取代码（IslandCoverGrab / GetCover）',
+    /IslandCoverGrab/.test(bridgeScript) && /function GetCover/.test(bridgeScript),
+    '正文缺少封面读取实现即判失败')
+  ok('S19 poll 状态里 cover 是 null / 空串 / 合法 data:image',
+    states.length > 0 && states.every((s) =>
+      s.cover === null || s.cover === '' ||
+      (typeof s.cover === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(s.cover))),
+    `cover=${JSON.stringify(states.map((s) => (s.cover === null ? 'null' : typeof s.cover === 'string' && s.cover.startsWith('data:') ? s.cover.slice(0, 24) + '…' : s.cover)))}`)
 
   // 发一条 JSON 命令，收最后一条 ack 返回。只断言「有 ack 且 ok 是布尔」，
   // 不断言 ok=true：能力位不同的播放器可以合法拒绝（假播放器 shuffle 能力位就是 False）。
