@@ -2339,6 +2339,19 @@ div.pm-row[draggable='true'] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 参考图（用户 m02652）封面行右侧的歌词位。歌词功能已在 m02341 实测否决取消，
+   这里只摆一个诚实占位，不编造、不拉取任何歌词文本；长文本也不撑宽封面行 */
+.music-lyric-slot {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34%;
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.38);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
    这样每秒推进走合成层、不触发布局，配合 transition 就是连续的 */
@@ -2377,16 +2390,27 @@ div.pm-row[draggable='true'] {
   color: rgba(242, 243, 245, 0.38);
 }
 
-/* 控制条：三个按钮移到封面行右侧、与封面/歌名垂直居中对齐（用户 m02462）。
-   不再独立占满一行：宽度由内容决定、靠右，gap 收紧避免把封面行撑宽；
+/* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
+   三列 1fr auto 1fr 让播放按钮相对整岛真正居中，不被右侧音量宽度带偏 */
+.music-control-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  width: 100%;
+}
+.music-ctl-spacer {
+  min-width: 0;
+}
+
+/* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
    主按钮（播放/暂停）实心、比两侧大一档 */
 .music-ctl {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-  margin-left: auto;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+  padding-top: 2px;
 }
 .music-btn {
   display: flex;
@@ -2437,18 +2461,17 @@ div.pm-row[draggable='true'] {
   cursor: pointer;
 }
 
-/* 控件行：音量（当前播放应用）。刻意不用 .music-btn / .music-ctl，
-   免得影响既有 e2e 对「三个播放控制按钮」的断言。
-   用户 m02462：平时只留喇叭按钮，点一下向上弹出竖直音量条；
+/* 控件行：音量（当前播放应用）。刻意不用 .music-btn，免得影响既有 e2e
+   对「三个播放控制按钮」的断言。用户 m02462：平时只留喇叭按钮，点一下展开音量条；
+   m02652 参考图把竖向改成横向（向左弹出，避免浮层越出岛右缘），保留「平时隐形、点喇叭显现」；
    用 visibility/opacity/pointer-events 切换而非 display:none，
    这样 input 常驻 DOM（e2e 量得到），也不会隐形时误接鼠标 */
 .music-extra {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10px;
-  width: 100%;
-  padding-top: 2px;
+  min-width: 0;
 }
 .music-volume {
   position: relative;
@@ -2485,14 +2508,14 @@ div.pm-row[draggable='true'] {
 }
 .music-vol-pop {
   position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
-  padding: 8px 6px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 12px;
   background: rgba(28, 26, 34, 0.96);
@@ -2508,18 +2531,16 @@ div.pm-row[draggable='true'] {
   pointer-events: auto;
 }
 .music-vol-pop input[type='range'] {
-  width: 14px;
-  height: 84px;
+  width: 92px;
+  height: 14px;
   margin: 0;
   appearance: none;
   -webkit-appearance: none;
-  writing-mode: vertical-lr;
-  direction: rtl;
   background: transparent;
   cursor: pointer;
 }
 .music-vol-pop input[type='range']::-webkit-slider-runnable-track {
-  width: 3px;
+  height: 3px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
 }
@@ -2527,7 +2548,7 @@ div.pm-row[draggable='true'] {
   -webkit-appearance: none;
   width: 10px;
   height: 10px;
-  margin-left: -3.5px;
+  margin-top: -3.5px;
   border: none;
   border-radius: 50%;
   background: #ff8fa3;
@@ -2541,7 +2562,7 @@ div.pm-row[draggable='true'] {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: rgba(242, 243, 245, 0.38);
-  text-align: center;
+  text-align: right;
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {

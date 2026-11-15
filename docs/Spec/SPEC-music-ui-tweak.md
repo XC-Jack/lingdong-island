@@ -1,9 +1,14 @@
 # SPEC：音乐页 UI 微调（音量竖跳 + 播放按钮移到右上）
 
+> **重大修订（2026-11-15 20:50）**：用户 m02652「参考这个截图，做这个样子的」＋选「整页照图重排」，
+> 已在**同一分支** `music-ui-tweak` 上按参考图把整页重排，**推翻了下面第一~七节的 m02462 旧目标**
+> （播放按钮右上、音量竖直弹出）。最新目标、范围、自检见**第九节**；第一~八节保留作历史留痕，
+> 其中「播放按钮在封面行右侧」「竖直音量」等表述均已作废，不再代表当前代码。
+
 - 基线：`main` @ `5a855b9`
 - 分支：`music-ui-tweak`
-- 用户消息：m02462「把音量弄成竖跳的，音量条隐形，点声标时显现；还有就是这个播放等这一块ui移到上面的右边，和音乐条对其」
-- 用户截图：`sha256:a206382f4867a698d22498e82c9c1ccc10f27fa94943554fdfec16fe052ec1ba`
+- 用户消息：m02462「把音量弄成竖跳的，音量条隐形，点声标时显现；还有就是这个播放等这一块ui移到上面的右边，和音乐条对其」；m02652「参考这个截图，做这个样子的」＋选「整页照图重排」；m02676「继续」
+- 用户截图：m02462 `sha256:a206382f4867a698d22498e82c9c1ccc10f27fa94943554fdfec16fe052ec1ba`；m02652 参考图 `sha256:86cf24a60186c2a898371c509598e4a6d7cd8b33add2cc7b7a166a3f33973bae`
 - 关联：SPEC-music-controls.md（第 1 批控制）、SPEC-music-cover.md（第 2 批封面）
 
 ## 一、目标
@@ -78,3 +83,41 @@
 8. [已核验] `styles.css`：`.music-ctl` 去 `width:100%`、改 `justify-content:flex-end` + `margin-left:auto` + `flex:0 0 auto` + gap 8px；音量段重写为「喇叭圆钮 + 绝对定位向上弹出的竖直浮层」，`input` 用 `writing-mode:vertical-lr; direction:rtl; width:14px; height:84px`，浮层用 `visibility/opacity/pointer-events` 切换、带 `@media (prefers-reduced-motion: reduce)` 关动画。
 9. [未核验] 真人预览版肉眼看：三个播放按钮在封面行右侧对齐的观感、「音乐条」是否指进度条那一行、竖条弹出不越界的实际手感、不同分辨率/`zoom` 下浮层是否始终落在岛内。上述均为只有真人能验的项，待用户试预览版确认。
 10. 边界 [已核验]：本批只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机；安装版仍是第 1+2 批产物。合并与打包各需用户单独授权。
+
+## 九、整页照参考图重排（2026-11-15 20:50，取代第一~八节目标）
+
+### 缘起与决议
+
+1. 用户 m02652 发参考图 `sha256:86cf24a60186c2a898371c509598e4a6d7cd8b33add2cc7b7a166a3f33973bae`：状态行 / 封面行（左圆角封面 + 中歌名歌手 + 右一行歌词）/ 进度行（左已播 `01:00` + 中条 + 右负数剩余 `-04:03`）/ 控制行（左「词」+ 中居中三个白色播放按钮 + 右喇叭与「岛上歌词」）。
+2. 该图与 m02462 刚交付的「按钮右上 + 竖直音量」冲突，且右上一行歌词已被 m02341 实测否决。按全局规则一.4 停下来问了一个问题 `ui_target`，用户选「**整页照图重排**」，m02676「继续」放行。
+3. 执行口径：①播放按钮移回进度条下方、相对整岛居中；②封面行右侧只留**诚实「暂无歌词」占位**（不编词、不拉数据，守住 m02341 否决）；③进度右端改负数剩余 `-mm:ss`；④音量由竖直改**横向向左弹出**、保留 m02462「平时隐形、点喇叭显现」；⑤配色/布局尽量贴近参考图但不引入任何新数据源。
+
+### 修改范围（同一分支增量）
+
+| 文件 | 改动 |
+|---|---|
+| `src/renderer/src/App.tsx` | 加 `remain = Math.max(0, duration - live)`；`.music-main` 里嵌的 `.music-ctl` 换成 `.music-lyric-slot`（「暂无歌词」）；进度右端 `-{fmtDuration(remain)}`；新增 `.music-control-row`（左 `.music-ctl-spacer` + 中 `.music-ctl` 三按钮 + 右 `.music-extra` 音量）；注释由「竖直」改「横向」 |
+| `src/renderer/src/styles.css` | 新增 `.music-control-row { display:grid; grid-template-columns:1fr auto 1fr }`、`.music-ctl-spacer`、`.music-lyric-slot`（max-width 34% / 右对齐 / ellipsis）；`.music-ctl` 改回 `justify-content:center; width:100%`；`.music-extra` 改 `justify-content:flex-end`；`.music-vol-pop` 由向上竖直浮层改向左横向（`right:calc(100% + 8px); top:50%; translateY(-50%); flex-direction:row`）；`input[type=range]` 回水平（`width:92px; height:14px`、track `height:3px`、thumb `margin-top:-3.5px`），删 `writing-mode`/`direction`/`margin-left`；`.music-volume-num` 改 `text-align:right` |
+| `scripts/e2e-music.mjs` | M2d 正则放宽 `/^-?\d+:\d{2}(:\d{2})?$/`；U1 改「控制行居中、不在封面行」、U3 由 `h>40` 改 `w>60`；新增 U4（歌词占位「暂无歌词」、无联网歌词元素）、U5（负数剩余）。旧 M2b/M2g/M2i/M2l/M3 一行未动 |
+| `.tmp/probe-music-controls-render.mjs` | 同步 U1/U3/U4/U5，保住 U2 与 D1–D5（一次性，不进提交） |
+| `docs/状态.md` | 顶部新增 20:50 一句话状态，19:55 条标历史 |
+
+### 预期行为与验收
+
+1. 播放按钮组中心与岛中心 X 差 ≤6px，且不再嵌在 `.music-main` 内。
+2. 音量横条平时 `visibility:hidden`，点喇叭后显现、`w>60` 且浮层矩形完全在岛内，再点收起。
+3. 封面行右侧只有「暂无歌词」文本，不存在任何联网歌词 DOM。
+4. 进度行右端为 `-mm:ss`（正则 `^-\d+:\d{2}(:\d{2})?$`），左端仍为已播时间。
+5. `canVolume===false` 仍置灰 + `disabled` + `--`（第 1 批行为不回归）。
+6. 三个播放按钮仍恰好 3、音量 `input[type=range]` 恰好 1、进度热区恰好 1（旧 e2e 选择器不破）。
+
+### 自检记录（本轮重排，全部 [已核验]）
+
+1. `npm run typecheck`（node + web 两个 tsc）无输出通过。
+2. `npm run build` EXIT=0：`out/main/index.js 146.79 kB`、`out/preload/index.js 12.71 kB`、`index-DeUSFRyH.css 63.74 kB`、`index-uujRuk7E.js 108.22 kB`。
+3. `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**：U1 控制行居中 / U2 横条隐形 / U3 点喇叭显现且不越界 / U4 诚实歌词占位 / U5 负数剩余全绿，M2b/M2i/M2l/M3 全不回归。
+4. `node scripts/e2e-music-session.mjs` → **PASS（20 过 / 0 败）**：协议未动、S1–S19 不回归。
+5. `node .tmp/probe-music-controls-render.mjs` → **PASS（23 过 / 0 败）**：P0–P14、U1–U5、D1–D5（拖动不回缩）全绿。
+6. 实施期修掉一个真隐患：`.music-ctl` 一度既嵌在封面行又独立存在（两份，共 6 个按钮，M2b 必挂）；用整段锚点删掉旧块，grep 复查 `music-ctl` 仅 1 处 JSX。`.tmp/check-jsx.mjs` 自写正则首版把 `=>` 的 `>` 误当标签报 9 处假错，改整段 `s` 标志匹配 + 人工 read 核对结构配对。
+7. [未核验] 真人预览版观感：与参考图的相似度、横向音量条向左弹出的手感与不越界、负数剩余时间读数是否合意、不同分辨率/`zoom` 下浮层是否始终在岛内。只有真人能验，待用户试预览版确认。
+8. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机；安装版仍是第 1+2 批产物。合并与打包各需用户单独授权。

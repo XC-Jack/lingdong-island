@@ -1772,7 +1772,8 @@ function MusicPanel(): React.JSX.Element {
   // 封面 data URL 万一解码失败，记下「哪一个封面坏了」，只回落到音符占位；
   // 换歌拿到新 data URL 时这个旧值不相等，会自然再试一次图片。
   const [coverFailedFor, setCoverFailedFor] = useState<string | null>(null)
-  // 音量竖直滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462）
+  // 音量横向滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
+  // m02652 参考图改为横向，保留「平时隐形、点喇叭显现」这条交互）
   const [volOpen, setVolOpen] = useState(false)
 
   const sendVolume = useCallback((v: number) => {
@@ -1861,6 +1862,8 @@ function MusicPanel(): React.JSX.Element {
 
   const active = music?.active === true
   const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
+  // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03；总时长未知时诚实显示 -0:00
+  const remain = Math.max(0, (music?.duration ?? 0) - live)
 
   /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
   const secAt = (clientX: number): number => {
@@ -1947,8 +1950,35 @@ function MusicPanel(): React.JSX.Element {
             {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
           </div>
         </div>
-        {/* 播放控制移到这一行右侧，与封面/歌名垂直居中对齐（用户 m02462）。
-            容器仍在 .music-ctl 内、三个按钮仍用 .music-btn，保住既有 e2e 断言口径 */}
+        {/* 参考图（用户 m02652）：封面行右侧是歌词位。歌词已在 m02341 实测否决取消，
+            这里只留一个诚实占位，不编造任何歌词文本 */}
+        <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
+      </div>
+
+      <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
+        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+        <div
+          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+          ref={barRef}
+          onPointerDown={onSeekPointerDown}
+          onPointerMove={onSeekPointerMove}
+          onPointerUp={onSeekPointerUp}
+        >
+          <div className="music-bar">
+            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+          </div>
+        </div>
+        <div className="music-times">
+          <span className="music-time">{fmtDuration(live)}</span>
+          <span className="music-time">-{fmtDuration(remain)}</span>
+        </div>
+      </div>
+
+      {/* 参考图（用户 m02652）：控制行＝左侧留白 / 中间三个播放按钮 / 右侧音量。
+          三列 1fr auto 1fr 保证播放按钮相对整岛真正居中，不随右侧音量宽度偏移。
+          容器仍是 .music-ctl、三个按钮仍是 .music-btn，保住既有 e2e 断言口径 */}
+      <div className="music-control-row">
+        <span className="music-ctl-spacer" aria-hidden="true" />
         <div className="music-ctl">
           <button
             type="button"
@@ -1982,60 +2012,41 @@ function MusicPanel(): React.JSX.Element {
             <IcoNext />
           </button>
         </div>
-      </div>
 
-      <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
-        <div
-          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
-          ref={barRef}
-          onPointerDown={onSeekPointerDown}
-          onPointerMove={onSeekPointerMove}
-          onPointerUp={onSeekPointerUp}
-        >
-          <div className="music-bar">
-            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
-          </div>
-        </div>
-        <div className="music-times">
-          <span className="music-time">{fmtDuration(live)}</span>
-          <span className="music-time">{fmtDuration(music?.duration ?? 0)}</span>
-        </div>
-      </div>
-
-      <div className="music-extra">
-        <div
-          className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
-          title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
-        >
-          {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462） */}
-          <button
-            type="button"
-            className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
-            aria-label="音量"
-            aria-expanded={volOpen}
-            title="点击展开/收起音量"
-            onClick={() => setVolOpen((v) => !v)}
+        <div className="music-extra">
+          <div
+            className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
+            title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
           >
-            <IcoVolume />
-          </button>
-          {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
-          <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={volume}
-              disabled={music?.canVolume !== true}
-              aria-label="当前播放应用的音量"
-              onChange={(e) => {
-                const v = Number(e.target.value)
-                setVolLocal(v)
-                sendVolume(v)
-              }}
-            />
-            <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+            {/* 平时只留喇叭按钮；点一下展开横向音量条，再点收起（用户 m02462 / m02652） */}
+            <button
+              type="button"
+              className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
+              aria-label="音量"
+              aria-expanded={volOpen}
+              title="点击展开/收起音量"
+              onClick={() => setVolOpen((v) => !v)}
+            >
+              <IcoVolume />
+            </button>
+            {/* 横向弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
+            <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={volume}
+                disabled={music?.canVolume !== true}
+                aria-label="当前播放应用的音量"
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setVolLocal(v)
+                  sendVolume(v)
+                }}
+              />
+              <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+            </div>
           </div>
         </div>
       </div>
