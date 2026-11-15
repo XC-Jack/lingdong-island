@@ -30,6 +30,8 @@
   音量三层匹配、按应用音量语义、点播三项不变。详见第十一节三次修复自检。
 - **四次修复（2026-11-15，用户 m01234 报「拖动进度条会回缩再到目标刻度，很怪」）**：进度条点播虽能跳到目标，但拖动/松手瞬间会先缩回拖动前的位置、再滑到目标。根因两处叠加：① `MusicPanel` 里「收到新快照就 `setLive(music.position)`」的 useEffect 依赖含 `seeking`，松手 `seeking` 翻 false 那一帧用**旧 position** 把 `live` 拽回；② `.music-bar-fill` 的 `transition: transform 960ms linear` 把「回缩—再滑」放成约 1 秒慢动作，拖动时条子也不跟手。改法：加 `seekGuardRef` 保护窗口（松手后到播放器回传「跳到目标附近」的快照前忽略旧 position，换歌/2.5s 超时兜底放弃保护）+ `seekingRef` 同步镜像（拖动中 effect 不打断）+ 拖动期间 `.music-seek.dragging .music-bar-fill { transition: none }` 关缓动。新增探针 D1–D5 真驱动 PointerEvent 并做 A/B 自证：旧代码下 D2/D3/D5 必失败（scale 只到 0.24、时间文本跳回 0:07），新代码 16/0 全过，证明不是假绿。详见第十二节。本次只改 `App.tsx` 与 `styles.css`（及一次性探针），桥接层与两个正式 e2e 零改动。
 
+- **合并状态（2026-11-15 14:55，最新，覆盖下方各节的历史表述）**：用户 m01389「没问题了」＝第 1 批预览版验收通过；用户明确选择「只合并回 `main`，暂不打包」。已执行 `git switch main` → `git merge --no-ff music-controls` → 合并提交 **`2ae9dfb`**（无冲突），`main` 由 `6c4348d` 前进到 `2ae9dfb`，`git diff --stat music-controls main` 为空＝逐字节一致；合并后在 `main` 上重跑 `npm run typecheck` EXIT=0、`npm run build` EXIT=0。**未打包、未装机**：按 `docs/工程规则.md` 五.2「合并 ≠ 上线」，不跑 `npm run dist`、不改 `D:\软件\灵动岛\`。独立验收按批攒、本批未做（验收记录留空），与历史先例一致；合并前置＝用户预览版验收通过。**下方各节自检记录里「本批不合并回 `main`、不打包安装」是当时写完自检时的历史状态，已被本条取代，仅留历史。**
+
 ## 一、目标
 
 > **三次修订作废说明**：本节第 2、3 项（随机 / 循环）按用户 m01006 后的拍板「直接删掉这两个按钮」**已作废**，
