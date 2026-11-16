@@ -177,3 +177,47 @@
 - [未核验] 用户是否满意左移幅度（当前三按钮组中心 71.5，比左栏中心偏左 27.7；觉得不够就继续收 `gap` 或把「词」做宽）。
 - [未核验] 真机观感与高分屏 DPI。
 - [未核验] 「词」按钮没有功能这件事，用户接受与否（它只照参考图占位，点下去无反应）。
+
+### 7.7 第五轮修正（2026-11-16 16:05，用户 m03716 点「词」弹出歌词页）
+
+**用户原话**：
+
+> 现在接着下一步，当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示
+
+**含义拆解**：①点「词」→ 右侧弹出歌词面板；②不点时默认不显示（`visibility:hidden`）；③再点一次收起。歌词正文仍不做（用户 m02341 已实测否决），面板内只放诚实占位，不联网、不编造。
+
+**做法**：
+
+1. `src/renderer/src/App.tsx`：`MusicPanel` 新增 `const [lyricOpen, setLyricOpen] = useState(false)`；`.music-ctl-buttons` 里的「词」按钮改为 `className={`music-word ${lyricOpen ? 'on' : ''}`}`、`title={lyricOpen ? '收起歌词页' : '展开歌词页'}`、`aria-expanded={lyricOpen}`、`onClick={() => setLyricOpen((v) => !v)}`。
+2. `src/renderer/src/App.tsx`：`.music-control-row` 内、`.music-ctl` **之前**新增面板 —— `.music-lyric-pop`（`role="dialog"`、`aria-label="歌词"`、`aria-hidden={!lyricOpen}`）→ `.music-lyric-pop-head`（标题「歌词」+ `×` 关闭按钮，`onClick={() => setLyricOpen(false)}`）→ `.music-lyric-pop-body`（`暂无歌词` + `歌词功能已按你的决定去掉`）。
+3. `src/renderer/src/styles.css`：`.music-lyric-pop{position:absolute; right:0; bottom:calc(100% + 8px); width:212px; max-height:82px; padding:8px 10px; border-radius:14px; border:1px solid rgba(255,255,255,.1); background:rgba(28,26,34,.98); box-shadow:0 10px 28px rgba(0,0,0,.45); visibility:hidden; opacity:0; pointer-events:none; transform:translateY(4px); transition:opacity 140ms ease, transform 140ms ease; z-index:5}`，`.music-lyric-pop.open{visibility:visible;opacity:1;pointer-events:auto;transform:translateY(0)}`；`.music-word.on{background:rgba(255,143,163,.22); color:#ff8fa3}`；`@media (prefers-reduced-motion: reduce)` 关过渡。定位参考系是 `.music-control-row` 的 `position:relative`（第四轮就加了）。
+4. 类名刻意不用 `.music-lyric-line` / `[data-lyric]` / `.music-lyrics`，避免撞既有 e2e U4 的「不许偷偷接联网歌词」探测。
+
+**实测** [已核验，`.tmp/word/lyric.mjs` + dev electron 9321 + 假 SMTC 会话]：
+
+| 状态 | visibility | opacity | pointer-events | 面板盒（视觉 px） | 是否在岛内 |
+|---|---|---|---|---|---|
+| 默认（未点） | hidden | 0 | none | x200.5 y81.8 w159 h58.5 | 是 |
+| 点「词」后 | visible | 1 | auto | x200.5 **y76.4** w159 **h60.9** | 是（岛 377.4×219.1） |
+| 再点一次 | hidden | 0 | none | 同上 | — |
+| 点面板 `×` | hidden | 0 | none | 同上 | — |
+
+「词」按钮 `aria-expanded` 同步 `false→true→false`，`.music-word` 类名同步加/去 `on`；`.music-lyric-line/[data-lyric]/.music-lyrics` 全程 `0`。
+
+**面板尺寸调了三轮（教训）**：`max-height:200px` 时面板高 89.8、顶部顶到状态区（电量环/时钟/铃铛）；收到 `78px` 又把长提示文案裁掉并逼出滚动条；最终 `82px` + 提示文案缩到 12 个字 + `.music-lyric-pop-empty/.hint` 各加 `flex:0 0 auto` + body 改 `overflow:hidden`，才落到 60.9 高、无滚动条、不压状态区。**绝对定位的浮层高度必须实测，不能只看 CSS 声明值。**
+
+**e2e 连带修正**（`scripts/e2e-music.mjs`）—— 原 U1d「点「词」不拉歌词」拆成三条：
+
+- **U1d** 歌词页平时不显示（`visibility==='hidden'`）——对应用户 m03716「不然则消失，不显示」。
+- **U1e** 点「词」弹出歌词页、整块落在岛内、`aria-expanded==='true'`、且 `div.music-lyric-line/[data-lyric]/.music-lyrics` 数量仍为 0。
+- **U1f** 再点一次「词」收起（`visibility==='hidden'`、`aria-expanded==='false'`）。
+
+**自检** [已核验]：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 43 过 / 0 败**（U1d/U1e/U1f 全绿）、`e2e-music-session` PASS 20/0。截图 `.tmp/word/shot-lyric-open.png`（474×275）。
+
+**踩坑**：`e2e-music.mjs` 首跑出现 `✗ M3a` / `✗ M3c`（播放态翻转失败），清空 `.tmp/e2e-userdata` 后重跑 **PASS 43/0** —— 与本次改动无关，是残留数据；**跑 e2e 前必须先删 `.tmp/e2e-userdata`**。
+
+**仍未核验**：
+
+- [未核验] 用户是否接受「歌词页里只有占位、没有真歌词」这件事（此前 m02341 已否决歌词，本轮只做开合外壳）。
+- [未核验] 面板弹出/收起的 140ms 过渡在真机上的手感。
+- [未核验] 岛在不同 DPI 下 82px 布局高的上限是否仍够放两行占位文字。

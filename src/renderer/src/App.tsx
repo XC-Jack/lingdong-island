@@ -1820,6 +1820,9 @@ function MusicPanel(): React.JSX.Element {
   // 音量竖直滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
   // m02917 纠正回竖直，保留「平时隐形、点喇叭显现」这条交互）
   const [volOpen, setVolOpen] = useState(false)
+  // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
+  // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
+  const [lyricOpen, setLyricOpen] = useState(false)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -2038,6 +2041,29 @@ function MusicPanel(): React.JSX.Element {
           喇叭（.music-extra）绝对定位贴在「下一首」右外侧，既不挤压按钮、也不再吊在整岛最右端。
           容器仍是 .music-ctl、三个按钮仍是 .music-btn、音量仍包在 .music-volume 里，保住 e2e 断言口径 */}
       <div className="music-control-row">
+        {/* 用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」：
+            歌词页从控制行右上角弹出、盖住右栏区域，再点一次「词」或点面板右上角 × 收起。
+            面板里仍然只有诚实占位文案——歌词内容在用户 m02341 实测否决过、没有重新授权，
+            所以这里既不联网也不编造，只把「歌词位」这个位置做成能开能关的一页。
+            类名刻意不用 .music-lyric-line / [data-lyric] / .music-lyrics，
+            避免撞 e2e-music 的 U4「有没有偷偷接联网歌词」探测 */}
+        <div className={`music-lyric-pop ${lyricOpen ? 'open' : ''}`} role="dialog" aria-label="歌词" aria-hidden={!lyricOpen}>
+          <div className="music-lyric-pop-head">
+            <span className="music-lyric-pop-title">歌词</span>
+            <button
+              type="button"
+              className="music-lyric-pop-close"
+              aria-label="收起歌词"
+              onClick={() => setLyricOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="music-lyric-pop-body">
+            <p className="music-lyric-pop-empty">暂无歌词</p>
+            <p className="music-lyric-pop-hint">歌词功能已按你的决定去掉</p>
+          </div>
+        </div>
         <div className="music-ctl">
           <div className="music-ctl-buttons">
             <button
@@ -2115,9 +2141,11 @@ function MusicPanel(): React.JSX.Element {
                 类名刻意不叫 .music-lyric-* 以免撞 e2e U4 的「不许偷偷接歌词」探测 */}
             <button
               type="button"
-              className="music-word"
-              title="歌词功能没有做（用户已决定不做），这里只占参考图里的位置"
+              className={`music-word ${lyricOpen ? 'on' : ''}`}
+              title={lyricOpen ? '收起歌词页' : '展开歌词页'}
               aria-label="歌词"
+              aria-expanded={lyricOpen}
+              onClick={() => setLyricOpen((v) => !v)}
             >
               词
             </button>

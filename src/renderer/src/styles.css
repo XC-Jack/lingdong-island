@@ -2536,6 +2536,9 @@ div.pm-row[draggable='true'] {
    整组在左栏（＝封面＋歌名那块）内居中 ⇒ 加了右边两件之后，播放/切歌自然向左让位，
    既满足「整体向左移」，也仍然落在歌名正下方 */
 .music-control-row {
+  /* position:relative 是给歌词页（.music-lyric-pop）当定位参考系的：
+     它从这个行右上角向上弹出、盖住右栏那块（用户 m03579） */
+  position: relative;
   display: grid;
   grid-template-columns: 212px 1px 212px;
   column-gap: 14px;
@@ -2759,6 +2762,104 @@ div.pm-row[draggable='true'] {
 }
 .music-word:hover {
   background: rgba(255, 255, 255, 0.14);
+}
+/* 「词」按下去＝歌词页展开状态：给一枚高亮，让用户知道现在开着（否则「再点收起」没有反馈） */
+.music-word.on {
+  background: rgba(255, 143, 163, 0.22);
+  color: #ff8fa3;
+}
+
+/* 歌词页（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
+   位置：从控制行右上角弹出、向上盖住右栏那块区域（.music-lyric-slot 所在处），
+   宽 212 布局 px（＝右栏宽）、高 96 布局 px（＝封面上方到控制行约 100，留一点边）。
+   默认 visibility:hidden + opacity:0 + pointer-events:none，点「词」后才 .open。
+   内容只有诚实占位文案：歌词在用户 m02341 实测否决过，这里既不联网也不编造 */
+.music-lyric-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  width: 212px;
+  /* 高度上限对齐右栏（布局 76.5）：再高就会顶到上面的状态区（电量环/时钟/铃铛） */
+  max-height: 82px;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(28, 26, 34, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 5;
+}
+.music-lyric-pop.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.music-lyric-pop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.music-lyric-pop-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: rgba(242, 243, 245, 0.94);
+}
+.music-lyric-pop-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(242, 243, 245, 0.8);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.music-lyric-pop-close:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.music-lyric-pop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+.music-lyric-pop-empty {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(242, 243, 245, 0.82);
+}
+.music-lyric-pop-hint {
+  flex: 0 0 auto;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(242, 243, 245, 0.42);
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-lyric-pop {
+    transition: none;
+  }
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {

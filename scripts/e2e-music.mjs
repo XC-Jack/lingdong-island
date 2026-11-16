@@ -345,15 +345,34 @@ try {
       ok('U1c 喇叭右边有「词」按钮且完全在岛内（用户 m03577）',
         wordUi && wordUi.found === true && wordUi.text === '词' && wordUi.gap >= 0 && wordUi.gap <= 24 && wordUi.insideIsland === true,
         JSON.stringify(wordUi))
+      const lyricPopBefore = await islandEval(`(() => { const p = document.querySelector('.music-lyric-pop'); return p ? getComputedStyle(p).visibility : null })()`)
+      ok('U1d 歌词页平时不显示（用户 m03579「不然则消失，不显示」）', lyricPopBefore === 'hidden', `visibility=${lyricPopBefore}`)
       await islandEval(`document.querySelector('.music-word')?.click()`)
-      await sleep(200)
-      const wordNoop = await islandEval(`(() => ({
-        lyricText: document.querySelector('.music-lyric-slot')?.textContent?.trim() ?? null,
-        lyricHits: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length
-      }))()`)
-      ok('U1d 点「词」不拉歌词、不编造歌词（歌词功能已被 m02341 否决）',
-        wordNoop && wordNoop.lyricText === '暂无歌词' && wordNoop.lyricHits === 0,
-        JSON.stringify(wordNoop))
+      await sleep(260)
+      const lyricPopOpen = await islandEval(`(() => {
+        const p = document.querySelector('.music-lyric-pop');
+        const w = document.querySelector('.music-word');
+        const island = document.querySelector('.island');
+        if (!p || !island) return null;
+        const pr = p.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        return {
+          visibility: getComputedStyle(p).visibility,
+          inside: pr.left >= ir.left - 1 && pr.right <= ir.right + 1 && pr.top >= ir.top - 1 && pr.bottom <= ir.bottom + 1,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null,
+          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length,
+          text: p.textContent.replace(/\\s+/g, ' ').trim()
+        };
+      })()`)
+      ok('U1e 点「词」弹出歌词页、整块落在岛内、且仍不引入联网歌词（用户 m03579）',
+        lyricPopOpen && lyricPopOpen.visibility === 'visible' && lyricPopOpen.inside === true &&
+        lyricPopOpen.wordExpanded === 'true' && lyricPopOpen.online === 0,
+        JSON.stringify(lyricPopOpen))
+      await islandEval(`document.querySelector('.music-word')?.click()`)
+      await sleep(240)
+      const lyricPopClosed = await islandEval(`(() => { const p = document.querySelector('.music-lyric-pop'); const w = document.querySelector('.music-word'); return p ? { visibility: getComputedStyle(p).visibility, wordExpanded: w ? w.getAttribute('aria-expanded') : null } : null })()`)
+      ok('U1f 再点一次「词」歌词页收起（用户 m03579）',
+        lyricPopClosed && lyricPopClosed.visibility === 'hidden' && lyricPopClosed.wordExpanded === 'false',
+        JSON.stringify(lyricPopClosed))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
