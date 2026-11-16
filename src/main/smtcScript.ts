@@ -544,15 +544,28 @@ while ($true) {
       $albumStr = [string]$props.AlbumTitle
       $coverId = $appId + "|" + $titleStr + "|" + $artistStr + "|" + $albumStr
       $cover = GetCover $props $coverId
+      # 用户 m05562「喝唱的对不齐」：TimelineProperties.Position 只是「LastUpdatedTime 那一刻」的位置，
+      # 播放器不一定每秒刷新它（实测汽水音乐/假会话都会隔几秒才更新，甚至几十秒）。
+      # 直接拿它当当前位置，歌词就会落后真实播放。这里按「播放中 + 距上次更新的真实流逝时间」
+      # 补上差值，夹在 0..EndTime 之间；暂停时不动。
+      $posSec = $tl.Position.TotalSeconds
+      $isPlaying = ($info.PlaybackStatus.ToString() -eq "Playing")
+      if ($isPlaying) {
+        $ageSec = ([DateTimeOffset]::Now - $tl.LastUpdatedTime).TotalSeconds
+        if ($ageSec -gt 0 -and $ageSec -lt 600) { $posSec = $posSec + $ageSec }
+      }
+      $endSec = $tl.EndTime.TotalSeconds
+      if ($endSec -gt 0 -and $posSec -gt $endSec) { $posSec = $endSec }
+      if ($posSec -lt 0) { $posSec = 0 }
       Emit ([ordered]@{
         type = "state"
         active = $true
         title = $titleStr
         artist = $artistStr
         album = $albumStr
-        position = [math]::Round($tl.Position.TotalSeconds, 1)
-        duration = [math]::Round($tl.EndTime.TotalSeconds, 1)
-        playing = ($info.PlaybackStatus.ToString() -eq "Playing")
+        position = [math]::Round($posSec, 1)
+        duration = [math]::Round($endSec, 1)
+        playing = $isPlaying
         app = $appId
         shuffle = $shuffle
         repeat = $repeat

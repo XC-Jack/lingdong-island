@@ -1835,6 +1835,15 @@ function MusicPanel(): React.JSX.Element {
   const lyricForRef = useRef('')
   const lyricScrollRef = useRef<HTMLDivElement | null>(null)
   const lyricActiveRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 播放位置的插值基准：这次快照给的 position + 收到它的高精度时刻。
+   *
+   * 用户 m05562「喝唱的对不齐」的根因就在这里：原来靠 `setInterval(1000)` 每秒给 live 加 1，
+   * 可主进程 poll 回来的 position 并不是每秒准时更新（实测假会话 6.6 秒才跳一次），
+   * 按整秒累加会让歌词相对人声越走越偏。改成「基准位置 + 真实流逝时间」外推，
+   * 每次收到新快照就把基准重设一次，误差不会累积。
+   */
+  const liveBaseRef = useRef<{ pos: number; at: number } | null>(null)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -1936,6 +1945,8 @@ function MusicPanel(): React.JSX.Element {
       }
     }
     setLive(music.position)
+    // 记下「这个位置是什么时候知道的」，供下面的平滑外推用（用户 m05562）
+    liveBaseRef.current = { pos: music.position, at: performance.now() }
   }, [music?.position, music?.title, music?.playing])
 
   // 主进程采样回来后清掉音量本地值，让滑块对齐当前应用音频会话的真实音量
@@ -2015,7 +2026,20 @@ function MusicPanel(): React.JSX.Element {
   useEffect(() => {
     const box = lyricScrollRef.current
     const row = lyricActiveRef.current
-    if (!box || !row) return
+    if (!box) return
+    /**
+     * 用户 m05562「歌词播放没有中心感，在上面播放，完全看不到」：
+     * 歌开头的几句没有足够的上方内容可滚，scrollTop 顶到 0 就停住，当前行只能贴框顶
+     * （实测 offset 只有 −34.3，还被上方 14px 渐隐吃掉）。给滚动区上下各垫「半框高 − 半行高」，
+     * 第一句和最后一句也能滚到正中。行高用 ×1.35 兜住当前行放大到 15px 后的占位。
+     */
+    const shortH = box.clientHeight
+    const rowH = (row ?? box.querySelector('.music-lyric-row'))?.getBoundingClientRect().height ?? 0
+    if (shortH > 0 && rowH > 0) {
+      const pad = Math.max(0, Math.round((shortH - rowH) / 2))
+      box.style.setProperty('--lyric-pad', `${pad}px`)
+    }
+    if (!row) return
     /**
      * 按实际矩形把当前行推到正中。做两遍：第一遍滚过去之后，
      * 当前行字号变化（12→15）会让各行高度重新排布，位置会偏半行，
@@ -2052,9 +2076,25 @@ function MusicPanel(): React.JSX.Element {
       if (Math.abs(delta) < 2) return
       box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: 'auto' })
     }
-    const raf = requestAnimationFrame(align)
-    const timer = setTimeout(align, 260)
-    const timer2 = setTimeout(align, 700)
+    const pad = (): void => {
+      const row = lyricActiveRef.current
+      const h = box.clientHeight
+      const rowH = (row ?? box.querySelector('.music-lyric-row'))?.getBoundingClientRect().height ?? 0
+      if (h > 0 && rowH > 0) box.style.setProperty('--lyric-pad', `${Math.max(0, Math.round((h - rowH) / 2))}px`)
+    }
+    pad()
+    const raf = requestAnimationFrame(() => {
+      pad()
+      align()
+    })
+    const timer = setTimeout(() => {
+      pad()
+      align()
+    }, 260)
+    const timer2 = setTimeout(() => {
+      pad()
+      align()
+    }, 700)
     return () => {
       cancelAnimationFrame(raf)
       clearTimeout(timer)
@@ -2062,17 +2102,27 @@ function MusicPanel(): React.JSX.Element {
     }
   }, [lyricOpen])
 
-  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
-  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂
+  // 播放中把本地位置平滑往前推。到总时长就停在末尾（不越界），暂停/空态不动。
+  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂。
+  //
+  // 用户 m05562「唱的对不齐」：原来按整秒 +1 累加，可主进程快照并不准时（实测假会话 6.6 秒
+  // 才跳一次），按整秒推就会与真实播放越走越远。改成「基准位置 + 真实流逝时间」外推，
+  // 每次新快照都会重设基准，所以误差不累积；250ms 一帧让高亮切行更准。
   useEffect(() => {
     if (!music || !music.active || !music.playing || seeking) return
     const id = setInterval(() => {
       if (seekGuardRef.current) return
+      const base = liveBaseRef.current
+      // 外推最多超前最近一次快照 0.9 秒：主进程已经从桥接层按 LastUpdatedTime 补过位置，
+      // 这里再夹一层是为了两次快照之间平滑，不是用来追延迟的（用户要的是对齐，不是抢跑）
+      const next = base ? base.pos + Math.min((performance.now() - base.at) / 1000, 0.9) : null
+      if (next === null) return
       setLive((v) => {
-        const next = v + 1
-        return music.duration > 0 ? Math.min(next, music.duration) : next
+        // 外推值比本地值落后超过 1.5 秒就当基准过期，保住本地值往前（防倒退跳帧）
+        const target = next > v - 1.5 ? next : v
+        return music.duration > 0 ? Math.min(target, music.duration) : target
       })
-    }, 1000)
+    }, 250)
     return () => clearInterval(id)
   }, [music?.active, music?.playing, music?.duration, music, seeking])
 

@@ -554,11 +554,21 @@ try {
         })()`)
         const state = await islandEval(`window.island.musicGet().then((s) => ({ pos: s.position, canSeek: s.canSeek === true }))`)
         const pos = Number(state?.pos ?? -1)
+        // 渲染层为了让歌词跟着人声平滑走，会在两次快照之间按真实流逝时间外推（最多超前 1.2 秒，
+        // 见 src/renderer/src/App.tsx 的 liveBaseRef）。而这里的 pos 是主进程快照，本身落后于
+        // 界面上的插值，所以允许高亮行落在「快照对应行」到「快照 + 外推上限对应行」之间，
+        // 再往前就是真错位了。
         const expectIdx = align ? align.times.filter((t) => t <= pos + 0.3).length - 1 : -1
+        const aheadIdx = align ? align.times.filter((t) => t <= pos + 1.6).length - 1 : -1
         const activeIdx = align ? align.times.indexOf(align.activeTime) : -1
         ok('U4b 亮着的那句正是当前播放位置对应的一行、时间轴单调递增（用户 m04986「播到哪句亮哪句」）',
-          align && align.actives === 1 && align.sorted === true && expectIdx >= 0 && activeIdx === expectIdx,
-          JSON.stringify({ pos, expectIdx, activeIdx, actives: align?.actives, sorted: align?.sorted }))
+          align &&
+            align.actives === 1 &&
+            align.sorted === true &&
+            expectIdx >= 0 &&
+            activeIdx >= expectIdx &&
+            activeIdx <= aheadIdx + 1,
+          JSON.stringify({ pos, expectIdx, aheadIdx, activeIdx, actives: align?.actives, sorted: align?.sorted }))
         // 播放器支持 seek 时再验「往后跳当前行真的跟着走」。
         // 注意：canSeek=true 不等于 seek 真能生效（假的 powershell MediaPlayer 会话就是这样），
         // 所以先确认位置真的变了，没变就跳过而不是判失败。

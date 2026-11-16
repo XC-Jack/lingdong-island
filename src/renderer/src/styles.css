@@ -2543,6 +2543,12 @@ div.pm-row[draggable='true'] {
   flex-direction: column;
   gap: 6px;
   padding-right: 2px;
+  /* 用户 m05562「歌词播放没有中心感，在上面播放，完全看不到」：
+     歌刚开头那几句，滚动到底了也顶不到「行居中」的位置，当前行只能贴在框顶、还会被
+     上面的渐隐吃掉一半。上下各留半屏空白（由 App.tsx 按实测行高与框高写进 --lyric-pad），
+     第一句和最后一句也能滚到正中，永远有「中心感」 */
+  padding-top: var(--lyric-pad, 0px);
+  padding-bottom: var(--lyric-pad, 0px);
   /* 上下渐隐，暗示还能往下滚，不显得像被裁断 */
   mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
