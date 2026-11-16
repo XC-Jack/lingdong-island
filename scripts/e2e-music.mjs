@@ -286,26 +286,43 @@ try {
           /^data:image\/(png|jpeg);base64,/.test(coverUi?.imgPrefix ?? ''),
           `src 前缀=${coverUi?.imgPrefix}`)
       }
-      // 用户 m02652 整页照参考图重排：播放按钮回到进度条下方独立控制行、相对整岛居中；
-      // 音量保持竖直弹出（m02917 纠正回竖线）；封面行右侧只留诚实「暂无歌词」占位；进度右端用负数剩余时间
+      // 用户 m02652 整页照参考图重排：播放按钮独立控制行；
+      // 用户 m03435「播放和切换要位于歌名的正下方中心位置」把基准从整岛改成了左栏（封面+歌名那块），
+      // 喇叭则挪到「下一首」右边（见 U1b）。音量仍竖直弹出（m02917），右侧只留诚实「暂无歌词」占位。
       const ctlPos = await islandEval(`(() => {
         const row = document.querySelector('.music-control-row');
         const ctl = row?.querySelector('.music-ctl');
-        const island = document.querySelector('.island');
+        const side = document.querySelector('.music-side');
         const main = document.querySelector('.music-main');
-        if (!ctl || !island) return null;
-        const c = ctl.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        if (!ctl || !side) return null;
+        const c = ctl.getBoundingClientRect(), sr = side.getBoundingClientRect();
+        const btns = [...ctl.querySelectorAll('.music-btn')];
+        const first = btns[0]?.getBoundingClientRect(), last = btns[btns.length - 1]?.getBoundingClientRect();
+        const grpCenter = (first && last) ? (first.left + last.right) / 2 : null;
         return {
           inRow: !!row,
           inMain: main ? main.contains(ctl) : null,
+          btnCount: btns.length,
           ctlCenterX: (c.left + c.right) / 2,
-          islandCenterX: (ir.left + ir.right) / 2
+          grpCenterX: grpCenter,
+          sideCenterX: (sr.left + sr.right) / 2
         };
       })()`)
-      ok('U1 播放按钮回到进度条下方控制行、相对整岛居中（不再嵌在封面行）',
-        ctlPos && ctlPos.inRow === true && ctlPos.inMain === false &&
-        Math.abs(ctlPos.ctlCenterX - ctlPos.islandCenterX) <= 6,
+      ok('U1 播放/切换落在歌名（左栏）正下方居中（用户 m03435 改基准为左栏，不再按整岛居中）',
+        ctlPos && ctlPos.inRow === true && ctlPos.inMain === false && ctlPos.btnCount === 3 &&
+        Math.abs(ctlPos.grpCenterX - ctlPos.sideCenterX) <= 6,
         JSON.stringify(ctlPos))
+      const volSide = await islandEval(`(() => {
+        const btns = [...document.querySelectorAll('.music-ctl .music-btn')];
+        const next = btns[btns.length - 1];
+        const toggle = document.querySelector('.music-vol-toggle');
+        if (!next || !toggle) return null;
+        const nr = next.getBoundingClientRect(), tr = toggle.getBoundingClientRect();
+        return { nextRight: nr.right, toggleLeft: tr.left, gap: tr.left - nr.right, toggleRight: tr.right, islandRight: document.querySelector('.island').getBoundingClientRect().right };
+      })()`)
+      ok('U1b 喇叭紧贴在「下一首」右侧、不再吊在整岛最右端（用户 m03435）',
+        volSide && volSide.gap >= 0 && volSide.gap <= 24 && volSide.toggleRight < volSide.islandRight - 20,
+        JSON.stringify(volSide))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)

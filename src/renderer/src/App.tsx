@@ -2031,78 +2031,82 @@ function MusicPanel(): React.JSX.Element {
         <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
       </div>
 
-      {/* 参考图（用户 m02652）：控制行＝左侧留白 / 中间三个播放按钮 / 右侧音量。
-          三列 1fr auto 1fr 保证播放按钮相对整岛真正居中，不随右侧音量宽度偏移。
-          容器仍是 .music-ctl、三个按钮仍是 .music-btn，保住既有 e2e 断言口径 */}
+      {/* 参考图（用户 m02652）：控制行＝播放按钮一排。
+          用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」：
+          .music-control-row 与上面 .music-main 同分栏（左栏 212 / 分隔线 / 右栏 212），
+          三个按钮在左栏内居中 ⇒ 正好落在「封面＋歌名」那块的正下方；
+          喇叭（.music-extra）绝对定位贴在「下一首」右外侧，既不挤压按钮、也不再吊在整岛最右端。
+          容器仍是 .music-ctl、三个按钮仍是 .music-btn、音量仍包在 .music-volume 里，保住 e2e 断言口径 */}
       <div className="music-control-row">
-        <span className="music-ctl-spacer" aria-hidden="true" />
         <div className="music-ctl">
-          <button
-            type="button"
-            className="music-btn"
-            title="上一首"
-            aria-label="上一首"
-            disabled={busy !== null}
-            onClick={() => ctl('prev')}
-          >
-            <IcoPrev />
-          </button>
-          <button
-            type="button"
-            className={`music-btn music-btn-main ${music?.playing ? 'on' : ''}`}
-            title={music?.playing ? '暂停' : '播放'}
-            aria-label={music?.playing ? '暂停' : '播放'}
-            aria-pressed={music?.playing === true}
-            disabled={busy !== null}
-            onClick={() => ctl('toggle')}
-          >
-            {music?.playing ? <IcoPause /> : <IcoPlay />}
-          </button>
-          <button
-            type="button"
-            className="music-btn"
-            title="下一首"
-            aria-label="下一首"
-            disabled={busy !== null}
-            onClick={() => ctl('next')}
-          >
-            <IcoNext />
-          </button>
-        </div>
-
-        <div className="music-extra">
-          <div
-            className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
-            title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
-          >
-            {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462 / m02917） */}
+          <div className="music-ctl-buttons">
             <button
               type="button"
-              className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
-              aria-label="音量"
-              aria-expanded={volOpen}
-              title="点击展开/收起音量"
-              onClick={() => setVolOpen((v) => !v)}
+              className="music-btn"
+              title="上一首"
+              aria-label="上一首"
+              disabled={busy !== null}
+              onClick={() => ctl('prev')}
             >
-              <IcoVolume />
+              <IcoPrev />
             </button>
-            {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
-            <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                disabled={music?.canVolume !== true}
-                aria-label="当前播放应用的音量"
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  setVolLocal(v)
-                  sendVolume(v)
-                }}
-              />
-              <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+            <button
+              type="button"
+              className={`music-btn music-btn-main ${music?.playing ? 'on' : ''}`}
+              title={music?.playing ? '暂停' : '播放'}
+              aria-label={music?.playing ? '暂停' : '播放'}
+              aria-pressed={music?.playing === true}
+              disabled={busy !== null}
+              onClick={() => ctl('toggle')}
+            >
+              {music?.playing ? <IcoPause /> : <IcoPlay />}
+            </button>
+            <button
+              type="button"
+              className="music-btn"
+              title="下一首"
+              aria-label="下一首"
+              disabled={busy !== null}
+              onClick={() => ctl('next')}
+            >
+              <IcoNext />
+            </button>
+
+            <div className="music-extra">
+              <div
+                className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
+                title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
+              >
+                {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462 / m02917） */}
+                <button
+                  type="button"
+                  className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
+                  aria-label="音量"
+                  aria-expanded={volOpen}
+                  title="点击展开/收起音量"
+                  onClick={() => setVolOpen((v) => !v)}
+                >
+                  <IcoVolume />
+                </button>
+                {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
+                <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={volume}
+                    disabled={music?.canVolume !== true}
+                    aria-label="当前播放应用的音量"
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      setVolLocal(v)
+                      sendVolume(v)
+                    }}
+                  />
+                  <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

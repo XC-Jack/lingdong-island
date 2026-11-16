@@ -2369,11 +2369,13 @@ div.pm-row[draggable='true'] {
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
-/* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」）：
+/* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」，
+    m03435「左边的歌名有点宽，可以压缩一点，尽量和右边对称」）：
    .music-main 横向两块 —— 左栏 .music-side（内部再竖排：.music-id 封面+曲名/歌手 / .music-progress 进度条+时间）｜
    .music-divider 竖分隔线｜右栏 .music-lyric-slot 歌词位。
    进度条因此在左栏内，宽度＝左栏宽，不再横穿整页。
-   align-items:stretch 是为了让分隔线拉满整行高度、右栏能上下居中 */
+   左右两栏都定宽 212（布局 px），所以视觉上两边完全对称；
+   左栏压缩靠 .music-meta 的 max-width（140）来收，右栏跟着收窄到同宽。 */
 .music-main {
   display: flex;
   align-items: stretch;
@@ -2382,7 +2384,7 @@ div.pm-row[draggable='true'] {
 }
 /* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽 */
 .music-side {
-  flex: 0 0 auto;
+  flex: 0 0 212px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -2452,7 +2454,7 @@ div.pm-row[draggable='true'] {
      540 视觉 px（布局 720px），比待办页 285 宽一倍。改成分档固定上限 200px（布局 px），
      实测岛宽收到 285 视觉 px、与待办页一致，歌名在 150px 内出省略号。
      注意这是「布局 px」，.app 上有 zoom:.75，视觉值 = 该值 × 0.75。 */
-  max-width: 260px;
+  max-width: 140px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2474,11 +2476,11 @@ div.pm-row[draggable='true'] {
 }
 /* 参考图（用户 m03174）：右栏歌词位。歌词功能已在 m02341 实测否决取消，
    这里只摆一个诚实占位，不编造、不拉取任何歌词文本。
-   2026-11-16：原来这里是 max-width:34% 的窄条（旧横向版排版），
-   现在它是封面行的右栏，吃剩余宽度；下限给 120px，保证占位文案不被挤成省略号 */
+   2026-11-16 用户 m03435「尽量和右边对称」：从左栏剩下的弹性宽度改成与左栏同定宽 212，
+   两栏等比，分隔线正好在正中间 */
 .music-lyric-slot {
-  flex: 1 1 auto;
-  min-width: 160px;
+  flex: 0 0 212px;
+  min-width: 0;
   display: flex;
   align-items: center;
   font-size: 12px;
@@ -2528,25 +2530,39 @@ div.pm-row[draggable='true'] {
 
 /* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
    三列 1fr auto 1fr 让播放按钮相对整岛真正居中，不被右侧音量宽度带偏 */
+/* 控制行：用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」。
+   做法＝这一行跟上面 .music-main 用同一套分栏（左栏 212 / 分隔线 1 / 右栏 212、间距 14），
+   三个播放按钮摆进左栏并居中，正好落在「封面＋歌名」那块的正下方；
+   喇叭绝对定位贴在「下一首」右边（.music-extra 见下），不再吊在整岛最右端。
+   e2e U1 随之从「相对整岛居中」改为「相对左栏（.music-side）居中」，理由记在 SPEC */
 .music-control-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 212px 1px 212px;
+  column-gap: 14px;
   align-items: center;
+  justify-content: center;
   width: 100%;
 }
-.music-ctl-spacer {
-  min-width: 0;
-}
-
 /* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
-   主按钮（播放/暂停）实心、比两侧大一档 */
+   主按钮（播放/暂停）实心、比两侧大一档。
+   用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」：
+   .music-ctl 与左栏（.music-side）等宽，三按钮在它内部居中 ⇒ 中心与「封面＋歌名」对齐；
+   喇叭所在的 .music-extra 绝对定位贴到「下一首」右外侧，不参与居中计算，所以按钮不会被挤偏 */
 .music-ctl {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding-top: 2px;
+}
+/* 三按钮这一组：作为绝对定位音量层的参考系，同时也是居中的那个盒子 */
+.music-ctl-buttons {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 14px;
-  width: 100%;
-  padding-top: 2px;
 }
 .music-btn {
   display: flex;
@@ -2602,10 +2618,16 @@ div.pm-row[draggable='true'] {
    m02917 纠正回竖直（向上弹出，避免浮层越出岛下缘），保留「平时隐形、点喇叭显现」；
    用 visibility/opacity/pointer-events 切换而非 display:none，
    这样 input 常驻 DOM（e2e 量得到），也不会隐形时误接鼠标 */
+/* 音量位（用户 m03435）：绝对定位贴到「下一首」按钮右外侧，
+   不占控制行宽度，因此不会把三按钮挤离「歌名正下方」。
+   left:100% + 8px 是相对 .music-ctl-buttons 的右缘（那正好是「下一首」右缘） */
 .music-extra {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 10px;
   min-width: 0;
 }
