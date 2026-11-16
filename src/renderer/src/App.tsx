@@ -2303,13 +2303,22 @@ function MusicPanel(): React.JSX.Element {
   /**
    * 能不能点进度条。
    *
-   * 用户 m06607「进度条我也点不了」：原来的门槛是 `canSeek && duration > 0`，
-   * 而网易云两样都是假的（canSeek=false、duration=0），于是整条进度条永远不可点。
-   * 现在只要算得出总时长（播放器给的，或歌词库补的）就允许点，
-   * 点了照样把 seek 指令发下去；点完先把我们自己的钟挪到那一秒，
-   * 这样至少界面立刻有反应，而不是「点了毫无动静」。
+   * 用户 m06607「进度条我也点不了」时的第一版修法是「只要算得出总时长就允许点，
+   * 点完先把我们自己的钟挪过去，界面立刻有反应」——这是错的，用户 m06991
+   * 「我点击音乐条音乐不会跟着音乐条同步，现在只是字幕同步了而已」抓到要害：
+   * 网易云根本不接受跳转（实测见下），把钟挪过去只会让界面和音乐彻底脱节。
+   *
+   * 网易云为什么不能跳（2026-11-16 实测，`.tmp/word/ne-seek-proof.ps1`）：
+   *   - 它的 SMTC 会话 `IsPlaybackPositionEnabled = False`，`Position/EndTime` 恒为 0，
+   *     `LastUpdatedTime` 是 1601-01-01（DateTimeOffset 默认值）；
+   *   - `TryChangePlaybackPositionAsync` 返回 True（谎报成功），但位置一点不动；
+   *     用 9999 秒（远超曲末）试探，若真被接受必然夹到结尾并播完，实测连播放状态都不变。
+   *   对照组汽水音乐：`IsPlaybackPositionEnabled = True`，seek 到 102.5 秒后位置真的变成 102.5。
+   *
+   * 所以门槛回到「播放器自己报时间轴才允许跳」：能跳就跳真的，不能跳就不给点，
+   * 并且用 title 说清原因，而不是演一个假的跳转。
    */
-  const canSeekNow = totalDur > 0 && !busy
+  const canSeekNow = !playerNoTimeline && totalDur > 0 && !busy
 
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!canSeekNow) return
@@ -2332,13 +2341,6 @@ function MusicPanel(): React.JSX.Element {
     // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
     // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
     seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
-    // 播放器不报时间的场景（网易云）：把自己的钟挪到目标秒，否则进度条会弹回去
-    if (playerNoTimeline) {
-      progressClock.key = clockKeyOf(music ?? { title: '', artist: '' } as MusicState)
-      progressClock.startAt = Date.now()
-      progressClock.startPos = sec
-      progressClock.playing = music?.playing === true
-    }
     ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
   }
 
@@ -2404,10 +2406,19 @@ function MusicPanel(): React.JSX.Element {
 
           {/* 进度条只占左栏宽度，不横穿整页（用户 m03368） */}
           <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(totalDur)} aria-valuenow={Math.round(shownPos)}>
-            {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+            {/* 热区比 3px 的条子高，手指/鼠标才点得到。
+                只有播放器真的报了时间轴（能跳）才给 seekable，否则点不动、悬停也不变手型，
+                并用 title 说明是哪一种情况（用户 m06991：不许演假的跳转） */}
             <div
-              className={`music-seek ${totalDur > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+              className={`music-seek ${canSeekNow ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
               ref={barRef}
+              title={
+                canSeekNow
+                  ? '点任意位置跳到那里'
+                  : playerNoTimeline
+                    ? '网易云这类播放器不接受系统的跳转指令，只能听它自己播'
+                    : '总时长未知，暂时不能跳'
+              }
               onPointerDown={onSeekPointerDown}
               onPointerMove={onSeekPointerMove}
               onPointerUp={onSeekPointerUp}

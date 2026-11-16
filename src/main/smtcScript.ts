@@ -70,18 +70,56 @@ function Emit($obj) {
 #   i=1  $sessions[1] = NULL           |  @($sessions)[1] = obj  callOK
 # 裸索引拿到 $null 后调 TryGetMediaPropertiesAsync() 会抛「不能对 Null 值表达式调用方法」，
 # 界面就恒为空态。单会话时 idx 恒为 0，恰好命中，本地很难发现。
+# 该应用此刻是否有「用户能看见的窗口」。
+# 用户 m06991 的截图里：网易云在前台播《天使的翅膀》，岛上却显示《Take Me Hand》。
+# 原因是 PickIndex 只看「谁在 Playing」，而当时后台的汽水音乐也在放，先被扫到了。
+# 两个都在放时，用户想控制的显然是摆在眼前的那个 ⇒ 用「有没有可见顶层窗口」当判据。
+# 缓存 3 秒：poll 每秒一次，扫进程不算免费，但也不该把窗口切换拖到几分钟才生效。
+$script:visKey = ""
+$script:visAt = [DateTime]::MinValue
+$script:visSet = @{}
+function VisibleApps() {
+  $now = [DateTime]::UtcNow
+  if (($now - $script:visAt).TotalSeconds -lt 3) { return $script:visSet }
+  $set = @{}
+  try {
+    foreach ($p in [System.Diagnostics.Process]::GetProcesses()) {
+      try {
+        if ($p.MainWindowHandle -eq 0) { continue }
+        $n = $p.ProcessName
+        if ($n) { $set[$n] = $true }
+      } catch { }
+    }
+  } catch { }
+  $script:visSet = $set
+  $script:visAt = $now
+  return $set
+}
+
 function PickIndex($sessions) {
   $arr = @($sessions)
   if ($arr.Count -eq 0) { return -1 }
-  # 优先正在播放的那个：同时开着多个播放器时，用户想看的显然是出声的那个
+  # 优先正在播放的：同时开着多个播放器时，用户想看的显然是出声的那个。
+  # 多个同时在放时，再优先「有可见窗口」的那个（就是摆在用户眼前的那个）。
+  $playing = @()
   for ($i = 0; $i -lt $arr.Count; $i++) {
     try {
-      if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { return [int]$i }
+      if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { $playing += [int]$i }
     } catch {
       # 单个会话取播放信息失败就跳过它，继续看下一个；不能因为一个坏会话让整体判失败
     }
   }
-  return 0
+  if ($playing.Count -eq 1) { return [int]$playing[0] }
+  if ($playing.Count -eq 0) { return 0 }
+  $vis = VisibleApps
+  foreach ($i in $playing) {
+    try {
+      $app = [string]$arr[$i].SourceAppUserModelId
+      $exe = ($app -replace '^.*[\\/]', '') -replace '\.exe$', ''
+      if ($exe -and $vis.ContainsKey($exe)) { return [int]$i }
+    } catch { }
+  }
+  return [int]$playing[0]
 }
 
 # 按应用音量（Core Audio 音频会话 / ISimpleAudioVolume）。

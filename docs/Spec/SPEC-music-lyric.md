@@ -317,3 +317,51 @@ U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-s
 `scripts/e2e-music.mjs` 的 U4b 原来拿主进程快照 `musicGet().position` 当对齐基准。网易云**从不向系统上报进度**（`position` 恒 0），界面上显示的是我们自己按墙钟算的秒数，于是「界面高亮在第 34 行、快照说还在 0 秒」被误判成错位（实测输出 `{"pos":0,"expectIdx":-1,"activeIdx":0,"beforeFirstLine":true}`）。
 
 改成以**界面显示的 `.music-time` 左端**为基准（新增 `shownSec`，取不到才回退快照），并把上面那段「快照外推」的过时注释改准。改后 `e2e-music` PASS 44 过 / 0 败 / 2 跳过。
+
+## 十一、第二十一轮修正（2026-11-16 22:30，用户 m06991）
+
+用户原话：「你自己看吧，我说音乐播放没对齐，还没解决吗，我点击 音乐条音乐不会跟着音乐条同步，现在知识字幕同步了而已」。
+
+### 11.1 我上一轮做错了什么
+
+`c01c8fa` 里为了「进度条点得动」，在 `onSeekPointerUp` 里加了一段：点击后先把模块级进度钟 `progressClock` 挪到目标秒。结果界面立刻跳过去了、歌词也跟着跳，**但音乐本身一动不动**——这就是用户抓到的「只是字幕同步了而已」。这是假同步，必须撤掉。
+
+### 11.2 决定性证据
+
+| 探针 | 输出 | 结论 |
+|---|---|---|
+| `.tmp\word\ne-seek-proof.ps1`（目标设成 9999 秒，远超曲末） | `SEEK_9999 ret=True`，随后 5 次采样全部 `status=Paused pos=0 end=0` | 网易云连「夹到结尾」都不做，seek 被彻底忽略，返回值是谎报的 true |
+| `.tmp\word\seek-direct.ps1`（直连 SMTC 遍历所有会话） | `S0 app=cloudmusic.exe posWritable=False` / `SEEK target=40 ret=True pos_after=0 moved=False`；`S1 app=汽水音乐 posWritable=True` / `SEEK target=102.5 ret=True pos_after=102.5 moved=True` | 桥接层 `canSeek` 读的 `IsPlaybackPositionEnabled` 是准的：网易云 false、汽水音乐 true |
+| `musicGet()` 网易云态 | `{"pos":0,"dur":0,"cs":false}` | 位置、时长、可跳三项全为假，只有歌名/歌手/封面是真的 |
+
+### 11.3 改了哪几处
+
+1. `src/renderer/src/App.tsx` 的 `canSeekNow` 由 `totalDur > 0 && !busy` 改回 **`!playerNoTimeline && totalDur > 0 && !busy`**：播放器不接受跳转时，进度条不给 `seekable`、悬停不变手型。注释里写全了上面那份实测证据。
+2. 删掉 `onSeekPointerUp` 里「把 `progressClock` 挪到目标秒」那段（原 `:2335-2341`），只保留 `seekGuardRef` + `ctl({cmd:'seek'})`。
+3. `.music-seek` 的 `className` 改用 `canSeekNow`，并新增 `title` 说明三种情况：能跳「点任意位置跳到那里」、不能跳「网易云这类播放器不接受系统的跳转指令，只能听它自己播」、时长未知「总时长未知，暂时不能跳」。
+4. `src/main/smtcScript.ts` 的 `PickIndex`：原来只看「谁在 Playing」，多个播放器同时放时先扫到谁就用谁 —— 用户截图里网易云在前台播《天使的翅膀》，岛上却显示后台汽水音乐的《Take Me Hand》。改成：单个在播就用它；多个在播时，优先**有可见顶层窗口**（`MainWindowHandle != 0`，摆用户眼前的那个），都没有可见窗口再退回第一个。新增 `VisibleApps()` 带 3 秒缓存（poll 每秒一次，扫全进程不免费但也不能让窗口切换几分钟才生效）。
+
+### 11.4 实测
+
+| 场景 | 结果 |
+|---|---|
+| 汽水音乐在播（`canSeek=true`） | `SEEKBAR={"cls":"music-seek seekable ","cursor":"pointer","title":"点任意位置跳到那里","times":["0:53","-2:21"]}`；点 70% 处 → `["2:18","-0:57"]`，`musicGet().pos=137.3` 同步，`dur=195.3` |
+| 网易云在播（`canSeek=false`） | `SEEKBAR={"cls":"music-seek  ","cursor":"default","title":"网易云这类播放器不接受系统的跳转指令，只能听它自己播","times":["0:01","-4:01"]}`；点 70% 处 → `["0:02","-4:00"]`（只是自然往前走 1 秒，**没有被伪装跳转**） |
+| 两个播放器同时 Playing | 网易云有可见窗口时岛选网易云（`app=cloudmusic.exe`、`寂寞寂寞不好/曹格`）；改前会选到后台的汽水音乐 |
+
+### 11.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 127ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 44 过 / 0 败 / 2 跳过**（U4c 因 `canSeek=false` 走 skip，符合预期） |
+| `node scripts/e2e-music-session.mjs` | PASS 20 / 0 |
+| `node scripts/e2e-head-order.mjs` | PASS 14 / 0 |
+| `node scripts/e2e-beautify-04.mjs` | PASS 27 / 0 |
+
+### 11.6 未核验 / 已知限制
+
+1. **网易云就是不让跳**：这是它自身不实现 SMTC 定位，我们无法修好。现在的行为是如实标明「不能跳」，不再演假跳转。用户若要「点了就真跳」，只能换播放器（汽水音乐可以）。
+2. **网易云的播放位置我们看不见**：只能靠歌词库的总时长 + 自己按墙钟累加。用户如果在网易云里手动拖进度、或切歌后我们又拿到旧快照，界面会短暂不准，需要等下一次歌词查询/换歌才对上。
+3. 首次跑 e2e-music 出现过 `M3a/M3c` 两败（点主按钮播放状态没翻转）。原因是本机**两个真实播放器同时在放**，`toggle` 落到了另一个会话上；把两个播放器都暂停后重跑 PASS 44/0。这属于测试环境干扰，但也说明多播放器并存确实会让「控制」指向别人——第 11.3 条第 4 点的可见窗口优选就是为它加的。
