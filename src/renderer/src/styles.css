@@ -1527,6 +1527,12 @@ body {
   margin: 0;
   padding: 2px 4px;
   width: 100%;
+  /* 2026-11-16 用户 m02896「这个通知消息的也改一下，宽幅有点长」：
+     通知标题是 nowrap + ellipsis，但整行被超长标题撑到岛宽上限 540 视觉 px。
+     这里给列表一个固定上限 300px（布局 px；.app 上 zoom:.75，视觉 225），
+     与音乐页同思路——百分比在宽岛上等于没限制，实测 300 对应岛宽 285（与待办页一致）。
+     分档实测：220/260/300/330 布局 px 岛宽都是 285，360 才涨到 307.6，取 300 留足歌名/标题空间。 */
+  max-width: 300px;
   flex: 0 1 auto;
   min-height: 0; /* 收缩链贯通后通知多了在岛内滚动（US-037） */
   /* 2026-11-16 用户 m00795「只显示 3 条」：通知行最高 40 布局 px + 6px 行距
@@ -1984,7 +1990,12 @@ body {
 .notify-more-hint {
   color: rgba(255, 255, 255, 0.45);
   font-size: 10px;
-  margin-left: 4px;
+  /* 2026-11-16 用户 m02896：通知列表收窄到 300px 后，「（等 N 条）」原本作为行内 span
+     会跟着超长标题一路排到岛外（实测右缘 340.3 超出岛 285.7）。
+     .notify-title 改成 flex 后这里必须是 flex:none —— 否则弹性收缩会把它压成「（…」，
+     标题文本自己带省略号让位即可。 */
+  flex: none;
+  white-space: nowrap;
 }
 /* 单级缩进：展开后的具体条目列表挂在 li 内 */
 .notify-sublist {
@@ -2081,6 +2092,20 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 2026-11-16 用户 m02896：标题行要同时装「标题 + （等 N 条）」，用的是 flex，
+     超长标题在 .notify-title-text 内部省略，右侧提示不被推出岛外。 */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 标题文本本身承担省略号（父级 .notify-title 改成 flex 后不再直接吃 text-overflow） */
+.notify-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notify-text {

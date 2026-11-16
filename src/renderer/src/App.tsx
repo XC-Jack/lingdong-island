@@ -1386,7 +1386,7 @@ function NotifyPanel({
                     <span className="notify-line">
                       {!g.icon && <span className="notify-app">{g.app}</span>}
                       <span className="notify-title">
-                        {latest.title}
+                        <span className="notify-title-text">{latest.title}</span>
                         {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
                       </span>
                     </span>
@@ -1408,7 +1408,7 @@ function NotifyPanel({
                           <span className="notify-main">
                             <span className="notify-line">
                               {!it.icon && <span className="notify-app">{it.app}</span>}
-                              <span className="notify-title">{it.title}</span>
+                              <span className="notify-title"><span className="notify-title-text">{it.title}</span></span>
                             </span>
                             {it.body && <span className="notify-text">{it.body}</span>}
                           </span>
