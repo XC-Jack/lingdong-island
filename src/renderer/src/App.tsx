@@ -1973,30 +1973,38 @@ function MusicPanel(): React.JSX.Element {
 
   return (
     <div className="todo-panel music-panel">
+      {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」）：
+          封面行改两栏 —— 左栏封面+曲名/歌手，中间一条竖分隔线，右栏歌词位。
+          左栏宽度由 .music-meta 的省略号上限决定，右栏吃掉剩余宽度，所以整页比原来宽。
+          歌词文本仍只放诚实占位「暂无歌词」（真歌词在用户 m02341 实测否决过，未重新授权） */}
       <div className="music-main">
-        {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
-        <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
-          {music?.cover && coverFailedFor !== music.cover ? (
-            <img
-              className="music-cover-img"
-              src={music.cover}
-              alt=""
-              onError={() => setCoverFailedFor(music.cover)}
-            />
-          ) : (
-            <IcoMusic />
-          )}
-        </div>
-        <div className="music-meta">
-          <div className="music-title" title={music?.title || '未知曲目'}>
-            {music?.title || '未知曲目'}
+        <div className="music-side">
+          {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
+          <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
+            {music?.cover && coverFailedFor !== music.cover ? (
+              <img
+                className="music-cover-img"
+                src={music.cover}
+                alt=""
+                onError={() => setCoverFailedFor(music.cover)}
+              />
+            ) : (
+              <IcoMusic />
+            )}
           </div>
-          <div className="music-artist" title={music?.artist || music?.album || ''}>
-            {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+          <div className="music-meta">
+            <div className="music-title" title={music?.title || '未知曲目'}>
+              {music?.title || '未知曲目'}
+            </div>
+            <div className="music-artist" title={music?.artist || music?.album || ''}>
+              {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+            </div>
           </div>
         </div>
-        {/* 参考图（用户 m02652）：封面行右侧是歌词位。歌词已在 m02341 实测否决取消，
-            这里只留一个诚实占位，不编造任何歌词文本 */}
+        <span className="music-divider" aria-hidden="true" />
+        {/* 右栏歌词位：只留诚实占位，不编造、不拉取任何歌词文本。
+            类名刻意不用 .music-lyric-line —— 那个选择器在 e2e-music 的 U4 里用来
+            探测「有没有偷偷接联网歌词」，占位不能撞上它 */}
         <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
       </div>
 

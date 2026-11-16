@@ -2369,20 +2369,40 @@ div.pm-row[draggable='true'] {
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
+/* 参考图布局（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」）：
+   封面行改成两栏 —— 左栏（封面 + 曲名/歌手）｜竖分隔线｜右栏歌词位。
+   左栏宽度被 .music-meta 的省略号上限钉住，右栏吃剩余宽度，整页因此比原来宽。
+   align-items:stretch 是为了让分隔线能拉满这一行的高度，不是居中 */
 .music-main {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
+}
+.music-side {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
+/* 参考图里中间那条细竖线。用 1px 边框而不是 <hr>，避免影响 flex 间距计算 */
+.music-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  align-self: stretch;
+  background: rgba(255, 255, 255, 0.1);
+}
+
 
 /* 真实封面：主进程把 SMTC Thumbnail 读成 data URL 后由 <img> 显示；
    取不到或图片解码失败时，仍回落成原来的音符块占位。播放时轻微呼吸，给「在放」一点活气 */
 .music-cover {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  /* 参考图（用户 m03174）里封面是整页最醒目的一块，按截图比例放大到 60（视觉 45） */
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2392,8 +2412,8 @@ div.pm-row[draggable='true'] {
   border: 1px solid rgba(255, 143, 163, 0.25);
 }
 .music-cover svg {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 .music-cover-img {
   width: 100%;
@@ -2422,35 +2442,37 @@ div.pm-row[draggable='true'] {
      540 视觉 px（布局 720px），比待办页 285 宽一倍。改成分档固定上限 200px（布局 px），
      实测岛宽收到 285 视觉 px、与待办页一致，歌名在 150px 内出省略号。
      注意这是「布局 px」，.app 上有 zoom:.75，视觉值 = 该值 × 0.75。 */
-  max-width: 200px;
+  max-width: 260px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 .music-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: #f2f3f5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .music-artist {
-  font-size: 12px;
+  font-size: 12.5px;
   color: rgba(242, 243, 245, 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 参考图（用户 m02652）封面行右侧的歌词位。歌词功能已在 m02341 实测否决取消，
-   这里只摆一个诚实占位，不编造、不拉取任何歌词文本；长文本也不撑宽封面行 */
+/* 参考图（用户 m03174）：右栏歌词位。歌词功能已在 m02341 实测否决取消，
+   这里只摆一个诚实占位，不编造、不拉取任何歌词文本。
+   2026-11-16：原来这里是 max-width:34% 的窄条（旧横向版排版），
+   现在它是封面行的右栏，吃剩余宽度；下限给 120px，保证占位文案不被挤成省略号 */
 .music-lyric-slot {
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 34%;
+  flex: 1 1 auto;
+  min-width: 160px;
+  display: flex;
+  align-items: center;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.38);
-  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2466,7 +2488,8 @@ div.pm-row[draggable='true'] {
 }
 .music-bar {
   position: relative;
-  height: 3px;
+  /* 参考图（用户 m03174）里进度条是明显的一条，不是发丝；3 → 5（视觉 3.75） */
+  height: 5px;
   border-radius: 999px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.12);
@@ -2488,9 +2511,9 @@ div.pm-row[draggable='true'] {
 .music-times {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: rgba(242, 243, 245, 0.38);
+  color: rgba(242, 243, 245, 0.42);
 }
 
 /* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
@@ -2519,8 +2542,8 @@ div.pm-row[draggable='true'] {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -2537,8 +2560,8 @@ div.pm-row[draggable='true'] {
   cursor: default;
 }
 .music-btn-main {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   color: #1a0b10;
   background: #ff8fa3;
 }
