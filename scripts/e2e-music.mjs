@@ -322,8 +322,8 @@ try {
         Math.abs(ctlPos.ctlW - ctlPos.sideW) <= 1 &&
         ctlPos.boxLeft >= ctlPos.sideLeft - 1 && ctlPos.boxRight <= ctlPos.sideRight + 1,
         JSON.stringify(ctlPos))
-      // 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
-      // 喇叭贴到控制行最右端，与左端的「词」一左一右把整行撑满（不再紧贴「下一首」右侧）。
+      // 用户 m04117 要求过「填满整行、两边不要黑边」，当时把喇叭推到控制行最右端；
+      // 用户 m04310「喇叭还是贴着下一首比较好一点」⇒ 喇叭回到紧跟「下一首」右侧，整组居中。
       const volSide = await islandEval(`(() => {
         const btns = [...document.querySelectorAll('.music-ctl .music-btn')];
         const next = btns[btns.length - 1];
@@ -335,8 +335,8 @@ try {
         const island = document.querySelector('.island').getBoundingClientRect();
         return { nextRight: nr.right, toggleLeft: tr.left, gap: tr.left - nr.right, toggleRight: tr.right, boxRight: br.right, boxLeft: br.left, islandRight: island.right };
       })()`)
-      ok('U1b 喇叭贴在控制行最右端、一行撑满不留黑边（用户 m04117）',
-        volSide && volSide.gap >= 0 && Math.abs(volSide.toggleRight - volSide.boxRight) <= 2 &&
+      ok('U1b 喇叭紧贴「下一首」右侧、不再吊到控制行两端（用户 m04310）',
+        volSide && volSide.gap >= 0 && volSide.gap <= 24 &&
         volSide.toggleRight < volSide.islandRight - 8,
         JSON.stringify(volSide))
       // 用户 m03435 要求过「词」在喇叭右边；用户 m04117 改为「歌词ui放切上一首的旁边」：

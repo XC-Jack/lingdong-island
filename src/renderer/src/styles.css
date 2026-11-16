@@ -2590,28 +2590,26 @@ div.pm-row[draggable='true'] {
   width: 100%;
   padding-top: 2px;
 }
-/* 三按钮 + 词 + 喇叭 这一整组：宽度吃满控制行，靠 .music-extra 的 margin-left:auto
-   把「词＋三按钮」压在左侧、喇叭推到最右 ⇒ 一行五件控件撑满整行，
-   正好对上用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
-   这样两边的黑边就不会很多余」。
-   净间距：喇叭紧贴下一首 6 布局 px、词紧贴上一首 8 布局 px（都是减去负 margin 之后的值） */
+/* 「词 + 三按钮 + 喇叭」这一整组：宽度仍吃满控制行，但整组居中排列。
+   用户 m04117 先要求「填满这个界面，这样两边的黑边就不会很多余」，当时用 space-between
+   加喇叭 margin-left:auto 把喇叭推到最右端；用户 m04310 回补一句「喇叭还是贴着下一首
+   比较好一点」⇒ 喇叭不再吊到行尾，改为紧贴「下一首」右侧，整组在行内居中。
+   铺满整行的效果由左栏（封面 / 歌名 / 进度条）负责，控制行不再强行撑满。 */
 .music-ctl-buttons {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 10px;
   width: 100%;
 }
-/* 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
-   这样两边的黑边就不会很多余」：中间这组（「词」+ 三按钮）吃掉全部剩余宽度并整体居中，
-   喇叭被 margin-left:auto 顶到最右 ⇒ 一行从左到右排满，不再挤在中间留空 */
+/* 「词」+ 三按钮：自然宽度，不再吃掉剩余空间（吃掉后喇叭会被推离「下一首」） */
 .music-ctl-mid {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
 }
 .music-btn {
@@ -2672,18 +2670,16 @@ div.pm-row[draggable='true'] {
    不占控制行宽度，因此不会把三按钮挤离「歌名正下方」。
    left:100% + 8px 是相对 .music-ctl-buttons 的右缘（那正好是「下一首」右缘） */
 .music-extra {
-  /* 用户 m03577 第二轮「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」：
-     喇叭从「绝对定位吊在按钮组右边」改为正常 flex item，跟三个按钮并排。
-     用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
-     这样两边的黑边就不会很多余」：再用 margin-left:auto 把喇叭推到整行最右端，
-     与最左边的「词」一左一右撑满，中间三按钮居中，横向不再有空档。
-     喇叭与「下一首」的净间距靠 gap 保证，不再需要负 margin */
+  /* 用户 m03577「再喇叭右边加一个"词"这样的ui」：喇叭从绝对定位改为正常 flex item，跟三个按钮并排。
+     用户 m04117 曾用 margin-left:auto 把喇叭推到整行最右端撑满整行；
+     用户 m04310「喇叭还是贴着下一首比较好一点」⇒ 去掉 margin-left:auto，
+     喇叭回到紧跟「下一首」后面，与它的净间距由 .music-ctl-buttons 的 gap(10) 决定 */
   position: static;
   transform: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: auto;
+  flex: 0 0 auto;
   min-width: 0;
 }
 .music-volume {
