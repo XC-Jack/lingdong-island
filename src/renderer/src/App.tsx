@@ -2110,6 +2110,10 @@ function MusicPanel(): React.JSX.Element {
   // 每次新快照都会重设基准，所以误差不累积；250ms 一帧让高亮切行更准。
   useEffect(() => {
     if (!music || !music.active || !music.playing || seeking) return
+    // 用户 m05794：网易云（cloudmusic.exe）通过系统媒体接口根本不报时间轴
+    // （实测连采 30 次 pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false）。
+    // 总时长 0 时没有可信基准，硬外推只会让数字自己往上跑，干脆不推。
+    if (music.duration <= 0) return
     const id = setInterval(() => {
       if (seekGuardRef.current) return
       const base = liveBaseRef.current
@@ -2143,7 +2147,18 @@ function MusicPanel(): React.JSX.Element {
   )
 
   const active = music?.active === true
-  const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
+  /**
+   * 这个播放器有没有报播放进度。
+   *
+   * 用户 m05794「我换了一个软件网易云，歌词进度条封面都直接卡住了」：
+   * 实测网易云（cloudmusic.exe）只往系统媒体接口写 歌名/歌手/封面，时间轴永远是
+   * `pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false`（连采 30 次不变）；
+   * 汽水音乐则正常报。总时长恒为 0 时进度条没法算，硬画就是永远停在 0:00。
+   * 这里如实降级：不假装在走，改成 `--:--` 并说明原因。
+   */
+  const noTimeline = music?.active === true && music.duration <= 0
+  const pct =
+    music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
   // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03；总时长未知时诚实显示 -0:00
   const remain = Math.max(0, (music?.duration ?? 0) - live)
 
@@ -2256,8 +2271,24 @@ function MusicPanel(): React.JSX.Element {
               </div>
             </div>
             <div className="music-times">
-              <span className="music-time">{fmtDuration(live)}</span>
-              <span className="music-time">-{fmtDuration(remain)}</span>
+              {/* 播放器不报进度时（网易云）两端都显示 --:--，不假装停在 0:00 —— 见上面 noTimeline 注释。
+                  原因放在 title 里，不塞进这一行免得撑破版面；
+                  e2e 的 U5 断言「右端是 -mm:ss」，所以只有这种降级态才换，正常播放器不受影响 */}
+              {noTimeline ? (
+                <>
+                  <span className="music-time" title="这个播放器没向系统报告播放进度">
+                    --:--
+                  </span>
+                  <span className="music-time" title="这个播放器没向系统报告播放进度">
+                    --:--
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="music-time">{fmtDuration(live)}</span>
+                  <span className="music-time">-{fmtDuration(remain)}</span>
+                </>
+              )}
             </div>
           </div>
         </div>

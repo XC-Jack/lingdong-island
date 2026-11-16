@@ -29,6 +29,14 @@ const DURATION_TOLERANCE = 8
 const LRC_API = 'https://lrclib.net/api'
 
 /**
+ * 缓存格式版本。改了歌词解析逻辑就要 +1，让旧缓存整体失效。
+ *
+ * 用户 m05794 那次：`parseLrc` 漏剥逐字时间标记 `<00:00.352>`，把陈年乱码写进了缓存文件；
+ * 只改解析不改版本号的话，同一首歌永远读回那堆带尖括号的旧数据。
+ */
+const CACHE_VERSION = 2
+
+/**
  * 把 歌名/歌手/专辑/时长 压成一个稳定缓存键。
  * 用哈希而不是拼接后的文件名：中文、斜杠、问号、超长歌名都可能出现，直接当文件名会出事。
  */
@@ -49,7 +57,12 @@ function readCache(key: string): LyricResult | null {
   try {
     const file = join(cacheDir(), `${key}.json`)
     if (!existsSync(file)) return null
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as { result?: LyricResult }
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as {
+      version?: number
+      result?: LyricResult
+    }
+    // 版本对不上就当没有：旧版本解析出来的歌词可能本身就是坏的（见 CACHE_VERSION 注释）
+    if (raw?.version !== CACHE_VERSION) return null
     const r = raw?.result
     // 只认「查到了歌词」的缓存；没查到的下次换歌再试（网络可能只是当时断了）
     if (!r || !r.ok || !Array.isArray(r.lines) || r.lines.length === 0) return null
@@ -63,7 +76,11 @@ function readCache(key: string): LyricResult | null {
 function writeCache(key: string, result: LyricResult): void {
   try {
     const file = join(cacheDir(), `${key}.json`)
-    writeFileSync(file, JSON.stringify({ savedAt: Date.now(), result }, null, 2), 'utf8')
+    writeFileSync(
+      file,
+      JSON.stringify({ version: CACHE_VERSION, savedAt: Date.now(), result }, null, 2),
+      'utf8'
+    )
   } catch {
     // 写不进去（磁盘满/权限）不影响这次显示，只是下次还得联网，静默即可
   }
@@ -76,10 +93,15 @@ function writeCache(key: string, result: LyricResult): void {
  *  - 一行多个时间标记 `[00:12.30][00:15.00]同一句`
  *  - 元信息行 `[ti:]` `[ar:]` `[al:]` `[by:]` `[offset:]` → 丢掉
  *  - 时间格式 `[mm:ss.xx]` / `[mm:ss.xxx]` / `[mm:ss]`
+ *  - 逐字时间轴（Enhanced LRC / word-level）：`[00:00.00]<00:00.000>美<00:00.352>人…`
+ *    用户 m05794 报「一些歌的歌词直接就是乱码」，真源就是这种格式：
+ *    行首 `[...]` 剥掉后，后面 `<00:00.352>` 这一串逐字标记被原样当成歌词文字显示出来。
+ *    这些尖括号标记只标「这个字从第几秒开始唱」，对逐行滚动没用，全部删掉、保留字本身。
  */
 function parseLrc(lrc: string): LyricLine[] {
   const out: LyricLine[] = []
   const timeRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g
+  const wordRe = /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g
   for (const rawLine of lrc.split(/\r?\n/)) {
     const line = rawLine.trim()
     if (!line) continue
@@ -97,7 +119,8 @@ function parseLrc(lrc: string): LyricLine[] {
       lastEnd = m.index + m[0].length
     }
     if (times.length === 0) continue // 纯元信息行或本来就没时间的行
-    const text = line.slice(lastEnd).trim()
+    // 先剥逐字标记再取文字：`<mm:ss.xxx>` 之间夹的是真正的字，只能删标记、不能丢整行
+    const text = line.slice(lastEnd).replace(wordRe, '').trim()
     if (!text) continue // 时间标记后面没字（常见于纯间奏标记），丢掉
     for (const t of times) out.push({ time: Math.round(t * 100) / 100, text })
   }

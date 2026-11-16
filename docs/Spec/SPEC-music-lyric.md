@@ -116,3 +116,49 @@
 
 未核验：①真人观感（是否真的「唱到哪句亮哪句」）；②真实汽水音乐播放时 `LastUpdatedTime` 的刷新粒度（假会话已验，
 真播放器未单独采样）；③安装版未重新打包。
+### 7.6 第十七轮修正（2026-11-16 20:25，用户 m05794）
+
+用户原话：「我记得我电脑上是由rea工具的，你看看能不能使用，我换了一个软件网易云，歌词进度条封面都直接卡住了，还有就是有一些哥的歌词直接就是乱码，解决一下」
+
+两个独立问题，都已定位到根因并有实测证据。
+
+1. **部分歌词乱码＝逐字时间轴没剥干净**。lrclib 有一部分歌返回的是 Enhanced LRC（word-level / A2 格式），
+   原始行长这样（`/api/search?q=美人鱼 林俊杰` 实测，id `34215590`）：
+   `"[00:00.00]<00:00.000>美<00:00.352>人<00:00.704>鱼<00:01.056> <00:01.408>-..."`。
+   `parseLrc` 原来只用 `timeRe` 剥 `[...]`，`lastEnd` 停在最后一个方括号末尾，后面整串 `<mm:ss.xxx>` 被当成歌词正文。
+   修法：`src/main/lyricStore.ts` 新增 `const wordRe = /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g`，
+   `const text = line.slice(lastEnd).replace(wordRe, '').trim()`——**删标记保留文字**，不能丢整行（同行 `<...>` 之间夹着真字）。
+   同时新增 `const CACHE_VERSION = 2`：`readCache` 认 `raw?.version !== CACHE_VERSION` 就当没有，`writeCache` 写版本号。
+   理由：陈年乱码已经写进 `%APPDATA%\lingdong-island\lyrics\*.json`，只改解析不失效缓存等于没修。
+   独立验证（`.tmp/lyric/test-parse.mjs`，用改后同款逻辑跑样本）：5 行全部正确，`BAD=0`（无 `<`/`>` 残留）。
+
+2. **网易云进度条/歌词「卡住」＝它根本不往系统写时间轴**。用 `.tmp/lyric/ne-long.ps1`（`Windows.Media.Control` 直读）
+   每 2 秒采一次、连采 30 次：`app=cloudmusic.exe status=Playing title=[晚安] pos=0 end=0 start=0
+   lastUpd=08:00:00.000 canSeek=False thumb=True`——`lastUpd` 是 `DateTimeOffset` 默认值（1601-01-01），
+   60 秒内纹丝不动。汽水音乐同一支脚本会正常报 `pos/end`。也就是说网易云只写 歌名/歌手/封面，永远不写进度。
+   于是 `duration` 恒为 0 ⇒ `pct` 恒 0、两端显示 `0:00 / -0:00`，看着就是「卡住」。
+   修法：`src/renderer/src/App.tsx` 加 `const noTimeline = music?.active === true && music.duration <= 0`，
+   该状态下两端 `.music-time` 都显示 `--:--`、各自带 `title="这个播放器没向系统报告播放进度"`；
+   外推 effect 加早退 `if (music.duration <= 0) return`。**如实降级，不假装在走**。
+   e2e 的 U5 断言「右端是 -mm:ss」，所以只有降级态才换文案，正常播放器不受影响。
+
+试过但走不通的路（记录下来，别重试）：
+- 网易云本地端口 `127.0.0.1:20017`（唯一监听）既不是 HTTP API 也不是 CDP：`GET /` → 404 空 body、`POST /api` → 405、
+  其余 15+ 路径全部 1500~2000ms `AbortError`、`ws://` 连不上。
+- UIA：`OrpheusBrowserHost` 窗口 `Name=[Rolling in the Deep - Adele]`，但 `TreeScope.Descendants` 只有 4 个元素，
+  唯一具名的是 `Chrome_RenderWidgetHostHWND [Chrome Legacy Window]` ⇒ CEF 内容不可达。
+- 本地数据：`localdata` 是加密乱码、`Library\webdb.dat` 被进程占用，`webdata\file\playingList` 是明文 JSON
+  但只有播放列表（无实时位置），`configCenter` 里搜 `smtc/mediaKey/systemMedia/timeline` 无命中。
+- 未装 BetterNCM（安装目录无 `plugins`），启动参数无 `--remote-debugging-port`，无 `DevToolsActivePort`。
+
+改后实测（预览版 + 真实网易云，`.tmp/word/ne-verify2.mjs`）：
+`STATE={"t":"Love Song","ar":"方大同","app":"cloudmusic.exe","pos":0,"dur":0,"pl":true}`，
+`TIMES=[{"txt":"--:--","title":"这个播放器没向系统报告播放进度"},{"txt":"--:--",...}]`，`BAR=matrix(0,0,0,1,0,0)`；
+同一状态下 `musicGet()` 的封面仍是合法 JPEG（2581 字节，头 `FF D8 FF E0`），歌名/歌手正常刷新。
+歌词侧 `lyricGet({title:'美人鱼',artist:'林俊杰',album:'',duration:254})` → `{ok:true, source:'lrclib', n:63, bad:0}`。
+
+自检：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 46 / 0 / 1 跳过**（U5 绿色，说明降级分支没影响正常播放器；
+U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-session` PASS 20/0、`e2e-head-order` PASS 14/0、`e2e-beautify-04` PASS 27/0。
+
+未核验：①网易云若某天开始写时间轴，降级态会自动消失（未到那天，无法验证）；②真人观感（`--:--` 是否比 `0:00` 更好懂）；
+③安装版未重新打包；④REA 已确认可用（`rea-agents 6.8.0` + Ghidra 12.1.4 + JDK 21 全 ok），但需要具体目标文件路径才能开工，本轮未使用。
