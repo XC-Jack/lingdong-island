@@ -18,18 +18,21 @@ import { setupLocalFileProtocol } from './localFileProtocol'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
- * 收起态窗口总高：胶囊 42（渲染层 .island.collapsed 的固定高）+ 下方横幅预留区 46。
+ * 收起态窗口总高：胶囊 52（渲染层 .island.collapsed 的固定高）+ 下方横幅预留区 24。
+ * 2026-11-16 用户 m01634 两轮要求胶囊「大一点」「还可以再大一点」，渲染层从 42 改到 52，
+ * 这里同步 66→76（预留区仍够放横幅：.collapsed-banner 的 top:56px 布局 px）。
+ *
  * 横幅（新消息到岛提示）显示在胶囊正下方的预留区，平时空置为透明。
  * 为什么常驻而不是横幅期临时加高：动态 setBounds 加高后，透明窗口新区域在 Windows 上
  * 可能不被合成器画出（实机截屏五轮验证：横幅 DOM/窗口尺寸全对但屏幕无像素）。
  * 常驻透明区靠 Windows 透明窗口 per-pixel 命中测试：透明像素点击自动穿透到下层窗口。
  */
-const COLLAPSED_WIN_HEIGHT = 66
-/** 收起态宽度上下限（防过窄/过宽） */
-const COLLAPSED_MIN_W = 113
-const COLLAPSED_MAX_W = 240
+const COLLAPSED_WIN_HEIGHT = 76
+/** 收起态宽度上下限（防过窄/过宽）。2026-11-16 用户 m01634 胶囊放大后同步放宽 113~240 → 134~290 */
+const COLLAPSED_MIN_W = 134
+const COLLAPSED_MAX_W = 290
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
-let collapsedWidth = 143
+let collapsedWidth = 168
 /** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
 // 展开态尺寸（2026-11-16 起改为「随内容自适应 + 有上限」，用户 m00791/m00795）：
 // 1) SPEC-island-compact 把整岛按 zoom 0.75 缩小，所以上限从 {720,420} 收到 {540,315}；
@@ -37,9 +40,10 @@ let collapsedWidth = 143
 //    0.75 缩放后 ≈ 353×240 视觉 px）。2026-11-16 用户看到「下面的空间就是一块黑布」，
 //    明确要求改成随内容伸缩、有最大范围、到上限后靠滚轮查看，遂推翻固定尺寸：
 //    styles.css 的 .island.expanded 改成 width/height:max-content + min/max 上下限。
-//    布局 300~720 × 150~420 与这里 0.75 缩放后的 {225,113}~{540,315} 一一对应，
-//    改一边必须同步改另一边。
-const EXPANDED_MIN = { width: 225, height: 113 }
+//    布局 340~720 × 150~420 与这里 0.75 缩放后的 {255,113}~{540,315} 一一对应，
+//    改一边必须同步改另一边。（宽度下限 2026-11-16 晚由 300 抬到 340：头部状态区放大后
+//    居中会压到左侧标题，e2e-head-order 的 H5a 报 overlapTitle=true。）
+const EXPANDED_MIN = { width: 255, height: 113 }
 const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的；初始值只用于首帧开窗，随后被 ResizeObserver 纠正） */
 let expandedSize = { width: 353, height: 240 }

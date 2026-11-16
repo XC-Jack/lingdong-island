@@ -90,12 +90,17 @@ body {
   /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
   flex-shrink: 0;
   width: max-content;
-  height: 42px;
-  border-radius: 21px;
+  /* 2026-11-16 用户 m01634「这个截图的 ui 可以大一点，字体粗一点，然后提高一点亮度，
+     效果不要太过，只提高一点」，随后又补「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：
+     第二版把收起态与展开态统一成同一套尺寸再整体放大——胶囊高 42→52、圆角 21→26、
+     内边距 16→19、间距 10→12，岛仔 22→28、时钟 17.5、电量环 27。
+     高度变化要同步主进程 COLLAPSED_WIN_HEIGHT 与 .collapsed-banner 的 top。 */
+  height: 52px;
+  border-radius: 26px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  gap: 10px;
+  padding: 0 19px;
+  gap: 12px;
   cursor: default;
   /* 横幅锚点：.collapsed-banner 相对本岛定位（覆盖在胶囊上方弹出） */
   position: relative;
@@ -108,11 +113,14 @@ body {
      所以恢复成 max-content + min/max 夹逼：内容少就收（去掉空黑块），内容多就长，到上限为止，
      超出上限的部分在列表内部滚动。
      数值换算：这棵树在 .app 上 zoom:0.75，这里写布局 px。
-     布局 420~720 × 220~420 = 视觉 315~540 × 165~315，与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，
-     改一边必须同步改另一边（src/main/index.ts:40-43）。 */
+     2026-11-16 晚（用户 m01634 第二轮「里面的要和外面的统一一下，还可以再大一点」）：
+     头部状态区放大到 27px 电量环 + 17.5px 时钟后横向吃掉约 132 布局 px，居中后左缘压到
+     标题右缘（e2e-head-order 的 H5a 报 overlapTitle=true）。所以 min-width 300→340，
+     给两侧各留出约 17 布局 px 余量。布局 340~720 × 150~420 = 视觉 255~540 × 113~315，
+     与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，改一边必须同步改另一边（src/main/index.ts:40-45）。 */
   flex-shrink: 0;
   width: max-content;
-  min-width: 300px;
+  min-width: 340px;
   max-width: 720px;
   height: max-content;
   min-height: 150px;
@@ -130,8 +138,9 @@ body {
 /* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正下方，弹出/收回动画。
    参考苹果灵动岛：胶囊向下「鼓出」一小条再收回。
    位置换算：横幅相对 .app（position:relative，全窗口）定位。
-   收起窗口常驻高 88（主进程 COLLAPSED_WIN_HEIGHT）：胶囊 42 在窗口顶（flex-start），
-   top:48px = 胶囊下沿(42) + 6px 间隙，横幅 43px 高落在 48~91（窗口 88 内放得下主体）。
+   收起窗口常驻高由主进程 COLLAPSED_WIN_HEIGHT 决定（现在 76）：胶囊 52 布局 px 在窗口顶，
+   top:56px 布局 px = 胶囊下沿(52) + 4px 间隙，横幅落在胶囊下方。
+   2026-11-16 用户 m01634 把胶囊从 42 放大到 52，这里与主进程高度已同步改动。
    （不能放胶囊上方：岛贴屏幕顶 TOP_GAP=6，上方屏幕空间不足——第五轮截图实锤）
    （不能挂 .island 内：island overflow:hidden 会把超出胶囊的横幅整个裁掉——六轮排障最终根因） */
 .collapsed-banner {
@@ -140,7 +149,7 @@ body {
   /* 2026-11-11 独立验收（a54d9af）实测：整岛缩到 0.75 后收起窗口只有 144×67 逻辑 px，
      而横幅原来 max-width 300 / top 48 是按旧窗口（190×88）调的，长标题时左右各越出约 30px、
      底部越出 1.7px，肉眼可见被切。这里改成跟着窗口宽度走，并上移让底部留在窗口内。 */
-  top: 44px;
+  top: 56px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -282,8 +291,10 @@ body {
 }
 
 .collapsed-clock {
-  font-size: 15px;
-  font-weight: 600;
+  /* 2026-11-16 用户 m01634：字号 15→17.5、字重 600→800、亮度纯白；第二版再放大一档 */
+  font-size: 17.5px;
+  font-weight: 800;
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
 }
 
@@ -292,19 +303,21 @@ body {
 .collapsed-todo {
   display: flex;
   align-items: center;
-  color: rgba(125, 216, 125, 0.9);
+  /* 2026-11-16 用户 m01634：绿色 0.9 → 0.98，亮度提一点 */
+  color: rgba(125, 216, 125, 0.98);
 }
 
 .collapsed-todo-num {
-  font-size: 12.5px;
-  font-weight: 600;
+  /* 2026-11-16 用户 m01634：12.5→14.5、600→800，绿色也提一点亮度 */
+  font-size: 14.5px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .collapsed-battery {
-  font-size: 12px;
-  color: rgba(242, 243, 245, 0.55);
+  font-size: 14px;
+  color: rgba(242, 243, 245, 0.72);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -315,12 +328,19 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
-  color: rgba(242, 243, 245, 0.92);
+  color: rgba(242, 243, 245, 0.98);
   cursor: pointer;
   border-radius: 4px;
 }
 .collapsed-bell:hover {
   color: #fff;
+}
+/* 2026-11-16 用户 m01634「里面的要和外面的统一一下」：铃铛原来没写尺寸、靠 svg 属性默认定
+   （实测视觉只有 11.3），比同一行的 Wi-Fi（13.5）小一圈，也和展开态（18px）不统一。补上 18px。 */
+.collapsed-bell svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .collapsed-bell:focus-visible {
   outline: 2px solid rgba(159, 139, 255, 0.9);
@@ -342,11 +362,12 @@ body {
 .collapsed-wifi {
   display: flex;
   align-items: center;
-  color: rgba(242, 243, 245, 0.82);
+  color: rgba(242, 243, 245, 0.94);
 }
 .collapsed-wifi svg {
-  width: 15px;
-  height: 15px;
+  /* 2026-11-16 用户 m01634：图标 15→18，跟着胶囊一起放大 */
+  width: 18px;
+  height: 18px;
 }
 .collapsed-wifi.offline {
   color: #ffb74d;
@@ -365,8 +386,9 @@ body {
 }
 
 .collapsed-pet {
-  width: 22px;
-  height: 22px;
+  /* 2026-11-16 用户 m01634：岛仔 22→28（第二版再放大一档），与展开态头部同一尺寸 */
+  width: 28px;
+  height: 28px;
   flex: none;
   animation: pet-breathe 3.2s ease-in-out infinite;
 }
@@ -442,6 +464,10 @@ body {
   gap: 10px;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  /* 2026-11-16 用户 m01634「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：
+     展开态状态区改成与收起态同一套尺寸（岛仔 28 + 间距 2 + 信息行 27 = 57 布局 px），
+     而 .head-status 是绝对定位不占流，所以这里给头部撑出足够高度，否则会压到下方内容。 */
+  min-height: 58px;
 }
 
 /* 展开态头部常驻状态区：绝对定位真正居中（margin:0 auto 会被 flex:1 的 spacer
@@ -476,8 +502,9 @@ body {
 }
 
 .head-status .collapsed-pet {
-  width: 16px;
-  height: 16px;
+  /* 2026-11-16 用户 m01634：16→28，与收起态岛仔同一套尺寸（收起态 24，这里再大一档） */
+  width: 28px;
+  height: 28px;
 }
 
 /* 岛仔独占上层（美化-03：不参与顺序排列，永远在信息行之上） */
@@ -498,53 +525,61 @@ body {
   display: none;
 }
 
-/* 展开态里信息行比收起态胶囊略小一圈，避免挤到标题行 */
+/* 展开态信息行（2026-11-16 用户 m01634「里面的要和外面的统一一下，还可以再大一点」）：
+   删掉原来那套「略小一圈」的覆盖值，改成与收起态胶囊同一套尺寸再放大一档——
+   时钟 15→17.5（新加粗到 800）、电量环 24→27、环内数字 9.5→10.5、Wi-Fi/铃铛 17→18。 */
 .head-info .collapsed-clock {
-  font-size: 12.5px;
+  font-size: 17.5px;
+  font-weight: 800;
+  color: #ffffff;
 }
 .head-info .head-battery-ring {
-  width: 20px;
-  height: 20px;
+  width: 27px;
+  height: 27px;
 }
 .head-info .head-battery-ring svg {
-  width: 20px;
-  height: 20px;
+  width: 27px;
+  height: 27px;
 }
 .head-info .head-battery-ring .ring-num {
-  font-size: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
 }
 .head-info .collapsed-wifi svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
 }
 .head-info .collapsed-bell svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
 }
 
-/* 电量圆环（用户 m02391 截图：白圈 + 百分比数字居中，类似表盘）——收起态/展开态共用 */
+/* 电量圆环（用户 m02391 截图：白圈 + 百分比数字居中，类似表盘）——收起态/展开态共用。
+   2026-11-16 用户 m01634 要求「ui 大一点、字体粗一点、亮度提一点」，随后又补
+   「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：第二版统一到 27px、
+   环内数字 10.5px/700；展开态不再单独缩小（.head-info 段只保留同值覆盖）。 */
 .head-battery-ring {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 27px;
+  height: 27px;
   flex: none;
 }
 .head-battery-ring svg {
-  width: 22px;
-  height: 22px;
+  width: 27px;
+  height: 27px;
   display: block;
 }
 .head-battery-ring .ring-bg {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.16);
+  stroke: rgba(255, 255, 255, 0.2);
   stroke-width: 3;
 }
 .head-battery-ring .ring-fg {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.85);
+  stroke: rgba(255, 255, 255, 0.98);
   stroke-width: 3;
   stroke-linecap: round;
   transition: stroke-dasharray 400ms;
@@ -565,9 +600,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8.5px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.92);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.98);
   font-variant-numeric: tabular-nums;
 }
 
