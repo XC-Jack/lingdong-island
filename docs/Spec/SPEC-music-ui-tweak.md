@@ -221,3 +221,42 @@
    - `GEOM={"input":{"x":314,"y":33,"w":21,"h":63},"cx":324,"cy":65,"disabled":false,"hitPx":22,"hitOffsets":[-11,10]}`
    - `DRAGS`：`CENTER`/`PLUS10`/`MINUS10` 全部 `changed:true`、`active:"INPUT"`、`before{dom:"0",poll:0} → after{dom:"1",num:"100%",poll:1}`
    ⇒ 装机版上可点宽度 22px（修复前 11px），中心偏 ±10px 也能拖，且 DOM / 百分比文本 / 主进程 poll 三者一致。
+
+## 十二、音乐页长歌名省略号（2026-11-16，用户 m02666「这个音乐名太长了，我觉得可以后面的用省略号或者隐藏起来」）
+
+### 缘起
+
+用户发音乐页整窗截图（m02664，`sha256:824db3598136de40cdfc069f1b866a8526ee4fc1bf4652a23f50120fe2523714`），歌名是
+`15期丨我给Windows做了个灵动岛，还养了个小家伙 之前_7703598614018329882.mp4`，整行顶满、右侧歌词位被压成「暂无歌…」。
+
+### 勘察结论
+
+1. [已核验] `.music-title` 与 `.music-artist` 本来就有 `white-space:nowrap; overflow:hidden; text-overflow:ellipsis`（`src/renderer/src/styles.css:2383`、`:2391`），省略号规则**不是缺失**。
+2. [已核验] 真正的问题是外层 `.music-meta`（改前 `:2376`）只有 `flex:1 1 auto; min-width:0`，**没有上限**，于是它把 `.music-main` 整行吃满（实测宽 416.5 视觉 px），右侧 `.music-lyric-slot` 的 `max-width:34%` 被挤压到 34.9px，文本从「暂无歌词」省略成「暂无歌…」。
+3. 改前实测 `MUSIC={"main":{"w":502.4},"cover":{"w":33},"meta":{"w":416.5,"x":60.8},"title":{"w":416.5,"scrollW":573,"clientW":555},"lyric":{"w":34.9,"maxW":"34%","text":"暂无歌词"}}`。
+
+### 修改范围
+
+| 文件 | 改动 |
+|---|---|
+| `src/renderer/src/styles.css` | `.music-meta` 新增 `max-width:66%`（并加中文注释记用户原话与理由）；其余不动 |
+| `docs/Spec/SPEC-music-ui-tweak.md` | 本节 |
+| `docs/facts/功能清单.md` | 音乐页条目下补一条长歌名省略号说明 |
+| `docs/状态.md` | 顶部新增一句话状态 |
+
+### 预期行为与验收
+
+1. 长歌名在 66% 宽度内出省略号，`title` 属性保留全文（悬停可看全名）。
+2. 右侧歌词占位/文案完整显示，不再被挤成「暂无歌…」。
+3. 短歌名不受影响（不会因 `max-width` 在短文本时凭空缩短，`flex:1 1 auto` 仍按内容收缩）。
+4. 与第九节整页重排、第十节竖直音量、第十一节热区修复互不影响。
+
+### 自检记录（2026-11-16）
+
+1. [已核验] `npm run typecheck` EXIT=0、`npm run build` EXIT=0（`✓ built in 121ms`）。
+2. [已核验] 改后 CDP 实测（`.tmp/probe-music-title.mjs`）：
+   `MUSIC={"main":{"w":502.4},"cover":{"w":33},"meta":{"w":331.6,"x":60.4},"title":{"w":331.6,"scrollW":573,"clientW":442,"nowrap":"nowrap","overflow":"hidden","ellipsis":"ellipsis"},"artist":{"w":331.6},"lyric":{"w":36,"maxW":"34%","text":"暂无歌词"}}`
+   ⇒ 歌名区 416.5→331.6，`ellipsis` 仍为 `ellipsis`，歌词位完整。
+3. [已核验] `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**（`M2c` 只断言 `.music-title` 文本非空，不受影响）。
+4. [已核验] 截图 `.tmp/shot-music-title.png`（675×255）：歌名末尾显示省略号、右侧「暂无歌词」完整。
+5. [未核验] 真实超长歌名（用户那条 mp4 标题）在装机版的观感 —— 需用户看预览版确认 66% 这个比例是否合适（嫌窄可调到 72%，嫌宽可调到 60%）。
