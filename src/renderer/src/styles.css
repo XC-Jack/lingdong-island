@@ -2500,8 +2500,11 @@ div.pm-row[draggable='true'] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 参考图（用户 m03174）：右栏歌词位。歌词功能已在 m02341 实测否决取消，
-   这里只摆一个诚实占位，不编造、不拉取任何歌词文本。
+/* 参考图（用户 m03174）：右栏歌词位。
+   2026-11-16 用户 m04986「我们现在来开发歌词吧」+ m05013「可以按你的来」：这里从
+   「暂无歌词」占位升级为真歌词——主进程去 lrclib.net 查带时间轴的歌词（本地有缓存就先读文件），
+   当前那句跟着播放位置高亮并停在正中。查不到时仍只显示「暂无歌词」+ 一句具体原因，
+   不编造任何歌词文本。
    2026-11-16 用户 m03435「尽量和右边对称」：从左栏剩下的弹性宽度改成与左栏同定宽 212，
    两栏等比，分隔线正好在正中间 */
 .music-lyric-slot {
@@ -2509,12 +2512,73 @@ div.pm-row[draggable='true'] {
   flex: 0 0 260px;
   min-width: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.38);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 歌词滚动区：固定高度、只露几行，当前行滚到正中。
+   高度取 84（布局 px）＝与左栏封面+进度条那一块视觉高度接近，两栏不至于一高一矮 */
+.music-lyric-scroll {
+  max-height: 84px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 2px;
+  /* 上下渐隐，暗示还能往下滚，不显得像被裁断 */
+  mask-image: linear-gradient(180deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+.music-lyric-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 一句歌词。平时灰、当前那句变白变粗并稍微放大一点点，不抢戏但能看清 */
+.music-lyric-row {
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(242, 243, 245, 0.34);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 180ms ease, transform 180ms ease;
+  transform-origin: left center;
+}
+.music-lyric-row.active {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 12.5px;
+  transform: scale(1.02);
+}
+
+/* 占位与说明：加载中 / 暂无歌词 / 没查到的原因 */
+.music-lyric-tip {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.38);
+  white-space: nowrap;
+}
+.music-lyric-why {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(242, 243, 245, 0.26);
+  white-space: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-lyric-row,
+  .music-lyric-scroll {
+    transition: none;
+    scroll-behavior: auto;
+  }
 }
 
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，

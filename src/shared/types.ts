@@ -142,3 +142,43 @@ export type MusicCommand =
   | { cmd: 'shuffle'; value: boolean }
   | { cmd: 'repeat'; value: 0 | 1 | 2 }
   | { cmd: 'volume'; value: number }
+
+/**
+ * 歌词（SPEC-music-lyric）。
+ *
+ * 为什么不从播放器里直接读：Windows SMTC（System Media Transport Controls，系统媒体
+ * 传输控制）只暴露 歌名/歌手/专辑/进度/时长/播放状态/封面，**没有歌词字段**；
+ * 汽水音乐的本地缓存是私有压缩二进制（`LUNA` 头），解不开也随版本失效。
+ * 所以歌词要另外去 lrclib.net（公开免费、无需 key）按 歌名+歌手+专辑+时长 查。
+ */
+export interface LyricLine {
+  /** 这一句开始的时间（秒，从 0 起算） */
+  time: number
+  /** 这一句的文本；时间标记后面没字的行会被解析阶段丢掉，不会出现空串 */
+  text: string
+}
+
+/** 歌词查询结果：拿到就 ok=true 且 lines 非空；拿不到就给一句具体原因，绝不编造 */
+export interface LyricResult {
+  /** 是否拿到了带时间轴的歌词行 */
+  ok: boolean
+  /** 查询用的曲名（回显，便于排查对错了歌） */
+  title: string
+  /** 查询用的歌手 */
+  artist: string
+  /** 来源：cache=本地缓存命中、lrclib=这次联网查到、none=没拿到 */
+  source: 'cache' | 'lrclib' | 'none'
+  /** 歌词行，按时间升序；ok=false 时为空数组 */
+  lines: LyricLine[]
+  /** ok=false 时给用户看的一句话原因（如「lrclib 上没收录这首歌」「纯音乐」），界面直接显示它 */
+  reason: string
+}
+
+/** 歌词查询入参（渲染层把当前播放快照里的这四个字段发过去） */
+export interface LyricQuery {
+  title: string
+  artist: string
+  album: string
+  /** 总时长（秒）；用来排除同名不同版本（差 8 秒以上基本不是同一版） */
+  duration: number
+}

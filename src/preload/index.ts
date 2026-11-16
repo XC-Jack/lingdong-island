@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, PetSkinId, PetMode, PetWindowPos } from '../shared/types'
+import type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, PetSkinId, PetMode, PetWindowPos, LyricQuery, LyricResult } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -188,6 +188,14 @@ const api = {
    */
   musicControl(cmd: MusicCommand): Promise<boolean> {
     return ipcRenderer.invoke('music:control', cmd)
+  },
+  /**
+   * 歌词（SPEC-music-lyric）：按当前歌曲去查带时间轴的歌词。
+   * 主进程先看本地缓存（`userData/lyrics/*.json`），没有才联网查 lrclib.net；
+   * 查不到会返回 ok=false + 一句原因，界面照实显示，不会给出编造的歌词。
+   */
+  lyricGet(q: LyricQuery): Promise<LyricResult> {
+    return ipcRenderer.invoke('lyric:get', q)
   },
   /** 播放状态变化推送（主进程每秒采样，字段真的变了才发）。返回取消订阅函数 */
   onMusicState(cb: (s: MusicState) => void): () => void {

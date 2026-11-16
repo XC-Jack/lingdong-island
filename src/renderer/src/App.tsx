@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Todo, ShelfItem, MusicState, MusicCommand } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult } from '../../shared/types'
 import Pet from './pet/Pet'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -1827,6 +1827,14 @@ function MusicPanel(): React.JSX.Element {
   // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
   // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
   const [lyricOpen, setLyricOpen] = useState(false)
+  // 歌词（SPEC-music-lyric，用户 m04986「我们现在来开发歌词吧」+ m05013「可以按你的来」）：
+  // null＝还没问；{ok:false,reason}＝问了但没拿到（照实显示原因，绝不编造）；{ok:true,lines}＝拿到带时间轴的行
+  const [lyric, setLyric] = useState<LyricResult | null>(null)
+  const [lyricLoading, setLyricLoading] = useState(false)
+  // 记下这份歌词是给哪首歌的，避免换歌间隙把上一首的歌词闪到新歌上
+  const lyricForRef = useRef('')
+  const lyricScrollRef = useRef<HTMLDivElement | null>(null)
+  const lyricActiveRef = useRef<HTMLDivElement | null>(null)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -1934,6 +1942,78 @@ function MusicPanel(): React.JSX.Element {
   useEffect(() => {
     if (music) setVolLocal(null)
   }, [music?.volume])
+
+  /**
+   * 换歌就要换歌词（SPEC-music-lyric）。
+   *
+   * 只在歌词栏打开时去查：不开歌词就不联网，省得每首歌都往 lrclib 发一次请求。
+   * 查询键用「歌名+歌手+专辑+时长取整」，同一首歌反复开关歌词栏不会重复请求
+   * （主进程那边还有本地缓存，第二次直接命中文件）。
+   */
+  const lyricKey =
+    music?.active && music.title
+      ? `${music.title}|${music.artist}|${music.album}|${Math.round(music.duration)}`
+      : ''
+  useEffect(() => {
+    if (!lyricOpen || !lyricKey) return
+    if (lyricForRef.current === lyricKey && lyric) return
+    lyricForRef.current = lyricKey
+    let alive = true
+    setLyricLoading(true)
+    void window.island
+      .lyricGet({
+        title: music?.title ?? '',
+        artist: music?.artist ?? '',
+        album: music?.album ?? '',
+        duration: music?.duration ?? 0
+      })
+      .then((r) => {
+        if (!alive) return
+        setLyric(r)
+      })
+      .catch(() => {
+        if (!alive) return
+        setLyric({
+          ok: false,
+          title: music?.title ?? '',
+          artist: music?.artist ?? '',
+          source: 'none',
+          lines: [],
+          reason: '查歌词时出错了，稍后再试'
+        })
+      })
+      .finally(() => {
+        if (alive) setLyricLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [lyricOpen, lyricKey, lyric, music?.title, music?.artist, music?.album, music?.duration])
+
+  // 当前该高亮第几句：取「开始时间 ≤ 当前播放位置」的最后一行。没拿到歌词就是 -1
+  const lyricLines = lyric?.ok && lyric.lines.length > 0 ? lyric.lines : []
+  const lyricActive = useMemo(() => {
+    if (lyricLines.length === 0) return -1
+    let idx = -1
+    for (let i = 0; i < lyricLines.length; i += 1) {
+      if (lyricLines[i].time <= live + 0.15) idx = i
+      else break
+    }
+    return idx
+  }, [lyricLines, live])
+
+  /**
+   * 让当前那句始终停在歌词栏正中：每句平均约 20~30 布局 px 高，
+   * 用 scrollTop = 行顶 − 容器一半 + 行高一半 让它居中，行为 smooth。
+   * 不用 scrollIntoView —— 那会把外层岛一起滚。
+   */
+  useEffect(() => {
+    const box = lyricScrollRef.current
+    const row = lyricActiveRef.current
+    if (!box || !row) return
+    const target = row.offsetTop - box.clientHeight / 2 + row.clientHeight / 2
+    box.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
+  }, [lyricActive])
 
   // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
   // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂
@@ -2085,10 +2165,45 @@ function MusicPanel(): React.JSX.Element {
           </div>
         </div>
         <span className="music-divider" aria-hidden="true" />
-        {/* 右栏歌词位：只留诚实占位，不编造、不拉取任何歌词文本。
-            类名刻意不用 .music-lyric-line —— 那个选择器在 e2e-music 的 U4 里用来
-            探测「有没有偷偷接联网歌词」，占位不能撞上它 */}
-        <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
+        {/* 右栏歌词位（SPEC-music-lyric）：主进程去 lrclib 查带时间轴的歌词，本地有缓存就秒出。
+            三种状态都能照实说明：加载中 / 拿到歌词（跟着播放位置滚动高亮）/ 没拿到（显示具体原因）。
+            **没有歌词就显示「暂无歌词」+ 原因，绝不编造文本**——这是 SPEC 里写死的红线。 */}
+        <div
+          className="music-lyric-slot"
+          title={
+            lyricLoading
+              ? '正在查歌词…'
+              : lyric?.ok
+                ? lyric.source === 'cache'
+                  ? '歌词（来自本地缓存）'
+                  : '歌词（来自 lrclib.net）'
+                : (lyric?.reason ?? '暂无歌词')
+          }
+        >
+          {lyricLoading ? (
+            <span className="music-lyric-tip">正在查歌词…</span>
+          ) : lyricLines.length > 0 ? (
+            <div className="music-lyric-scroll" ref={lyricScrollRef}>
+              {lyricLines.map((ln, i) => (
+                <div
+                  key={`${ln.time}-${i}`}
+                  ref={i === lyricActive ? lyricActiveRef : null}
+                  className={`music-lyric-row ${i === lyricActive ? 'active' : ''}`}
+                  data-time={ln.time}
+                >
+                  {ln.text}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <>
+              <span className="music-lyric-tip">暂无歌词</span>
+              {lyric && !lyric.ok && lyric.reason ? (
+                <span className="music-lyric-why">{lyric.reason}</span>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
 
       {/* 参考图（用户 m02652）：控制行＝播放按钮一排。
