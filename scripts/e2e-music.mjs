@@ -254,8 +254,8 @@ try {
       const title = await islandEval(`document.querySelector('.music-title')?.textContent?.trim() ?? ''`)
       ok('M2c 歌名行非空', typeof title === 'string' && title.length > 0, `实际「${title}」`)
       const times = await islandEval(`Array.from(document.querySelectorAll('.music-time')).map(e => e.textContent.trim())`)
-      ok('M2d 两个时间文本都在（当前 / 总长）',
-        Array.isArray(times) && times.length === 2 && times.every((t) => /^\d+:\d{2}(:\d{2})?$/.test(t)),
+      ok('M2d 两个时间文本都在（当前 / 负数剩余）',
+        Array.isArray(times) && times.length === 2 && times.every((t) => /^-?\d+:\d{2}(:\d{2})?$/.test(t)),
         JSON.stringify(times))
       // preflight：这些只是结构，不证明数据接得上
       ok('M2e musicGet 返回八字段齐全',
@@ -286,6 +286,70 @@ try {
           /^data:image\/(png|jpeg);base64,/.test(coverUi?.imgPrefix ?? ''),
           `src 前缀=${coverUi?.imgPrefix}`)
       }
+      // 用户 m02652 整页照参考图重排：播放按钮回到进度条下方独立控制行、相对整岛居中；
+      // 音量保持竖直弹出（m02917 纠正回竖线）；封面行右侧只留诚实「暂无歌词」占位；进度右端用负数剩余时间
+      const ctlPos = await islandEval(`(() => {
+        const row = document.querySelector('.music-control-row');
+        const ctl = row?.querySelector('.music-ctl');
+        const island = document.querySelector('.island');
+        const main = document.querySelector('.music-main');
+        if (!ctl || !island) return null;
+        const c = ctl.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        return {
+          inRow: !!row,
+          inMain: main ? main.contains(ctl) : null,
+          ctlCenterX: (c.left + c.right) / 2,
+          islandCenterX: (ir.left + ir.right) / 2
+        };
+      })()`)
+      ok('U1 播放按钮回到进度条下方控制行、相对整岛居中（不再嵌在封面行）',
+        ctlPos && ctlPos.inRow === true && ctlPos.inMain === false &&
+        Math.abs(ctlPos.ctlCenterX - ctlPos.islandCenterX) <= 6,
+        JSON.stringify(ctlPos))
+      const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
+      ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
+      await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
+      await sleep(250)
+      const popShown = await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        const island = document.querySelector('.island');
+        if (!p || !island) return null;
+        const pr = p.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        return { visibility: getComputedStyle(p).visibility, inside: pr.left >= ir.left - 1 && pr.right <= ir.right + 1 && pr.top >= ir.top - 1 && pr.bottom <= ir.bottom + 1, w: pr.width, h: pr.height };
+      })()`)
+      ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
+        popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 60 && popShown.w < 60,
+        JSON.stringify(popShown))
+      // 用户 m03141「音量建无法拖动」：3px 可见轨道若只占 11px 命中宽度，真人横向偏 6px
+      // 就按到浮层上、拖不动。这里用 elementFromPoint 量真实可点宽度做回归护栏。
+      const volHit = await islandEval(`(() => {
+        const i = document.querySelector('.music-vol-pop input[type="range"]');
+        if (!i) return null;
+        const r = i.getBoundingClientRect();
+        const y = r.top + r.height / 2;
+        const cxs = r.left + r.width / 2;
+        let hit = 0;
+        for (let dx = -30; dx <= 30; dx += 1) {
+          if (document.elementFromPoint(cxs + dx, y) === i) hit += 1;
+        }
+        return { boxW: Math.round(r.width), hitPx: hit };
+      })()`)
+      ok('U3b 音量滑块的透明热区够宽（可点命中 ≥20px，横向偏 10px 仍能按下）',
+        volHit && volHit.hitPx >= 20, JSON.stringify(volHit))
+      // 收起，避免影响后续 M3/M4
+      await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
+      const lyricSlot = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const online = document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length;
+        return { text: slot ? slot.textContent.trim() : null, online };
+      })()`)
+      ok('U4 封面行右侧只有诚实占位「暂无歌词」、不引入联网歌词',
+        lyricSlot && lyricSlot.text === '暂无歌词' && lyricSlot.online === 0,
+        JSON.stringify(lyricSlot))
+      const remainTime = await islandEval(`(() => { const t = document.querySelectorAll('.music-time'); return t.length === 2 ? t[1].textContent.trim() : null })()`)
+      ok('U5 进度行右端显示负数剩余时间（-mm:ss）',
+        typeof remainTime === 'string' && /^-\d+:\d{2}(:\d{2})?$/.test(remainTime),
+        `实际「${remainTime}」`)
     } else if (realSessions > 0) {
       // 已有 M2a0 判失败，这里不重复计败，也不假装通过
       skip('M2a–M2e 有会话时的结构断言', `本机有 ${realSessions} 个会话但桥接读不到，已在 M2a0 判失败`)

@@ -2339,6 +2339,19 @@ div.pm-row[draggable='true'] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 参考图（用户 m02652）封面行右侧的歌词位。歌词功能已在 m02341 实测否决取消，
+   这里只摆一个诚实占位，不编造、不拉取任何歌词文本；长文本也不撑宽封面行 */
+.music-lyric-slot {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 34%;
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.38);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
    这样每秒推进走合成层、不触发布局，配合 transition 就是连续的 */
@@ -2377,7 +2390,20 @@ div.pm-row[draggable='true'] {
   color: rgba(242, 243, 245, 0.38);
 }
 
-/* 控制条：三个按钮居中。主按钮（播放/暂停）实心、比两侧大一档 */
+/* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
+   三列 1fr auto 1fr 让播放按钮相对整岛真正居中，不被右侧音量宽度带偏 */
+.music-control-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  width: 100%;
+}
+.music-ctl-spacer {
+  min-width: 0;
+}
+
+/* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
+   主按钮（播放/暂停）实心、比两侧大一档 */
 .music-ctl {
   display: flex;
   align-items: center;
@@ -2435,46 +2461,106 @@ div.pm-row[draggable='true'] {
   cursor: pointer;
 }
 
-/* 第二行控件：音量（当前播放应用）。刻意不用 .music-btn / .music-ctl，
-   免得影响既有 e2e 对「三个播放控制按钮」的断言 */
+/* 控件行：音量（当前播放应用）。刻意不用 .music-btn，免得影响既有 e2e
+   对「三个播放控制按钮」的断言。用户 m02462：平时只留喇叭按钮，点一下展开音量条；
+   m02917 纠正回竖直（向上弹出，避免浮层越出岛下缘），保留「平时隐形、点喇叭显现」；
+   用 visibility/opacity/pointer-events 切换而非 display:none，
+   这样 input 常驻 DOM（e2e 量得到），也不会隐形时误接鼠标 */
 .music-extra {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-end;
   gap: 10px;
-  width: 100%;
-  padding-top: 2px;
+  min-width: 0;
 }
 .music-volume {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   color: rgba(242, 243, 245, 0.6);
 }
-.music-volume input[type='range'] {
-  width: 92px;
-  height: 14px;
+.music-vol-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  color: rgba(242, 243, 245, 0.75);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+}
+.music-vol-toggle:hover,
+.music-vol-toggle.open {
+  color: #f2f3f5;
+  background: rgba(255, 143, 163, 0.16);
+}
+.music-vol-toggle:focus-visible {
+  outline: 2px solid rgba(255, 143, 163, 0.7);
+  outline-offset: 2px;
+}
+.music-vol-toggle svg {
+  width: 15px;
+  height: 15px;
+}
+.music-vol-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(28, 26, 34, 0.96);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.music-vol-pop.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 用户 m03141「音量建无法拖动」：根因是本机实测命中宽度只有 11px（.app 上 zoom:.75 后的
+   视觉宽度），真人瞄 3px 宽的可见轨道时横向偏 6px 就落到 .music-vol-pop 上，
+   按下不落在 input 上 → 拖不动。这里把 input 的盒子加宽到 28px（轨道仍 3px、视觉不变），
+   多出来的两侧是透明热区；同时 touch-action:none 让指针拖动不被手势识别打断。 */
+.music-vol-pop input[type='range'] {
+  width: 28px;
+  height: 84px;
   margin: 0;
   appearance: none;
   -webkit-appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
   background: transparent;
   cursor: pointer;
+  touch-action: none;
 }
-.music-volume input[type='range']::-webkit-slider-runnable-track {
-  height: 3px;
+.music-vol-pop input[type='range']::-webkit-slider-runnable-track {
+  width: 3px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.16);
 }
-.music-volume input[type='range']::-webkit-slider-thumb {
+.music-vol-pop input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
-  margin-top: -3.5px;
+  width: 12px;
+  height: 12px;
+  margin-left: -4.5px;
   border: none;
   border-radius: 50%;
   background: #ff8fa3;
 }
-.music-volume input[type='range']:focus-visible {
+.music-vol-pop input[type='range']:focus-visible {
   outline: 2px solid rgba(255, 143, 163, 0.7);
   outline-offset: 2px;
 }
@@ -2483,15 +2569,20 @@ div.pm-row[draggable='true'] {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: rgba(242, 243, 245, 0.38);
-  text-align: right;
+  text-align: center;
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {
   opacity: 0.4;
 }
-.music-volume input[type='range']:disabled {
+.music-vol-pop input[type='range']:disabled {
   cursor: default;
 }
-.music-volume input[type='range']:disabled::-webkit-slider-thumb {
+.music-vol-pop input[type='range']:disabled::-webkit-slider-thumb {
   background: rgba(242, 243, 245, 0.4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-vol-pop {
+    transition: none;
+  }
 }
