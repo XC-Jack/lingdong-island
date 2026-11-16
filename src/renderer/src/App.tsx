@@ -1795,6 +1795,95 @@ function fmtDuration(sec: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : mmss
 }
 
+/**
+ * 播放进度钟（放在模块级，不在组件里）。
+ *
+ * 用户 m06607「音乐已经播了一半了，然后我每次点到歌曲页面，进度条都会重新开始，字幕也是」：
+ * 进度原来存在 MusicPanel 的 state 里，而切走页面时 MusicPanel 会被整块卸载
+ * （App 里是 `page === 4 ? <MusicPanel /> : <别的页>`），state 跟着没了，
+ * 再切回来就从 0 重新数——进度条归零、歌词也跟着回到第一句。
+ *
+ * 现在把「这首歌从哪一刻、从第几秒开始算」放在模块级：页面切来切去都不丢，
+ * 用墙钟（Date.now）算当前位置，离开音乐页那段时间的流逝也照样算进去。
+ * 订阅也常驻在这里，所以人不在音乐页时暂停/继续也能记准。
+ */
+interface ProgressClock {
+  /** 这首歌的身份（歌名|歌手），变了就是要重新从头算 */
+  key: string
+  /** 这一段「开始算」的墙钟时刻 */
+  startAt: number
+  /** 这一段开始时的位置（秒） */
+  startPos: number
+  /** 当前是不是在放 */
+  playing: boolean
+}
+const progressClock: ProgressClock = { key: '', startAt: 0, startPos: 0, playing: false }
+let clockWatcherInstalled = false
+
+function clockKeyOf(m: MusicState): string {
+  return `${m.title}|${m.artist}`
+}
+
+/** 此刻这首歌放到第几秒（暂停就停在冻结值） */
+function clockNow(): number {
+  if (!progressClock.playing) return progressClock.startPos
+  return progressClock.startPos + (Date.now() - progressClock.startAt) / 1000
+}
+
+/**
+ * 用一份播放器快照校准/推进进度钟。
+ *
+ * 两种播放器分开对待：
+ * - 会报时间轴的（汽水音乐等 duration>0）：直接拿它给的 position 当基准，最可信；
+ * - 不报时间轴的（网易云 duration=0）：只能按墙钟自己数，歌变了归零，
+ *   暂停时把当前值冻结（stopPos），继续播放时从冻结值往后数。
+ */
+function clockSync(m: MusicState): void {
+  if (!m.active) {
+    progressClock.key = ''
+    progressClock.startAt = Date.now()
+    progressClock.startPos = 0
+    progressClock.playing = false
+    return
+  }
+  const key = clockKeyOf(m)
+  if (m.duration > 0) {
+    // 播放器自己报位置：以它为准，顺手让钟跟着对齐（切页回来能立刻接上）
+    progressClock.key = key
+    progressClock.startAt = Date.now()
+    progressClock.startPos = Math.max(0, m.position)
+    progressClock.playing = m.playing
+    return
+  }
+  if (progressClock.key !== key) {
+    // 换歌（或第一次见到这首）：从头开始
+    progressClock.key = key
+    progressClock.startAt = Date.now()
+    progressClock.startPos = 0
+    progressClock.playing = m.playing
+    return
+  }
+  if (progressClock.playing === m.playing) return
+  // 播放状态变了：先把「此刻到第几秒」固化下来，再从这一秒继续/停住
+  const frozen = clockNow()
+  progressClock.startAt = Date.now()
+  progressClock.startPos = frozen
+  progressClock.playing = m.playing
+}
+
+/** 常驻订阅：不管当前在哪一页，进度钟都跟着播放器走 */
+function ensureClockWatcher(): void {
+  if (clockWatcherInstalled) return
+  clockWatcherInstalled = true
+  const api = window.island
+  if (!api) return
+  const apply = (m: MusicState): void => {
+    clockSync(m)
+  }
+  void api.musicGet().then(apply)
+  api.onMusicState(apply)
+}
+
 function MusicPanel(): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
@@ -2023,43 +2112,21 @@ function MusicPanel(): React.JSX.Element {
    * 播放器不报就用歌词库那条的时长（网易云场景）。
    */
   const totalDur = music && music.duration > 0 ? music.duration : lyricDuration
-  /** 自己估算的位置：播放器不报进度时，从这次开始播放起累加真实流逝时间 */
-  const [ownPos, setOwnPos] = useState(0)
-  const ownBaseRef = useRef<{ title: string; at: number; start: number } | null>(null)
+  /**
+   * 播放位置的心跳。
+   *
+   * 用户 m06607「我每次点到歌曲页面，进度条都会重新开始，字幕也是」：
+   * 走的是模块级的 progressClock（见文件上部），本组件只负责每 250ms 读一次、触发重渲染。
+   * 组件卸载不丢时钟，切走再切回来能接上原来那一秒，歌词也停在同一句。
+   */
+  const [, setClockTick] = useState(0)
   useEffect(() => {
-    if (!playerNoTimeline) {
-      ownBaseRef.current = null
-      setOwnPos(0)
-      return
-    }
-    const titleKey = `${music?.title ?? ''}|${music?.artist ?? ''}`
-    const base = ownBaseRef.current
-    if (!base || base.title !== titleKey) {
-      // 换歌或首次进入：从现在开始算，起点 0
-      ownBaseRef.current = { title: titleKey, at: performance.now(), start: 0 }
-      setOwnPos(0)
-      return
-    }
-    // 同一首歌：暂停时把已流逝的时间固化进 start，恢复播放后从那里继续
-    if (!music?.playing) {
-      ownBaseRef.current = { title: titleKey, at: performance.now(), start: ownPos }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playerNoTimeline, music?.title, music?.artist, music?.playing])
-  useEffect(() => {
-    if (!playerNoTimeline || !music?.playing || totalDur <= 0) return
-    const tick = (): void => {
-      const base = ownBaseRef.current
-      if (!base) return
-      const elapsed = (performance.now() - base.at) / 1000
-      setOwnPos(Math.min(base.start + elapsed, totalDur))
-    }
-    tick()
-    const id = window.setInterval(tick, 250)
+    ensureClockWatcher()
+    const id = window.setInterval(() => setClockTick((n) => (n + 1) % 1000000), 250)
     return () => window.clearInterval(id)
-  }, [playerNoTimeline, music?.playing, totalDur])
-  /** 真正显示在进度条/时间上的位置 */
-  const shownPos = playerNoTimeline ? ownPos : live
+  }, [])
+  /** 真正显示在进度条/时间上的位置：播放器报就用它的（live），不报就用墙上时钟自己数 */
+  const shownPos = playerNoTimeline ? clockNow() : live
   /** 连总时长都算不出来时，才诚实显示横杠（此时确实无法给出任何时间） */
   const noTimeline = playerNoTimeline && totalDur <= 0
 
@@ -2226,15 +2293,26 @@ function MusicPanel(): React.JSX.Element {
   /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
   const secAt = (clientX: number): number => {
     const el = barRef.current
-    if (!el || !music || music.duration <= 0) return 0
+    if (!el || totalDur <= 0) return 0
     const r = el.getBoundingClientRect()
     if (r.width <= 0) return 0
     const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-    return ratio * music.duration
+    return ratio * totalDur
   }
 
+  /**
+   * 能不能点进度条。
+   *
+   * 用户 m06607「进度条我也点不了」：原来的门槛是 `canSeek && duration > 0`，
+   * 而网易云两样都是假的（canSeek=false、duration=0），于是整条进度条永远不可点。
+   * 现在只要算得出总时长（播放器给的，或歌词库补的）就允许点，
+   * 点了照样把 seek 指令发下去；点完先把我们自己的钟挪到那一秒，
+   * 这样至少界面立刻有反应，而不是「点了毫无动静」。
+   */
+  const canSeekNow = totalDur > 0 && !busy
+
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!music?.canSeek || music.duration <= 0 || busy) return
+    if (!canSeekNow) return
     e.currentTarget.setPointerCapture(e.pointerId)
     seekingRef.current = true
     seekGuardRef.current = null
@@ -2254,6 +2332,13 @@ function MusicPanel(): React.JSX.Element {
     // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
     // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
     seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
+    // 播放器不报时间的场景（网易云）：把自己的钟挪到目标秒，否则进度条会弹回去
+    if (playerNoTimeline) {
+      progressClock.key = clockKeyOf(music ?? { title: '', artist: '' } as MusicState)
+      progressClock.startAt = Date.now()
+      progressClock.startPos = sec
+      progressClock.playing = music?.playing === true
+    }
     ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
   }
 
@@ -2321,7 +2406,7 @@ function MusicPanel(): React.JSX.Element {
           <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(totalDur)} aria-valuenow={Math.round(shownPos)}>
             {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
             <div
-              className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+              className={`music-seek ${totalDur > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
               ref={barRef}
               onPointerDown={onSeekPointerDown}
               onPointerMove={onSeekPointerMove}

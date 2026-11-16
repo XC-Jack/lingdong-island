@@ -271,3 +271,43 @@ U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-s
 1. 前奏特别长的歌（>30 秒）倒计时读起来是否烦人，没批量试。
 2. 安装版未重新打包（仍跑 `3a68dff` 那版，不含歌词功能）。
 3. 真机上用户拖动播放器进度条时，「自己算的进度」无法感知（网易云不报位置），这条从第十八轮起一直未解。
+## 十、第二十轮修正（2026-11-16 21:45，用户 m06607）
+
+用户原话：「现在的问题我很你说一下，音乐已经播了一半了，然后我每次点到歌曲页面，进度条都会重新开始，字幕也是，而且进度条我也点不了」。
+
+### 10.1 三条症状的真因（均已实测确认）
+
+1. **切页归零**：`src/renderer/src/App.tsx` 的页面是条件渲染（`page === 0 ? <TodoPanel/> : ... : <MusicPanel/>`），切走时 MusicPanel **整块卸载**，`live`/`ownPos` 等组件内 state 与 `ownBaseRef` 全部丢失；切回来重新挂载，自算进度从 0 重新开始。
+2. **字幕跟着回到第一句**：`lyricActive` 用 `shownPos` 判定（`lyricLines[i].time <= shownPos + 0.15`），shownPos 归零后高亮自然回第一句。
+3. **进度条点不了**：`onSeekPointerDown` 原门槛是 `if (!music?.canSeek || music.duration <= 0 || busy) return`，`seekable` 类也要求 `music?.canSeek && duration > 0`。网易云实测 `canSeek=false`、`duration=0`，两个条件全假 ⇒ 永远不可点。
+
+### 10.2 改动
+
+1. **模块级进度钟**（`src/renderer/src/App.tsx` 顶层，`MusicPanel` 之外）：`progressClock`（`key / startAt / startPos / playing`）+ `clockKeyOf()` + `clockNow()` + `clockSync()` + `ensureClockWatcher()`。`clockSync` 的规则：未激活清空；播放器报 `duration > 0` 时以播放器 `position` 为基准整体重设；换歌（title|artist 变）从头算；播放/暂停切换时先冻结 `clockNow()` 再从冻结值继续。`ensureClockWatcher()` 幂等，内部 `musicGet()` 一次 + `onMusicState` 常驻订阅——**所以人不在音乐页也能记准暂停与继续**。
+2. **替换组件内自算进度**：删 `ownPos` / `ownBaseRef` 及其两个 effect，改 `const [, setClockTick] = useState(0)` + 250ms `setInterval` 触发重渲染；`shownPos = playerNoTimeline ? clockNow() : live`——切页回来直接读模块级钟。
+3. **让进度条可点**：新增 `const canSeekNow = totalDur > 0 && !busy`；`secAt()` 改用 `totalDur`（原来用 `music.duration`，网易云恒 0 时永远返回 0）；`onSeekPointerDown` 门槛改 `if (!canSeekNow) return`；`onSeekPointerUp` 在 `playerNoTimeline` 时先把钟挪到目标秒（`progressClock.startPos = sec` 等）再 `ctl({ cmd:'seek', ... })`，否则界面会弹回原位置；`seekable` 类改 `totalDur > 0`。
+
+### 10.3 实测（预览版 CDP + 真实网易云会话）
+
+| 场景 | 结果 |
+|---|---|
+| 停在音乐页 4 秒 | 时间 `0:04 → 0:08`，`seekCls="music-seek seekable"` |
+| 切到待办页 6 秒后再切回 | 时间 `0:20`（**没归零**），高亮 `act:2` 指向「为何总沉默寡言」（**没回第一句**） |
+| 点进度条 75% 处 | `SEEK` 命中 `music-bar`、`seekable` 生效；点击后 `E {"act":26,"actTxt":"子母画面分割上演谍对谍","times":["3:22","-1:06"]}`，2.5 秒后 `F {"act":26,"times":["3:24","-1:04"]}` ⇒ **界面立刻跳过去并继续走** |
+
+### 10.4 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 138ms`，`out/renderer/assets/index-hRw8z8Jc.js` 125.88 kB） |
+| `node scripts/e2e-music.mjs` | **PASS 44 过 / 0 败 / 2 跳过** |
+| `node scripts/e2e-music-session.mjs` | PASS 20 / 0 |
+| `node scripts/e2e-head-order.mjs` | PASS 14 / 0 |
+| `node scripts/e2e-beautify-04.mjs` | PASS 27 / 0 |
+
+### 10.5 未核验 / 已知限制
+
+1. **网易云不响应 SMTC seek**：`musicControl({cmd:'seek'})` 返回 `ACK=true`（桥接层 `TryChangePlaybackPositionAsync` 真的返回 true），但连采 45 秒 `position` 恒为 0、歌名未变 ⇒ SMTC 层谎报成功。所以点进度条后**只有我们自己的钟跳过去**，播放器本身不会真跳。这是网易云自身缺陷，不是本轮改动能修的。
+2. 汽水音乐等正常报时间轴的播放器本轮未复测切页场景（其 position 由播放器提供，理论上不受模块钟影响）。
+3. 安装版仍未重新打包，用户机器上跑的是 `3a68dff` 那版（不含任何歌词功能）。
