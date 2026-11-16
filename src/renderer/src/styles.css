@@ -653,41 +653,8 @@ body {
   flex: 1;
 }
 
-/* 开机自启开关（面板头右上角） */
-.autostart-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 11px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(242, 243, 245, 0.6);
-  transition: background 120ms, color 120ms;
-}
-
-.autostart-toggle:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: rgba(242, 243, 245, 0.85);
-}
-
-.autostart-toggle.on {
-  background: rgba(123, 87, 255, 0.25);
-  color: #cfc4ff;
-}
-
-.autostart-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(242, 243, 245, 0.35);
-}
-
-.autostart-toggle.on .autostart-dot {
-  background: #8b6bff;
-}
+/* 开机自启胶囊样式已删除（2026-11-16 用户 m01514「岛上的这个自启开关去掉吧，在设置页里即可」）。
+   唯一的开关在设置窗口「常规」分区，样式见 src/renderer/src/settings/settings.css 的 .set-switch。 */
 
 .panel-body {
   flex: 1;

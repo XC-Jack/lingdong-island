@@ -2150,8 +2150,6 @@ export default function App(): React.JSX.Element {
       alive = false
     }
   }, [])
-  // 开机自启开关状态（null=未取到）
-  const [autoStart, setAutoStart] = useState<boolean | null>(null)
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
   const [notifyUnread, setNotifyUnread] = useState(0)
   // 新消息到岛横幅（参考苹果灵动岛）：收起态弹「图标+应用名+标题」，5 秒后收回；
@@ -2337,29 +2335,10 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
-  // 开机自启：读初始状态
-  useEffect(() => {
-    let alive = true
-    void window.island.autostartGet().then((on) => {
-      if (alive) setAutoStart(on)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  // 开机自启：设置窗口改了开关要同步到这里（SPEC-settings-shell 阻断项 B2）。
-  // 头部那枚胶囊和设置窗口「常规」分区是两处独立渲染，靠主进程 autostart:changed 广播对齐。
-  useEffect(() => {
-    const off = window.island.onAutostartChanged((on) => setAutoStart(on))
-    return off
-  }, [])
-
-  const flipAutoStart = useCallback((): void => {
-    const next = !(autoStart === true)
-    setAutoStart(next) // 乐观更新，主进程会回真实值
-    void window.island.autostartSet(next).then((real) => setAutoStart(real))
-  }, [autoStart])
+  // 开机自启：岛头部那枚胶囊 2026-11-16 按用户 m01514「岛上的这个自启开关去掉吧，
+  // 在设置页里即可」删除，岛内不再渲染、也不再订阅 autostart 状态。
+  // 唯一的开关在设置窗口「常规」分区（src/renderer/src/settings/SettingsApp.tsx），
+  // 主进程 IPC `autostart:get`/`autostart:set`/`autostart:changed` 全部保留不动。
 
   // 状态变化时同步给主进程，由它调整窗口尺寸
   useEffect(() => {
@@ -2813,21 +2792,9 @@ export default function App(): React.JSX.Element {
                   {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
                 </span>
               </span>
-              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度+自启开关推到右侧，
+              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度推到右侧，
                   与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
               <span className="panel-head-spacer" />
-              <button
-                type="button"
-                className={`autostart-toggle ${autoStart ? 'on' : ''}`}
-                title={autoStart ? '开机自启已开启，点击关闭' : '开机自启已关闭，点击开启'}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipAutoStart()
-                }}
-              >
-                <span className="autostart-dot" />
-                {autoStart === null ? '自启…' : autoStart ? '自启开' : '自启关'}
-              </button>
               {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
                   右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
                   e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}
