@@ -1820,6 +1820,13 @@ function MusicPanel(): React.JSX.Element {
   // 音量竖直滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
   // m02917 纠正回竖直，保留「平时隐形、点喇叭显现」这条交互）
   const [volOpen, setVolOpen] = useState(false)
+  // 用户 m04356「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+  // 音量条的容器，用来判断一次点击是不是落在条内。点条内不算「别的地方」，
+  // 否则拖滑块的第一下就会把条收掉
+  const volBoxRef = useRef<HTMLDivElement>(null)
+  // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
+  // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
+  const [lyricOpen, setLyricOpen] = useState(false)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -1833,6 +1840,59 @@ function MusicPanel(): React.JSX.Element {
 
   useEffect(() => () => {
     if (volTimer.current !== null) clearTimeout(volTimer.current)
+  }, [])
+
+  // 用户 m04356「我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+  // 音量条展开时，在 document 上挂一次捕获阶段的 pointerdown —— 落点不在喇叭/滑条那块就收起。
+  // 用 pointerdown 而不是 click：点空白处、点其它按钮都能立刻收起，不必等一次完整点击；
+  // 用捕获阶段：即使目标元素自己 stopPropagation 也照收。点条内不收起，否则拖滑块第一下就没了。
+  useEffect(() => {
+    if (!volOpen) return
+    const onDown = (e: PointerEvent) => {
+      const box = volBoxRef.current
+      if (box && e.target instanceof Node && box.contains(e.target)) return
+      setVolOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [volOpen])
+
+  // 音量条拖不动（用户 m04432「现在直接拖动不了」）：
+  // 根因是原生 input[type=range] 竖直方向只有 3px 可见轨道、命中宽度约 21px，
+  // 往旁边偏 8px 就落到浮层背景上，而背景不接拖动 —— 手感就是「拖不动」。
+  // 这里在滑块那一段盖一层透明热区接管拖动：按在任意位置都按 Y 位置换算音量并跟随移动，
+  // 不再要求精确压在那 3px 轨道上（热区只盖滑块高度，不盖下方百分比数字，否则一碰就静音）。
+  const volDragId = useRef<number | null>(null)
+  const volInputRef = useRef<HTMLInputElement>(null)
+  const volFromY = useCallback((clientY: number) => {
+    const input = volInputRef.current
+    if (!input) return
+    const r = input.getBoundingClientRect()
+    if (r.height <= 0) return
+    // 竖直滑条用 writing-mode: vertical-lr + direction: rtl 渲染 ⇒ 顶部＝1、底部＝0
+    const ratio = (r.bottom - clientY) / r.height
+    const v = Math.min(1, Math.max(0, Math.round(ratio * 100) / 100))
+    setVolLocal(v)
+    sendVolume(v)
+  }, [sendVolume])
+  // 拖动一律由这层透明热区接管，不再依赖原生 input[type=range] 的竖直拖动：
+  // 原生竖直滑条只有 3px 轨道可瞄，本机实测同一落点有时生效有时不生效；
+  // 接管后「按在哪儿就从哪儿开始算」，整块区域都是有效热区（用户 m04432「现在直接拖动不了」）。
+  const volDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    volDragId.current = e.pointerId
+    // 先取值再捕获：setPointerCapture 极端情况下可能抛，抛了也不该影响这一次取值
+    volFromY(e.clientY)
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 指针已失效，忽略 */ }
+  }, [volFromY])
+  const volDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (volDragId.current !== e.pointerId) return
+    volFromY(e.clientY)
+  }, [volFromY])
+  const volDragEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (volDragId.current !== e.pointerId) return
+    volDragId.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* 指针已释放 */ }
   }, [])
 
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
@@ -1972,125 +2032,170 @@ function MusicPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="todo-panel music-panel">
+    <div className={`todo-panel music-panel ${lyricOpen ? 'lyric-open' : ''}`}>
+      {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」，
+          2026-11-16 用户 m03368 指出进度条不该横穿整页）：
+          上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
+          中间一条竖分隔线；右栏＝歌词位，独占右侧、上下居中。
+          歌词文本仍只放诚实占位「暂无歌词」（真歌词在用户 m02341 实测否决过，未重新授权） */}
       <div className="music-main">
-        {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
-        <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
-          {music?.cover && coverFailedFor !== music.cover ? (
-            <img
-              className="music-cover-img"
-              src={music.cover}
-              alt=""
-              onError={() => setCoverFailedFor(music.cover)}
-            />
-          ) : (
-            <IcoMusic />
-          )}
-        </div>
-        <div className="music-meta">
-          <div className="music-title" title={music?.title || '未知曲目'}>
-            {music?.title || '未知曲目'}
+        <div className="music-side">
+          <div className="music-id">
+            {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
+            <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
+              {music?.cover && coverFailedFor !== music.cover ? (
+                <img
+                  className="music-cover-img"
+                  src={music.cover}
+                  alt=""
+                  onError={() => setCoverFailedFor(music.cover)}
+                />
+              ) : (
+                <IcoMusic />
+              )}
+            </div>
+            <div className="music-meta">
+              <div className="music-title" title={music?.title || '未知曲目'}>
+                {music?.title || '未知曲目'}
+              </div>
+              <div className="music-artist" title={music?.artist || music?.album || ''}>
+                {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+              </div>
+            </div>
           </div>
-          <div className="music-artist" title={music?.artist || music?.album || ''}>
-            {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+
+          {/* 进度条只占左栏宽度，不横穿整页（用户 m03368） */}
+          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
+            {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+            <div
+              className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+              ref={barRef}
+              onPointerDown={onSeekPointerDown}
+              onPointerMove={onSeekPointerMove}
+              onPointerUp={onSeekPointerUp}
+            >
+              <div className="music-bar">
+                <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+              </div>
+            </div>
+            <div className="music-times">
+              <span className="music-time">{fmtDuration(live)}</span>
+              <span className="music-time">-{fmtDuration(remain)}</span>
+            </div>
           </div>
         </div>
-        {/* 参考图（用户 m02652）：封面行右侧是歌词位。歌词已在 m02341 实测否决取消，
-            这里只留一个诚实占位，不编造任何歌词文本 */}
+        <span className="music-divider" aria-hidden="true" />
+        {/* 右栏歌词位：只留诚实占位，不编造、不拉取任何歌词文本。
+            类名刻意不用 .music-lyric-line —— 那个选择器在 e2e-music 的 U4 里用来
+            探测「有没有偷偷接联网歌词」，占位不能撞上它 */}
         <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
       </div>
 
-      <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
-        <div
-          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
-          ref={barRef}
-          onPointerDown={onSeekPointerDown}
-          onPointerMove={onSeekPointerMove}
-          onPointerUp={onSeekPointerUp}
-        >
-          <div className="music-bar">
-            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
-          </div>
-        </div>
-        <div className="music-times">
-          <span className="music-time">{fmtDuration(live)}</span>
-          <span className="music-time">-{fmtDuration(remain)}</span>
-        </div>
-      </div>
-
-      {/* 参考图（用户 m02652）：控制行＝左侧留白 / 中间三个播放按钮 / 右侧音量。
-          三列 1fr auto 1fr 保证播放按钮相对整岛真正居中，不随右侧音量宽度偏移。
-          容器仍是 .music-ctl、三个按钮仍是 .music-btn，保住既有 e2e 断言口径 */}
+      {/* 参考图（用户 m02652）：控制行＝播放按钮一排。
+          用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」：
+          .music-control-row 与上面 .music-main 同分栏（左栏 212 / 分隔线 / 右栏 212），
+          三个按钮在左栏内居中 ⇒ 正好落在「封面＋歌名」那块的正下方；
+          喇叭（.music-extra）绝对定位贴在「下一首」右外侧，既不挤压按钮、也不再吊在整岛最右端。
+          容器仍是 .music-ctl、三个按钮仍是 .music-btn、音量仍包在 .music-volume 里，保住 e2e 断言口径 */}
       <div className="music-control-row">
-        <span className="music-ctl-spacer" aria-hidden="true" />
         <div className="music-ctl">
-          <button
-            type="button"
-            className="music-btn"
-            title="上一首"
-            aria-label="上一首"
-            disabled={busy !== null}
-            onClick={() => ctl('prev')}
-          >
-            <IcoPrev />
-          </button>
-          <button
-            type="button"
-            className={`music-btn music-btn-main ${music?.playing ? 'on' : ''}`}
-            title={music?.playing ? '暂停' : '播放'}
-            aria-label={music?.playing ? '暂停' : '播放'}
-            aria-pressed={music?.playing === true}
-            disabled={busy !== null}
-            onClick={() => ctl('toggle')}
-          >
-            {music?.playing ? <IcoPause /> : <IcoPlay />}
-          </button>
-          <button
-            type="button"
-            className="music-btn"
-            title="下一首"
-            aria-label="下一首"
-            disabled={busy !== null}
-            onClick={() => ctl('next')}
-          >
-            <IcoNext />
-          </button>
-        </div>
-
-        <div className="music-extra">
-          <div
-            className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
-            title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
-          >
-            {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462 / m02917） */}
+          <div className="music-ctl-buttons">
+            {/* 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余，
+                还有就是歌词ui放切上一首的旁边」：
+                整行两段 —— .music-ctl-mid（「词」+ 三按钮，居中）/ .music-extra（喇叭，贴最右）。
+                中间那组 flex:1 吃掉剩余宽度，「词」贴着「上一首」左边，两端不再留黑边。
+                歌词功能已由用户 m02341 否决、不实现，这枚按钮只负责开合右侧占位歌词栏。
+                类名刻意不叫 .music-lyric-* 以免撞 e2e U4 的「不许偷偷接歌词」探测 */}
+            <div className="music-ctl-mid">
+              <button
+                type="button"
+                className={`music-word ${lyricOpen ? 'on' : ''}`}
+                title={lyricOpen ? '收起歌词栏' : '展开歌词栏'}
+                aria-label="歌词"
+                aria-expanded={lyricOpen}
+                onClick={() => setLyricOpen((v) => !v)}
+              >
+                词
+              </button>
+              <button
+                type="button"
+                className="music-btn"
+                title="上一首"
+                aria-label="上一首"
+                disabled={busy !== null}
+                onClick={() => ctl('prev')}
+              >
+                <IcoPrev />
+              </button>
             <button
               type="button"
-              className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
-              aria-label="音量"
-              aria-expanded={volOpen}
-              title="点击展开/收起音量"
-              onClick={() => setVolOpen((v) => !v)}
+              className={`music-btn music-btn-main ${music?.playing ? 'on' : ''}`}
+              title={music?.playing ? '暂停' : '播放'}
+              aria-label={music?.playing ? '暂停' : '播放'}
+              aria-pressed={music?.playing === true}
+              disabled={busy !== null}
+              onClick={() => ctl('toggle')}
             >
-              <IcoVolume />
+              {music?.playing ? <IcoPause /> : <IcoPlay />}
             </button>
-            {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
-            <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                disabled={music?.canVolume !== true}
-                aria-label="当前播放应用的音量"
-                onChange={(e) => {
-                  const v = Number(e.target.value)
-                  setVolLocal(v)
-                  sendVolume(v)
-                }}
-              />
-              <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+            <button
+              type="button"
+              className="music-btn"
+              title="下一首"
+              aria-label="下一首"
+              disabled={busy !== null}
+              onClick={() => ctl('next')}
+            >
+              <IcoNext />
+            </button>
+            </div>
+
+            <div className="music-extra">
+              <div
+                ref={volBoxRef}
+                className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
+                title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
+              >
+                {/* 平时只留喇叭按钮；点一下展开竖直音量条，再点收起（用户 m02462 / m02917） */}
+                <button
+                  type="button"
+                  className={`music-vol-toggle ${volOpen ? 'open' : ''}`}
+                  aria-label="音量"
+                  aria-expanded={volOpen}
+                  title="点击展开/收起音量"
+                  onClick={() => setVolOpen((v) => !v)}
+                >
+                  <IcoVolume />
+                </button>
+                {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
+                <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
+                  <input
+                    ref={volInputRef}
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={volume}
+                    disabled={music?.canVolume !== true}
+                    aria-label="当前播放应用的音量"
+                    onChange={(e) => {
+                      const v = Number(e.target.value)
+                      setVolLocal(v)
+                      sendVolume(v)
+                    }}
+                  />
+                  {/* 透明拖动热区：盖住整条滑块，按在任意位置都能拖。
+                      复用 m03141「加宽热区」的思路，但不再受原生滑条命中死角限制（用户 m04432） */}
+                  <div
+                    className="music-vol-drag"
+                    onPointerDown={volDragStart}
+                    onPointerMove={volDragMove}
+                    onPointerUp={volDragEnd}
+                    onPointerCancel={volDragEnd}
+                  />
+                  <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

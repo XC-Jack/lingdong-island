@@ -119,10 +119,14 @@ body {
      随后用户 m02546「每个界面的左上角的也统一一下」把页头徽章 26→30、标题 14→16/800，
      逐页实测「置物架」这种三字标题在 340 时仍差 9 布局 px（gap -6.9 视觉 px），再提到 360。
      布局 380~720 × 150~420 = 视觉 285~540 × 113~315，
-     与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，改一边必须同步改另一边（src/main/index.ts:40-45）。 */
+     与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，改一边必须同步改另一边（src/main/index.ts:40-45）。
+     2026-11-16 晚（用户 m03988「两边有点多余，去除掉」）：380 布局 px 最小宽让每页两侧各留
+     约 48 视觉 px 空块（音乐页尤其明显）。逐页 × 多档实测：把左右内边距 24→16（内容区反而变宽 16），
+     最小宽 380→340 后，置物架「标题右缘→状态区左缘」仍有 8.5 布局 px 余量、音乐页 20.5，
+     视觉岛宽 285→255（每侧少约 11）。再往下（330/320）置物架只剩 4.8/1，会有贴脸风险，故停在 340。 */
   flex-shrink: 0;
   width: max-content;
-  min-width: 380px;
+  min-width: 340px;
   max-width: 720px;
   height: max-content;
   min-height: 150px;
@@ -130,7 +134,9 @@ body {
      日程页日历要表头 + 6 行日期 + 内边距，2026-11-11 实测完整显示需要 320 布局 px 高，420 有余量。 */
   max-height: 420px;
   border-radius: 26px;
-  padding: 20px 24px;
+  /* 2026-11-16 用户 m03988「两边有点多余，去除掉」：24→16。内容区宽度反而 +16，
+     配合上面 min-width 380→340，视觉岛宽 285→255，两侧空白各少约 11 视觉 px。 */
+  padding: 20px 16px;
   display: flex;
   flex-direction: column;
 }
@@ -2369,20 +2375,65 @@ div.pm-row[draggable='true'] {
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
+/* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」，
+    m03435「左边的歌名有点宽，可以压缩一点，尽量和右边对称」）：
+   .music-main 横向两块 —— 左栏 .music-side（内部再竖排：.music-id 封面+曲名/歌手 / .music-progress 进度条+时间）｜
+   .music-divider 竖分隔线｜右栏 .music-lyric-slot 歌词位。
+   进度条因此在左栏内，宽度＝左栏宽，不再横穿整页。
+   左右两栏都定宽 212（布局 px），所以视觉上两边完全对称；
+   左栏压缩靠 .music-meta 的 max-width（140）来收，右栏跟着收窄到同宽。 */
 .music-main {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
+  /* 收起态右栏不渲染，若继续 flex-start 左栏会贴左、右边空出一大块（用户 m03950
+     「你右边这一块空出来干嘛，去掉，让他们直接位于中心即可」）。
+     默认把左栏居中；开歌词栏时再贴左，好让竖线与右栏接在后面 */
+  justify-content: center;
+}
+.music-panel.lyric-open .music-main {
+  justify-content: flex-start;
+}
+/* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽。
+   用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
+   收起态由定宽 212 改成吃满整行（flex:1）——岛宽本来被 min-width 340 托着，
+   左栏不铺满就会在两侧留出黑边；开歌词栏时才回到定宽 212，好与右栏对称 */
+.music-side {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.music-panel.lyric-open .music-side {
+  flex: 0 0 212px;
+}
+/* 左栏第一行：封面 + 文字 */
+.music-id {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
+/* 参考图里中间那条细竖线。用 1px 边框而不是 <hr>，避免影响 flex 间距计算 */
+.music-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  align-self: stretch;
+  background: rgba(255, 255, 255, 0.1);
+}
+
 
 /* 真实封面：主进程把 SMTC Thumbnail 读成 data URL 后由 <img> 显示；
    取不到或图片解码失败时，仍回落成原来的音符块占位。播放时轻微呼吸，给「在放」一点活气 */
 .music-cover {
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  /* 参考图（用户 m03174）里封面是整页最醒目的一块，按截图比例放大到 60（视觉 45） */
+  width: 60px;
+  height: 60px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2392,8 +2443,8 @@ div.pm-row[draggable='true'] {
   border: 1px solid rgba(255, 143, 163, 0.25);
 }
 .music-cover svg {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
 }
 .music-cover-img {
   width: 100%;
@@ -2422,35 +2473,45 @@ div.pm-row[draggable='true'] {
      540 视觉 px（布局 720px），比待办页 285 宽一倍。改成分档固定上限 200px（布局 px），
      实测岛宽收到 285 视觉 px、与待办页一致，歌名在 150px 内出省略号。
      注意这是「布局 px」，.app 上有 zoom:.75，视觉值 = 该值 × 0.75。 */
-  max-width: 200px;
+  /* 收起态左栏现在吃满整行（见 .music-side 的 flex:1），歌名块跟着放到 236：
+     封面 60 + 间距 12 + 236 = 308 ＝ 岛最小宽 340 减去左右内边距 16×2，正好铺满不留黑边。
+     仍保留上限（不写成 none），否则超长歌名会把岛顶到 720 布局 px 的满宽（用户 m02825 报过）。
+     开歌词栏时左栏回到定宽 212，歌名块同步收回到 140，与右栏对称 */
+  max-width: 236px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
+.music-panel.lyric-open .music-meta {
+  max-width: 140px;
+}
 .music-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: #f2f3f5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .music-artist {
-  font-size: 12px;
+  font-size: 12.5px;
   color: rgba(242, 243, 245, 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 参考图（用户 m02652）封面行右侧的歌词位。歌词功能已在 m02341 实测否决取消，
-   这里只摆一个诚实占位，不编造、不拉取任何歌词文本；长文本也不撑宽封面行 */
+/* 参考图（用户 m03174）：右栏歌词位。歌词功能已在 m02341 实测否决取消，
+   这里只摆一个诚实占位，不编造、不拉取任何歌词文本。
+   2026-11-16 用户 m03435「尽量和右边对称」：从左栏剩下的弹性宽度改成与左栏同定宽 212，
+   两栏等比，分隔线正好在正中间 */
 .music-lyric-slot {
-  flex: 0 1 auto;
+  /* 用户 m03840「宽一点看看」：歌词栏比左栏宽一档（布局 260，左栏 212） */
+  flex: 0 0 260px;
   min-width: 0;
-  max-width: 34%;
+  display: flex;
+  align-items: center;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.38);
-  text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2466,7 +2527,8 @@ div.pm-row[draggable='true'] {
 }
 .music-bar {
   position: relative;
-  height: 3px;
+  /* 参考图（用户 m03174）里进度条是明显的一条，不是发丝；3 → 5（视觉 3.75） */
+  height: 5px;
   border-radius: 999px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.12);
@@ -2488,39 +2550,74 @@ div.pm-row[draggable='true'] {
 .music-times {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: rgba(242, 243, 245, 0.38);
+  color: rgba(242, 243, 245, 0.42);
 }
 
 /* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
    三列 1fr auto 1fr 让播放按钮相对整岛真正居中，不被右侧音量宽度带偏 */
+/* 控制行：用户 m03435 第二轮「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」。
+   控制行仍与上面 .music-main 同分栏（左栏 212 / 分隔线 1 / 右栏 212、间距 14），
+   但左栏里现在装的是「三按钮 + 喇叭 + 词」一整组，
+   整组在左栏（＝封面＋歌名那块）内居中 ⇒ 加了右边两件之后，播放/切歌自然向左让位，
+   既满足「整体向左移」，也仍然落在歌名正下方 */
 .music-control-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  /* 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面」：
+     收起态单列改成 1fr——让控制行跟铺满的左栏同宽，五件控件在整行内均匀散开，
+     两侧不再留出黑边。开歌词栏时才回到与 .music-main 一致的三栏（左 212 / 竖线 1 / 右 260） */
+  grid-template-columns: 1fr;
+  column-gap: 14px;
   align-items: center;
+  justify-content: stretch;
   width: 100%;
 }
-.music-ctl-spacer {
-  min-width: 0;
+.music-panel.lyric-open .music-control-row {
+  grid-template-columns: 212px 1px 260px;
+  justify-content: flex-start;
 }
-
 /* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
-   主按钮（播放/暂停）实心、比两侧大一档 */
+   主按钮（播放/暂停）实心、比两侧大一档。
+   用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」：
+   .music-ctl 与左栏（.music-side）等宽，三按钮在它内部居中 ⇒ 中心与「封面＋歌名」对齐；
+   喇叭所在的 .music-extra 绝对定位贴到「下一首」右外侧，不参与居中计算，所以按钮不会被挤偏 */
 .music-ctl {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
   width: 100%;
   padding-top: 2px;
+}
+/* 「词 + 三按钮 + 喇叭」这一整组：宽度仍吃满控制行，但整组居中排列。
+   用户 m04117 先要求「填满这个界面，这样两边的黑边就不会很多余」，当时用 space-between
+   加喇叭 margin-left:auto 把喇叭推到最右端；用户 m04310 回补一句「喇叭还是贴着下一首
+   比较好一点」⇒ 喇叭不再吊到行尾，改为紧贴「下一首」右侧，整组在行内居中。
+   铺满整行的效果由左栏（封面 / 歌名 / 进度条）负责，控制行不再强行撑满。 */
+.music-ctl-buttons {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+}
+/* 「词」+ 三按钮：自然宽度，不再吃掉剩余空间（吃掉后喇叭会被推离「下一首」） */
+.music-ctl-mid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
 .music-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -2537,8 +2634,8 @@ div.pm-row[draggable='true'] {
   cursor: default;
 }
 .music-btn-main {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   color: #1a0b10;
   background: #ff8fa3;
 }
@@ -2569,11 +2666,20 @@ div.pm-row[draggable='true'] {
    m02917 纠正回竖直（向上弹出，避免浮层越出岛下缘），保留「平时隐形、点喇叭显现」；
    用 visibility/opacity/pointer-events 切换而非 display:none，
    这样 input 常驻 DOM（e2e 量得到），也不会隐形时误接鼠标 */
+/* 音量位（用户 m03435）：绝对定位贴到「下一首」按钮右外侧，
+   不占控制行宽度，因此不会把三按钮挤离「歌名正下方」。
+   left:100% + 8px 是相对 .music-ctl-buttons 的右缘（那正好是「下一首」右缘） */
 .music-extra {
+  /* 用户 m03577「再喇叭右边加一个"词"这样的ui」：喇叭从绝对定位改为正常 flex item，跟三个按钮并排。
+     用户 m04117 曾用 margin-left:auto 把喇叭推到整行最右端撑满整行；
+     用户 m04310「喇叭还是贴着下一首比较好一点」⇒ 去掉 margin-left:auto，
+     喇叭回到紧跟「下一首」后面，与它的净间距由 .music-ctl-buttons 的 gap(10) 决定 */
+  position: static;
+  transform: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 10px;
+  flex: 0 0 auto;
   min-width: 0;
 }
 .music-volume {
@@ -2583,6 +2689,8 @@ div.pm-row[draggable='true'] {
   gap: 6px;
   color: rgba(242, 243, 245, 0.6);
 }
+/* 用户 m04736「现在的喇叭颜色太浅」：图标由 0.75 提到纯白、底色 0.07→0.14、
+   图标 15→17px，并去掉禁用态 0.4 的重度压暗（0.62），让它看起来是「可按」而不是「坏掉」 */
 .music-vol-toggle {
   display: flex;
   align-items: center;
@@ -2592,8 +2700,8 @@ div.pm-row[draggable='true'] {
   padding: 0;
   border: none;
   border-radius: 50%;
-  color: rgba(242, 243, 245, 0.75);
-  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
   cursor: pointer;
 }
 .music-vol-toggle:hover,
@@ -2606,8 +2714,8 @@ div.pm-row[draggable='true'] {
   outline-offset: 2px;
 }
 .music-vol-toggle svg {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
 }
 .music-vol-pop {
   position: absolute;
@@ -2638,7 +2746,7 @@ div.pm-row[draggable='true'] {
    按下不落在 input 上 → 拖不动。这里把 input 的盒子加宽到 28px（轨道仍 3px、视觉不变），
    多出来的两侧是透明热区；同时 touch-action:none 让指针拖动不被手势识别打断。 */
 .music-vol-pop input[type='range'] {
-  width: 28px;
+  width: 34px;
   height: 84px;
   margin: 0;
   appearance: none;
@@ -2649,6 +2757,22 @@ div.pm-row[draggable='true'] {
   cursor: pointer;
   touch-action: none;
 }
+/* 透明拖动热区（用户 m04432「现在直接拖动不了」）：盖住整条滑块，按在哪都能拖。
+   原生竖直 input 只有 3px 可见轨道可瞄，命中窗口太窄、真人一偏就落空；
+   热区接管后不再依赖原生滑条，visual 轨道照旧、input 仍常驻 DOM 供 e2e 读值。
+   指针事件由 App.tsx 的 onPointerDown/Move/Up 换算成音量，touch-action:none 防手势打断 */
+.music-vol-drag {
+  position: absolute;
+  /* 只盖住滑块那一段（浮层 padding-top 8 + border 1，滑块高 84），不盖下面的百分比数字：
+     数字那一块若也算拖动区，按下去会被换算成「底部 = 音量 0」，一碰就静音 */
+  top: 9px;
+  left: 0;
+  right: 0;
+  height: 84px;
+  cursor: pointer;
+  touch-action: none;
+}
+/* 浮层本身不再需要 pointer 手势参与，交给上面这层 */
 .music-vol-pop input[type='range']::-webkit-slider-runnable-track {
   width: 3px;
   border-radius: 999px;
@@ -2674,9 +2798,53 @@ div.pm-row[draggable='true'] {
   color: rgba(242, 243, 245, 0.38);
   text-align: center;
 }
+/* 喇叭右边的「词」按钮（用户 m03577：「再喇叭右边加一个"词"这样的ui」）。
+   样式对齐上一行三个 .music-btn 的 36×36 圆形，只把图标换成一个「词」字，
+   并沿用参考图里的胶囊味道：圆角略小一点、字重 700、颜色跟普通按钮一致。
+   ⚠ 歌词功能已被用户 m02341 否决，这枚按钮点下去不做事，只是照参考图占位 */
+.music-word {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(242, 243, 245, 0.9);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
+}
+.music-word:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+/* 「词」按下去＝歌词页展开状态：给一枚高亮，让用户知道现在开着（否则「再点收起」没有反馈） */
+.music-word.on {
+  background: rgba(255, 143, 163, 0.22);
+  color: #ff8fa3;
+}
+
+/* 歌词栏开合（用户 m03837「我指的是整个右边隐藏了…按了歌词，就会把 ui 挤到左边，然后竖线隔开出现歌词」）。
+   默认只渲染左栏 ⇒ 右栏与竖线都不占位，岛自动缩回窄态；点「词」后岛变宽、左侧内容被挤到左边，
+   中线出现那条竖线、右侧多出歌词栏。右栏比左栏宽一点（用户 m03840「宽一点看看」）：左 212、右 260（布局 px）。
+   栏里仍只有诚实占位——歌词内容在用户 m02341 实测否决过，这里不联网、不编造 */
+.music-divider,
+.music-lyric-slot {
+  display: none;
+}
+.music-panel.lyric-open .music-divider {
+  display: block;
+}
+.music-panel.lyric-open .music-lyric-slot {
+  display: flex;
+}
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {
-  opacity: 0.4;
+  opacity: 0.62;
 }
 .music-vol-pop input[type='range']:disabled {
   cursor: default;

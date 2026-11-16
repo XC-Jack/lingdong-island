@@ -286,26 +286,144 @@ try {
           /^data:image\/(png|jpeg);base64,/.test(coverUi?.imgPrefix ?? ''),
           `src 前缀=${coverUi?.imgPrefix}`)
       }
-      // 用户 m02652 整页照参考图重排：播放按钮回到进度条下方独立控制行、相对整岛居中；
-      // 音量保持竖直弹出（m02917 纠正回竖线）；封面行右侧只留诚实「暂无歌词」占位；进度右端用负数剩余时间
+      // 用户 m02652 整页照参考图重排：播放按钮独立控制行；
+      // 用户 m03435「播放和切换要位于歌名的正下方中心位置」把基准从整岛改成了左栏；
+      // 用户 m03577「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」；
+      // 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」
+      // ⇒ 收起态控制行与左栏同宽铺满整行：「词」+ 三按钮居中组、喇叭贴最右，两端不再留黑边。
       const ctlPos = await islandEval(`(() => {
         const row = document.querySelector('.music-control-row');
         const ctl = row?.querySelector('.music-ctl');
-        const island = document.querySelector('.island');
+        const side = document.querySelector('.music-side');
         const main = document.querySelector('.music-main');
-        if (!ctl || !island) return null;
-        const c = ctl.getBoundingClientRect(), ir = island.getBoundingClientRect();
+        if (!ctl || !side) return null;
+        const c = ctl.getBoundingClientRect(), sr = side.getBoundingClientRect();
+        const btns = [...ctl.querySelectorAll('.music-btn')];
+        const first = btns[0]?.getBoundingClientRect(), last = btns[btns.length - 1]?.getBoundingClientRect();
+        const grpCenter = (first && last) ? (first.left + last.right) / 2 : null;
+        const box = document.querySelector('.music-ctl-buttons')?.getBoundingClientRect();
         return {
           inRow: !!row,
           inMain: main ? main.contains(ctl) : null,
+          btnCount: btns.length,
           ctlCenterX: (c.left + c.right) / 2,
-          islandCenterX: (ir.left + ir.right) / 2
+          grpCenterX: grpCenter,
+          sideCenterX: (sr.left + sr.right) / 2,
+          ctlW: c.width,
+          sideW: sr.width,
+          boxLeft: box ? box.left : null,
+          boxRight: box ? box.right : null,
+          sideLeft: sr.left,
+          sideRight: sr.right
         };
       })()`)
-      ok('U1 播放按钮回到进度条下方控制行、相对整岛居中（不再嵌在封面行）',
-        ctlPos && ctlPos.inRow === true && ctlPos.inMain === false &&
-        Math.abs(ctlPos.ctlCenterX - ctlPos.islandCenterX) <= 6,
+      ok('U1 控制行与左栏同宽、铺满整行不留黑边（用户 m04117）',
+        ctlPos && ctlPos.inRow === true && ctlPos.inMain === false && ctlPos.btnCount === 3 &&
+        Math.abs(ctlPos.ctlW - ctlPos.sideW) <= 1 &&
+        ctlPos.boxLeft >= ctlPos.sideLeft - 1 && ctlPos.boxRight <= ctlPos.sideRight + 1,
         JSON.stringify(ctlPos))
+      // 用户 m04117 要求过「填满整行、两边不要黑边」，当时把喇叭推到控制行最右端；
+      // 用户 m04310「喇叭还是贴着下一首比较好一点」⇒ 喇叭回到紧跟「下一首」右侧，整组居中。
+      const volSide = await islandEval(`(() => {
+        const btns = [...document.querySelectorAll('.music-ctl .music-btn')];
+        const next = btns[btns.length - 1];
+        const toggle = document.querySelector('.music-vol-toggle');
+        const box = document.querySelector('.music-ctl-buttons');
+        if (!next || !toggle || !box) return null;
+        const nr = next.getBoundingClientRect(), tr = toggle.getBoundingClientRect();
+        const br = box.getBoundingClientRect();
+        const island = document.querySelector('.island').getBoundingClientRect();
+        return { nextRight: nr.right, toggleLeft: tr.left, gap: tr.left - nr.right, toggleRight: tr.right, boxRight: br.right, boxLeft: br.left, islandRight: island.right };
+      })()`)
+      ok('U1b 喇叭紧贴「下一首」右侧、不再吊到控制行两端（用户 m04310）',
+        volSide && volSide.gap >= 0 && volSide.gap <= 24 &&
+        volSide.toggleRight < volSide.islandRight - 8,
+        JSON.stringify(volSide))
+      // 用户 m03435 要求过「词」在喇叭右边；用户 m04117 改为「歌词ui放切上一首的旁边」：
+      // 现在「词」紧挨在「上一首」左侧，并且整组（词 + 三按钮）在剩余宽度里居中、喇叭贴最右。
+      const wordUi = await islandEval(`(() => {
+        const w = document.querySelector('.music-word');
+        const prev = document.querySelector('.music-ctl .music-btn');
+        const box = document.querySelector('.music-ctl-buttons');
+        if (!w || !prev || !box) return { found: false };
+        const wr = w.getBoundingClientRect(), pr = prev.getBoundingClientRect();
+        const br = box.getBoundingClientRect();
+        const island = document.querySelector('.island').getBoundingClientRect();
+        return { found: true, text: w.textContent.trim(), gapToPrev: pr.left - wr.right, leftGap: wr.left - br.left, insideIsland: wr.right <= island.right + 1, w: wr.width, h: wr.height };
+      })()`)
+      ok('U1c「词」紧挨「上一首」左边、不再吊在喇叭右侧（用户 m04117）',
+        wordUi && wordUi.found === true && wordUi.text === '词' &&
+        wordUi.gapToPrev >= 0 && wordUi.gapToPrev <= 24 &&
+        wordUi.leftGap >= -1 && wordUi.insideIsland === true,
+        JSON.stringify(wordUi))
+      // 用户 m03837「我指的是整个右边隐藏了…按了歌词，就会把 ui 挤到左边，然后竖线隔开出现歌词」：
+      // 歌词栏默认整块不占位（display:none），点「词」后岛变宽、竖线出现、右栏挤出来。
+      const pagedBefore = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const isl = document.querySelector('.island');
+        return {
+          slot: slot ? getComputedStyle(slot).display : null,
+          divider: div ? getComputedStyle(div).display : null,
+          islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length
+        };
+      })()`)
+      ok('U1d 歌词栏默认整块隐藏、岛是窄态（用户 m03837「整个右边隐藏了」）',
+        pagedBefore && pagedBefore.slot === 'none' && pagedBefore.divider === 'none' && pagedBefore.online === 0,
+        JSON.stringify(pagedBefore))
+      await islandEval(`document.querySelector('.music-word')?.click()`)
+      await sleep(700)
+      const pagedOpen = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const side = document.querySelector('.music-side');
+        const isl = document.querySelector('.island');
+        const w = document.querySelector('.music-word');
+        if (!slot || !div || !side || !isl) return null;
+        const pr = slot.getBoundingClientRect(), sr = side.getBoundingClientRect();
+        const ir = isl.getBoundingClientRect(), dr = div.getBoundingClientRect();
+        return {
+          slot: getComputedStyle(slot).display,
+          divider: getComputedStyle(div).display,
+          islandW: Math.round(ir.width),
+          slotW: Math.round(pr.width),
+          sideW: Math.round(sr.width),
+          dividerX: Math.round(dr.left),
+          leftOfDivider: dr.left >= sr.right - 1,
+          slotRightOfDivider: pr.left >= dr.right - 1,
+          insideIsland: pr.right <= ir.right + 1,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null,
+          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length,
+          text: slot.textContent.replace(/\\s+/g, ' ').trim()
+        };
+      })()`)
+      ok('U1e 点「词」把岛挤宽、竖线出现、右侧多出歌词栏（用户 m03837/m03840「宽一点」）',
+        pagedOpen && pagedOpen.slot === 'flex' && pagedOpen.divider === 'block' &&
+        pagedOpen.islandW > pagedBefore.islandW + 80 &&
+        pagedOpen.slotW > pagedOpen.sideW &&
+        pagedOpen.leftOfDivider === true && pagedOpen.slotRightOfDivider === true &&
+        pagedOpen.insideIsland === true && pagedOpen.wordExpanded === 'true' &&
+        pagedOpen.online === 0,
+        JSON.stringify({ before: pagedBefore, after: pagedOpen }))
+      await islandEval(`document.querySelector('.music-word')?.click()`)
+      await sleep(700)
+      const pagedBack = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const isl = document.querySelector('.island');
+        const w = document.querySelector('.music-word');
+        return {
+          slot: slot ? getComputedStyle(slot).display : null,
+          divider: div ? getComputedStyle(div).display : null,
+          islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null
+        };
+      })()`)
+      ok('U1f 再点一次「词」歌词栏收起、岛缩回原宽（用户 m03837）',
+        pagedBack && pagedBack.slot === 'none' && pagedBack.divider === 'none' &&
+        pagedBack.islandW === pagedBefore.islandW && pagedBack.wordExpanded === 'false',
+        JSON.stringify(pagedBack))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
@@ -320,24 +438,67 @@ try {
       ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
         popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 60 && popShown.w < 60,
         JSON.stringify(popShown))
-      // 用户 m03141「音量建无法拖动」：3px 可见轨道若只占 11px 命中宽度，真人横向偏 6px
-      // 就按到浮层上、拖不动。这里用 elementFromPoint 量真实可点宽度做回归护栏。
+      // 用户 m03141「音量建无法拖动」→ m04432「现在直接拖动不了」：3px 可见轨道真人瞄不准。
+      // 现在的做法是浮层里盖一层透明热区 .music-vol-drag 接管拖动（App.tsx 的 pointer 处理），
+      // 所以这里量的是「可拖动的命中宽度」＝ elementFromPoint 落在 input 或热区层上都算。
       const volHit = await islandEval(`(() => {
         const i = document.querySelector('.music-vol-pop input[type="range"]');
+        const d = document.querySelector('.music-vol-pop .music-vol-drag');
         if (!i) return null;
         const r = i.getBoundingClientRect();
+        const dr = d ? d.getBoundingClientRect() : null;
         const y = r.top + r.height / 2;
         const cxs = r.left + r.width / 2;
         let hit = 0;
         for (let dx = -30; dx <= 30; dx += 1) {
-          if (document.elementFromPoint(cxs + dx, y) === i) hit += 1;
+          const el = document.elementFromPoint(cxs + dx, y);
+          if (el && (el === i || el === d)) hit += 1;
         }
-        return { boxW: Math.round(r.width), hitPx: hit };
+        const covers = dr ? (dr.left <= r.left + 1 && dr.right >= r.right - 1 && dr.top <= r.top + 1 && dr.bottom >= r.bottom - 1) : false;
+        return { boxW: Math.round(r.width), hitPx: hit, dragW: dr ? Math.round(dr.width) : null, dragH: dr ? Math.round(dr.height) : null, coversInput: covers };
       })()`)
-      ok('U3b 音量滑块的透明热区够宽（可点命中 ≥20px，横向偏 10px 仍能按下）',
-        volHit && volHit.hitPx >= 20, JSON.stringify(volHit))
-      // 收起，避免影响后续 M3/M4
+      ok('U3b 音量拖动热区够宽且盖住滑块（可拖命中 ≥20px，横向偏 10px 仍能按下）',
+        volHit && volHit.hitPx >= 20 && volHit.coversInput === true, JSON.stringify(volHit))
+      // 用户 m04356「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+      // 音量条开着时，在别处按下应当收起它；点条内（尤其拖滑块）不能收起。
+      const clickOutside = await islandEval(`(() => {
+        const pop = () => {
+          const p = document.querySelector('.music-vol-pop');
+          return p ? getComputedStyle(p).visibility : null;
+        };
+        const before = pop();
+        const head = document.querySelector('.panel-title') || document.querySelector('.panel-head');
+        head?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        return { before };
+      })()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const afterOutside = await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        return { vis: p ? getComputedStyle(p).visibility : null, expanded: document.querySelector('.music-vol-toggle')?.getAttribute('aria-expanded') };
+      })()`)
+      ok('U3c 音量条开着时点别处会收起（用户 m04356）',
+        clickOutside?.before === 'visible' && afterOutside?.vis === 'hidden' && afterOutside?.expanded === 'false',
+        JSON.stringify({ ...clickOutside, after: afterOutside }))
+      // 再点喇叭展开，然后点/拖条内本身，不应收起
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const insideKeeps = await islandEval(`(() => {
+        const input = document.querySelector('.music-vol-pop input[type=range]');
+        input?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        const p = document.querySelector('.music-vol-pop');
+        return { vis: p ? getComputedStyle(p).visibility : null };
+      })()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const insideStill = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
+      ok('U3d 点音量条内部不会把它收起（否则拖滑块第一下就没了）',
+        insideKeeps?.vis === 'visible' && insideStill === 'visible',
+        JSON.stringify({ atDown: insideKeeps?.vis, after: insideStill }))
+      // 收起，避免影响后续 M3/M4（若已收起，再点一次会重新打开，故先读状态）
+      await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        if (p && getComputedStyle(p).visibility === 'visible') document.querySelector('.music-vol-toggle')?.click();
+      })()`)
+      await new Promise((r) => setTimeout(r, 220))
       const lyricSlot = await islandEval(`(() => {
         const slot = document.querySelector('.music-lyric-slot');
         const online = document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length;

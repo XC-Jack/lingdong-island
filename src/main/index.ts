@@ -44,7 +44,9 @@ let collapsedWidth = 168
 //    改一边必须同步改另一边。（宽度下限 2026-11-16 晚由 300 抬到 340：头部状态区放大后
 //    居中会压到左侧标题，e2e-head-order 的 H5a 报 overlapTitle=true。随后用户 m02546
 //    要求统一各页左上角，徽章 26→30、标题 14→16/800，三字标题页仍差 9 布局 px，再抬到 380。）
-const EXPANDED_MIN = { width: 285, height: 113 }
+// 3) 2026-11-16 晚用户 m03988「两边有点多余，去除掉」：布局最小宽 380→340、左右内边距 24→16，
+//    视觉下限 285→255（每侧少约 11 视觉 px），置物架页标题与状态区仍有 8.5 布局 px 余量。
+const EXPANDED_MIN = { width: 255, height: 113 }
 const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的；初始值只用于首帧开窗，随后被 ResizeObserver 纠正） */
 let expandedSize = { width: 353, height: 240 }
