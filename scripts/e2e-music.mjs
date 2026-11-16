@@ -287,11 +287,10 @@ try {
           `src 前缀=${coverUi?.imgPrefix}`)
       }
       // 用户 m02652 整页照参考图重排：播放按钮独立控制行；
-      // 用户 m03435「播放和切换要位于歌名的正下方中心位置」把基准从整岛改成了左栏（封面+歌名那块），
-      // 喇叭则挪到「下一首」右边（见 U1b）。
-      // 用户 m03577「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」：
-      // 喇叭与「词」现在是正常 flex item 跟三个按钮并排，整组在左栏里居中 ⇒
-      // 三按钮组的中心必然落在左栏中心的左边，且整组（含词）不得越出左栏。
+      // 用户 m03435「播放和切换要位于歌名的正下方中心位置」把基准从整岛改成了左栏；
+      // 用户 m03577「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」；
+      // 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」
+      // ⇒ 收起态控制行与左栏同宽铺满整行：「词」+ 三按钮居中组、喇叭贴最右，两端不再留黑边。
       const ctlPos = await islandEval(`(() => {
         const row = document.querySelector('.music-control-row');
         const ctl = row?.querySelector('.music-ctl');
@@ -310,40 +309,52 @@ try {
           ctlCenterX: (c.left + c.right) / 2,
           grpCenterX: grpCenter,
           sideCenterX: (sr.left + sr.right) / 2,
+          ctlW: c.width,
+          sideW: sr.width,
           boxLeft: box ? box.left : null,
           boxRight: box ? box.right : null,
           sideLeft: sr.left,
           sideRight: sr.right
         };
       })()`)
-      ok('U1 播放/切换落在左栏、加「词」后整体向左移（用户 m03435 + m03577）',
+      ok('U1 控制行与左栏同宽、铺满整行不留黑边（用户 m04117）',
         ctlPos && ctlPos.inRow === true && ctlPos.inMain === false && ctlPos.btnCount === 3 &&
-        ctlPos.grpCenterX < ctlPos.sideCenterX - 10 &&
+        Math.abs(ctlPos.ctlW - ctlPos.sideW) <= 1 &&
         ctlPos.boxLeft >= ctlPos.sideLeft - 1 && ctlPos.boxRight <= ctlPos.sideRight + 1,
         JSON.stringify(ctlPos))
+      // 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
+      // 喇叭贴到控制行最右端，与左端的「词」一左一右把整行撑满（不再紧贴「下一首」右侧）。
       const volSide = await islandEval(`(() => {
         const btns = [...document.querySelectorAll('.music-ctl .music-btn')];
         const next = btns[btns.length - 1];
         const toggle = document.querySelector('.music-vol-toggle');
-        if (!next || !toggle) return null;
+        const box = document.querySelector('.music-ctl-buttons');
+        if (!next || !toggle || !box) return null;
         const nr = next.getBoundingClientRect(), tr = toggle.getBoundingClientRect();
-        return { nextRight: nr.right, toggleLeft: tr.left, gap: tr.left - nr.right, toggleRight: tr.right, islandRight: document.querySelector('.island').getBoundingClientRect().right };
+        const br = box.getBoundingClientRect();
+        const island = document.querySelector('.island').getBoundingClientRect();
+        return { nextRight: nr.right, toggleLeft: tr.left, gap: tr.left - nr.right, toggleRight: tr.right, boxRight: br.right, boxLeft: br.left, islandRight: island.right };
       })()`)
-      ok('U1b 喇叭紧贴在「下一首」右侧、不再吊在整岛最右端（用户 m03435）',
-        volSide && volSide.gap >= 0 && volSide.gap <= 24 && volSide.toggleRight < volSide.islandRight - 20,
+      ok('U1b 喇叭贴在控制行最右端、一行撑满不留黑边（用户 m04117）',
+        volSide && volSide.gap >= 0 && Math.abs(volSide.toggleRight - volSide.boxRight) <= 2 &&
+        volSide.toggleRight < volSide.islandRight - 8,
         JSON.stringify(volSide))
-      // 用户 m03577：喇叭右边还要一枚「词」。它只是照参考图占位（歌词功能已被 m02341 否决），
-      // 所以这里只断言存在、在喇叭右边、点了不改任何东西。
+      // 用户 m03435 要求过「词」在喇叭右边；用户 m04117 改为「歌词ui放切上一首的旁边」：
+      // 现在「词」紧挨在「上一首」左侧，并且整组（词 + 三按钮）在剩余宽度里居中、喇叭贴最右。
       const wordUi = await islandEval(`(() => {
         const w = document.querySelector('.music-word');
-        const t = document.querySelector('.music-vol-toggle');
-        if (!w || !t) return { found: false };
-        const wr = w.getBoundingClientRect(), tr = t.getBoundingClientRect();
+        const prev = document.querySelector('.music-ctl .music-btn');
+        const box = document.querySelector('.music-ctl-buttons');
+        if (!w || !prev || !box) return { found: false };
+        const wr = w.getBoundingClientRect(), pr = prev.getBoundingClientRect();
+        const br = box.getBoundingClientRect();
         const island = document.querySelector('.island').getBoundingClientRect();
-        return { found: true, text: w.textContent.trim(), gap: wr.left - tr.right, insideIsland: wr.right <= island.right + 1, w: wr.width, h: wr.height };
+        return { found: true, text: w.textContent.trim(), gapToPrev: pr.left - wr.right, leftGap: wr.left - br.left, insideIsland: wr.right <= island.right + 1, w: wr.width, h: wr.height };
       })()`)
-      ok('U1c 喇叭右边有「词」按钮且完全在岛内（用户 m03577）',
-        wordUi && wordUi.found === true && wordUi.text === '词' && wordUi.gap >= 0 && wordUi.gap <= 24 && wordUi.insideIsland === true,
+      ok('U1c「词」紧挨「上一首」左边、不再吊在喇叭右侧（用户 m04117）',
+        wordUi && wordUi.found === true && wordUi.text === '词' &&
+        wordUi.gapToPrev >= 0 && wordUi.gapToPrev <= 24 &&
+        wordUi.leftGap >= -1 && wordUi.insideIsland === true,
         JSON.stringify(wordUi))
       // 用户 m03837「我指的是整个右边隐藏了…按了歌词，就会把 ui 挤到左边，然后竖线隔开出现歌词」：
       // 歌词栏默认整块不占位（display:none），点「词」后岛变宽、竖线出现、右栏挤出来。

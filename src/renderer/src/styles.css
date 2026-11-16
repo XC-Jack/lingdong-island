@@ -2395,14 +2395,20 @@ div.pm-row[draggable='true'] {
 .music-panel.lyric-open .music-main {
   justify-content: flex-start;
 }
-/* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽 */
+/* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽。
+   用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
+   收起态由定宽 212 改成吃满整行（flex:1）——岛宽本来被 min-width 340 托着，
+   左栏不铺满就会在两侧留出黑边；开歌词栏时才回到定宽 212，好与右栏对称 */
 .music-side {
-  flex: 0 0 212px;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 8px;
   min-width: 0;
+}
+.music-panel.lyric-open .music-side {
+  flex: 0 0 212px;
 }
 /* 左栏第一行：封面 + 文字 */
 .music-id {
@@ -2467,10 +2473,17 @@ div.pm-row[draggable='true'] {
      540 视觉 px（布局 720px），比待办页 285 宽一倍。改成分档固定上限 200px（布局 px），
      实测岛宽收到 285 视觉 px、与待办页一致，歌名在 150px 内出省略号。
      注意这是「布局 px」，.app 上有 zoom:.75，视觉值 = 该值 × 0.75。 */
-  max-width: 140px;
+  /* 收起态左栏现在吃满整行（见 .music-side 的 flex:1），歌名块跟着放到 236：
+     封面 60 + 间距 12 + 236 = 308 ＝ 岛最小宽 340 减去左右内边距 16×2，正好铺满不留黑边。
+     仍保留上限（不写成 none），否则超长歌名会把岛顶到 720 布局 px 的满宽（用户 m02825 报过）。
+     开歌词栏时左栏回到定宽 212，歌名块同步收回到 140，与右栏对称 */
+  max-width: 236px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.music-panel.lyric-open .music-meta {
+  max-width: 140px;
 }
 .music-title {
   font-size: 15px;
@@ -2551,14 +2564,13 @@ div.pm-row[draggable='true'] {
    既满足「整体向左移」，也仍然落在歌名正下方 */
 .music-control-row {
   display: grid;
-  /* 默认单栏：右栏不渲染时不能让固定列宽把岛撑住（否则岛缩不回去）。
-     开歌词栏后变成与 .music-main 一致的三栏（左 212 / 竖线 1 / 右 260） */
-  grid-template-columns: 212px;
+  /* 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面」：
+     收起态单列改成 1fr——让控制行跟铺满的左栏同宽，五件控件在整行内均匀散开，
+     两侧不再留出黑边。开歌词栏时才回到与 .music-main 一致的三栏（左 212 / 竖线 1 / 右 260） */
+  grid-template-columns: 1fr;
   column-gap: 14px;
   align-items: center;
-  /* 收起态与 .music-main 一样居中（用户 m03950「让他们直接位于中心即可」）；
-     开歌词栏时才贴左，与上方三栏对齐 */
-  justify-content: center;
+  justify-content: stretch;
   width: 100%;
 }
 .music-panel.lyric-open .music-control-row {
@@ -2578,17 +2590,29 @@ div.pm-row[draggable='true'] {
   width: 100%;
   padding-top: 2px;
 }
-/* 三按钮 + 喇叭 + 词 这一整组：宽度由内容决定，在左栏（212 布局 px）里居中。
-   「词」和「喇叭」现在是正常 flex item（不再绝对定位），所以整组变宽，
-   居中后三个按钮的几何中心随之左移 —— 这就是用户 m03577 要的「整体向左移」，
-   而按钮中心到喇叭/词的这段新增宽度被均分到两侧，看起来仍是「播放居中偏左」。
-   净间距：喇叭紧贴下一首 6 布局 px、词紧贴喇叭 8 布局 px（都是减去负 margin 之后的值） */
+/* 三按钮 + 词 + 喇叭 这一整组：宽度吃满控制行，靠 .music-extra 的 margin-left:auto
+   把「词＋三按钮」压在左侧、喇叭推到最右 ⇒ 一行五件控件撑满整行，
+   正好对上用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
+   这样两边的黑边就不会很多余」。
+   净间距：喇叭紧贴下一首 6 布局 px、词紧贴上一首 8 布局 px（都是减去负 margin 之后的值） */
 .music-ctl-buttons {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+/* 用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
+   这样两边的黑边就不会很多余」：中间这组（「词」+ 三按钮）吃掉全部剩余宽度并整体居中，
+   喇叭被 margin-left:auto 顶到最右 ⇒ 一行从左到右排满，不再挤在中间留空 */
+.music-ctl-mid {
+  display: flex;
+  align-items: center;
   justify-content: center;
   gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .music-btn {
   display: flex;
@@ -2650,14 +2674,16 @@ div.pm-row[draggable='true'] {
 .music-extra {
   /* 用户 m03577 第二轮「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」：
      喇叭从「绝对定位吊在按钮组右边」改为正常 flex item，跟三个按钮并排。
-     这样整组变宽，居中后三个按钮自然左移；喇叭与「下一首」的净间距仍保持 6 布局 px（14 间隙 − 8 负边距），
-     维持上一轮「喇叭紧贴下一首右侧」的效果 */
+     用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，
+     这样两边的黑边就不会很多余」：再用 margin-left:auto 把喇叭推到整行最右端，
+     与最左边的「词」一左一右撑满，中间三按钮居中，横向不再有空档。
+     喇叭与「下一首」的净间距靠 gap 保证，不再需要负 margin */
   position: static;
   transform: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-left: -2px;
+  margin-left: auto;
   min-width: 0;
 }
 .music-volume {
