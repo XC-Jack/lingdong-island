@@ -438,22 +438,27 @@ try {
       ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
         popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 60 && popShown.w < 60,
         JSON.stringify(popShown))
-      // 用户 m03141「音量建无法拖动」：3px 可见轨道若只占 11px 命中宽度，真人横向偏 6px
-      // 就按到浮层上、拖不动。这里用 elementFromPoint 量真实可点宽度做回归护栏。
+      // 用户 m03141「音量建无法拖动」→ m04432「现在直接拖动不了」：3px 可见轨道真人瞄不准。
+      // 现在的做法是浮层里盖一层透明热区 .music-vol-drag 接管拖动（App.tsx 的 pointer 处理），
+      // 所以这里量的是「可拖动的命中宽度」＝ elementFromPoint 落在 input 或热区层上都算。
       const volHit = await islandEval(`(() => {
         const i = document.querySelector('.music-vol-pop input[type="range"]');
+        const d = document.querySelector('.music-vol-pop .music-vol-drag');
         if (!i) return null;
         const r = i.getBoundingClientRect();
+        const dr = d ? d.getBoundingClientRect() : null;
         const y = r.top + r.height / 2;
         const cxs = r.left + r.width / 2;
         let hit = 0;
         for (let dx = -30; dx <= 30; dx += 1) {
-          if (document.elementFromPoint(cxs + dx, y) === i) hit += 1;
+          const el = document.elementFromPoint(cxs + dx, y);
+          if (el && (el === i || el === d)) hit += 1;
         }
-        return { boxW: Math.round(r.width), hitPx: hit };
+        const covers = dr ? (dr.left <= r.left + 1 && dr.right >= r.right - 1 && dr.top <= r.top + 1 && dr.bottom >= r.bottom - 1) : false;
+        return { boxW: Math.round(r.width), hitPx: hit, dragW: dr ? Math.round(dr.width) : null, dragH: dr ? Math.round(dr.height) : null, coversInput: covers };
       })()`)
-      ok('U3b 音量滑块的透明热区够宽（可点命中 ≥20px，横向偏 10px 仍能按下）',
-        volHit && volHit.hitPx >= 20, JSON.stringify(volHit))
+      ok('U3b 音量拖动热区够宽且盖住滑块（可拖命中 ≥20px，横向偏 10px 仍能按下）',
+        volHit && volHit.hitPx >= 20 && volHit.coversInput === true, JSON.stringify(volHit))
       // 用户 m04356「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
       // 音量条开着时，在别处按下应当收起它；点条内（尤其拖滑块）不能收起。
       const clickOutside = await islandEval(`(() => {

@@ -1857,6 +1857,44 @@ function MusicPanel(): React.JSX.Element {
     return () => document.removeEventListener('pointerdown', onDown, true)
   }, [volOpen])
 
+  // 音量条拖不动（用户 m04432「现在直接拖动不了」）：
+  // 根因是原生 input[type=range] 竖直方向只有 3px 可见轨道、命中宽度约 21px，
+  // 往旁边偏 8px 就落到浮层背景上，而背景不接拖动 —— 手感就是「拖不动」。
+  // 这里在滑块那一段盖一层透明热区接管拖动：按在任意位置都按 Y 位置换算音量并跟随移动，
+  // 不再要求精确压在那 3px 轨道上（热区只盖滑块高度，不盖下方百分比数字，否则一碰就静音）。
+  const volDragId = useRef<number | null>(null)
+  const volInputRef = useRef<HTMLInputElement>(null)
+  const volFromY = useCallback((clientY: number) => {
+    const input = volInputRef.current
+    if (!input) return
+    const r = input.getBoundingClientRect()
+    if (r.height <= 0) return
+    // 竖直滑条用 writing-mode: vertical-lr + direction: rtl 渲染 ⇒ 顶部＝1、底部＝0
+    const ratio = (r.bottom - clientY) / r.height
+    const v = Math.min(1, Math.max(0, Math.round(ratio * 100) / 100))
+    setVolLocal(v)
+    sendVolume(v)
+  }, [sendVolume])
+  // 拖动一律由这层透明热区接管，不再依赖原生 input[type=range] 的竖直拖动：
+  // 原生竖直滑条只有 3px 轨道可瞄，本机实测同一落点有时生效有时不生效；
+  // 接管后「按在哪儿就从哪儿开始算」，整块区域都是有效热区（用户 m04432「现在直接拖动不了」）。
+  const volDragStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    volDragId.current = e.pointerId
+    // 先取值再捕获：setPointerCapture 极端情况下可能抛，抛了也不该影响这一次取值
+    volFromY(e.clientY)
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* 指针已失效，忽略 */ }
+  }, [volFromY])
+  const volDragMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (volDragId.current !== e.pointerId) return
+    volFromY(e.clientY)
+  }, [volFromY])
+  const volDragEnd = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (volDragId.current !== e.pointerId) return
+    volDragId.current = null
+    try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* 指针已释放 */ }
+  }, [])
+
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
   useEffect(() => {
     let alive = true
@@ -2132,6 +2170,7 @@ function MusicPanel(): React.JSX.Element {
                 {/* 竖直弹出层：input 常驻 DOM（不条件渲染），保住既有 e2e 对 .music-volume input[type=range] 的断言 */}
                 <div className={`music-vol-pop ${volOpen ? 'open' : ''}`}>
                   <input
+                    ref={volInputRef}
                     type="range"
                     min={0}
                     max={1}
@@ -2144,6 +2183,15 @@ function MusicPanel(): React.JSX.Element {
                       setVolLocal(v)
                       sendVolume(v)
                     }}
+                  />
+                  {/* 透明拖动热区：盖住整条滑块，按在任意位置都能拖。
+                      复用 m03141「加宽热区」的思路，但不再受原生滑条命中死角限制（用户 m04432） */}
+                  <div
+                    className="music-vol-drag"
+                    onPointerDown={volDragStart}
+                    onPointerMove={volDragMove}
+                    onPointerUp={volDragEnd}
+                    onPointerCancel={volDragEnd}
                   />
                   <span className="music-volume-num">{music?.canVolume === true ? `${Math.round(volume * 100)}%` : '--'}</span>
                 </div>

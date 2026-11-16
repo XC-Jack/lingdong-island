@@ -2744,7 +2744,7 @@ div.pm-row[draggable='true'] {
    按下不落在 input 上 → 拖不动。这里把 input 的盒子加宽到 28px（轨道仍 3px、视觉不变），
    多出来的两侧是透明热区；同时 touch-action:none 让指针拖动不被手势识别打断。 */
 .music-vol-pop input[type='range'] {
-  width: 28px;
+  width: 34px;
   height: 84px;
   margin: 0;
   appearance: none;
@@ -2755,6 +2755,22 @@ div.pm-row[draggable='true'] {
   cursor: pointer;
   touch-action: none;
 }
+/* 透明拖动热区（用户 m04432「现在直接拖动不了」）：盖住整条滑块，按在哪都能拖。
+   原生竖直 input 只有 3px 可见轨道可瞄，命中窗口太窄、真人一偏就落空；
+   热区接管后不再依赖原生滑条，visual 轨道照旧、input 仍常驻 DOM 供 e2e 读值。
+   指针事件由 App.tsx 的 onPointerDown/Move/Up 换算成音量，touch-action:none 防手势打断 */
+.music-vol-drag {
+  position: absolute;
+  /* 只盖住滑块那一段（浮层 padding-top 8 + border 1，滑块高 84），不盖下面的百分比数字：
+     数字那一块若也算拖动区，按下去会被换算成「底部 = 音量 0」，一碰就静音 */
+  top: 9px;
+  left: 0;
+  right: 0;
+  height: 84px;
+  cursor: pointer;
+  touch-action: none;
+}
+/* 浮层本身不再需要 pointer 手势参与，交给上面这层 */
 .music-vol-pop input[type='range']::-webkit-slider-runnable-track {
   width: 3px;
   border-radius: 999px;

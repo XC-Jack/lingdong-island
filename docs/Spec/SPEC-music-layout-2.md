@@ -437,3 +437,48 @@ e2e 连带改写（`scripts/e2e-music.mjs`）：U1b 由「喇叭右缘贴控制�
 **实测**：`e2e-music` PASS 46 过 / 0 败（U3c、U3d 全绿）；`.tmp/word/volout.mjs` 手工复核 `OPEN=visible` → 点标题 → `AFTER_OUTSIDE=hidden`；截图 `.tmp/word/shot-vol-open.png`、`.tmp/word/shot-vol-closed.png`。
 
 **未核验**：①真机触屏/触摸板上的手感（只用 CDP 合成 `PointerEvent` 验过）；②点岛外区域（窗口失焦）时是否也收起 —— 窗口 blur 已由主进程收整岛，未单独验音量条这一层。
+
+---
+
+### 7.14 第十二轮修正（2026-11-16 17:40，用户 m04432「现在直接拖动不了」）
+
+**用户原话**：「现在直接拖动不了」。上一轮（7.13）刚加了「点别处收起」，所以先按回归查，
+但实测证明根因不是收起逻辑，而是**热区太窄 + 原生竖直滑条命中不稳**。
+
+**取证方法与结论**（全部 [已核验]，dev 实例 + 真实「汽水音乐」SMTC 会话）：
+
+| 探针 | 量到什么 | 结论 |
+| --- | --- | --- |
+| `.tmp/word/hitmap.mjs` | 逐点 `elementFromPoint` 扫出 `input {w:21,h:63}`、`pop {w:34.6,h:91.5}`，命中图每行 `m...###########....m` | 可点宽度只有 ≈21 视觉 px，两侧是浮层背景（不接拖动） |
+| `.tmp/word/dragmiss.mjs` | `off=0` 成功（0.17→0.79）；`off=8/12/16` 全失败；`off≥20` 落到 `.music-seek`、条被收起 | **往旁边偏 8px 就拖不动**，与用户手感一致 |
+| `.tmp/word/trace3.mjs` | 四轮里 R2/R3 `imm=0.08` 但 `late=0.94`，`__calls` 空、`__states` 只有 0.08→0.94 两条 | 拖动过程中的 `input` 事件没有稳定走到 `sendVolume`，写入靠防抖兜底 |
+
+**改法**（`src/renderer/src/App.tsx` + `src/renderer/src/styles.css`）：
+
+1. 浮层里新增透明热区层 `.music-vol-drag`（`position:absolute; inset:0; cursor:pointer; touch-action:none`），
+   盖住整条滑块；按下/移动/松开都走 React 的 `onPointerDown/Move/Up/Cancel`，不再依赖原生 `input[type=range]` 的竖直拖动。
+2. `volFromY(clientY)`：按 `input` 的矩形把 Y 换算成 `0..1`（竖直条是 `writing-mode:vertical-lr` + `direction:rtl` ⇒ 顶=1、底=0），
+   四舍五入到 0.01 后 `setVolLocal` + `sendVolume`，与原生拖动走同一条写入路径（120ms 防抖不变）。
+3. `setPointerCapture` 放在取值之后并包 `try/catch`：合成指针下可能抛 `NotFoundError`，不能因为捕获失败就把这次取值丢掉。
+4. `.music-vol-pop input[type='range']` 的盒子 `28px → 34px`（轨道仍 3px 视觉不变），热区再加一层保险。
+5. **走错的一步（务必记住）**：中途试过「浮层整块 `onPointerDown` + `preventDefault()`，input 一律不让原生处理」，
+   结果**正对轨道也拖不动**（`off=0/-6/6/10` 全部 `before==after`）——`preventDefault` 把原生 `mousedown` 链路一起摁死了。
+   正确做法是让透明热区**盖在 input 上面**截获指针，input 保留但不再参与拖动手势。
+
+**实测（改后，OS 级真鼠标 `mouse_event`，不是 CDP 合成）**：
+
+| 落点（相对滑块中心） | 命中元素 | 结果 |
+| --- | --- | --- |
+| 0（正中） | `.music-vol-drag` | 0.87 → 0.10 ✔ |
+| −10 / −14 | `.music-vol-drag` | 0.10 → 0.91 ✔ |
+| +10 / +14 | `.music-vol-drag` | 0.91 → 0.10 ✔ |
+
+交替方向连做五轮全部生效且 `vis=visible`（没有被误收），主进程回读 `musicGet().volume` 与滑块一致。
+
+**自检**：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；
+`node scripts/e2e-music.mjs` **PASS 46 过 / 0 败**（U3b 已改写为「可拖命中 ≥20px 且热区盖住滑块」）、
+`node scripts/e2e-music-session.mjs` PASS 20/0、`node scripts/e2e-head-order.mjs` PASS 14/0、
+`node scripts/e2e-beautify-04.mjs` PASS 27/0。
+
+**未核验**：①真机触摸/触摸板手势（只用 OS 鼠标 `mouse_event` 与 CDP 合成验过）；
+②其它播放器（网易云 / QQ 音乐）下的落地点手感是否一致；③高分屏不同 DPI 缩放下的换算误差。
