@@ -805,8 +805,44 @@ function ShelfPanel(): React.JSX.Element {
     return () => ro.disconnect()
   }, [view, updateCanScroll])
 
+  // 滚轮滚动：竖向滚轮转成横向滚（用户 m01366「支持滚轮滚动」）。
+  // 必须用原生 addEventListener + passive:false，React 的 onWheel 是 passive 的，preventDefault 会被忽略。
+  // 依赖里必须带 items.length：首帧 items 还是空数组时 .shelf-strip 根本没渲染，ref 是 null，
+  // 只依赖 [view] 会让这个 effect 永远拿不到节点、滚轮监听压根没挂上（2026-11-16 实测踩到）。
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      const max = el.scrollWidth - el.clientWidth
+      if (max <= 1) return
+      const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+      if (delta === 0) return
+      e.preventDefault()
+      // 到两端继续滚就绕回另一头（用户 m01366「左右两边的滚动循环」）
+      let next = el.scrollLeft + delta
+      if (next > max) next = 0
+      else if (next < 0) next = max
+      el.scrollLeft = next
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [view, items.length])
+
+  /** 两侧箭头：到头再点一次就绕到另一头（循环，用户 m01366 要求） */
   const scrollBy = (dir: number): void => {
-    scrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' })
+    const el = scrollRef.current
+    if (!el) return
+    const max = el.scrollWidth - el.clientWidth
+    if (max <= 1) return
+    if (dir > 0 && el.scrollLeft >= max - 1) {
+      el.scrollTo({ left: 0, behavior: 'smooth' })
+      return
+    }
+    if (dir < 0 && el.scrollLeft <= 1) {
+      el.scrollTo({ left: max, behavior: 'smooth' })
+      return
+    }
+    el.scrollBy({ left: dir * 220, behavior: 'smooth' })
   }
 
   useEffect(() => {

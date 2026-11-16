@@ -1186,7 +1186,10 @@ body {
 
 /* 横向滚动区：图标视图一排放不下时左右滚。
    max-width 是关键：不限制的话 nowrap 行的自然宽度会把整个岛（width:max-content）撑到 720 上限，
-   内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发 */
+   内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发。
+   2026-11-16 用户 m01366「显示太多了，4个最多」：宽度按「正好放下 4 格」算，
+   多出来的格子靠左右箭头（首尾循环）和滚轮查看。
+   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ lg 380 / md 300 / sm 236。 */
 .shelf-hscroll {
   display: flex;
   align-items: center;
@@ -1198,10 +1201,18 @@ body {
 .shelf-strip {
   flex: 1;
   min-width: 0;
-  max-width: 460px;
+  max-width: 380px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+}
+
+.shelf-drop.md .shelf-strip {
+  max-width: 300px;
+}
+
+.shelf-drop.sm .shelf-strip {
+  max-width: 236px;
 }
 
 .shelf-strip::-webkit-scrollbar {
@@ -1234,6 +1245,10 @@ body {
 .shelf-cell {
   position: relative;
   width: 84px;
+  /* 不许被 flex 压缩（2026-11-16 用户 m01366「显示太多了，4个最多」）：
+     网格是 flex + nowrap，子项默认 flex-shrink:1，容器一窄就把每格压扁、
+     一屏反而塞进 6~8 个。锁定格子宽度后，「一屏 4 个」才真正成立。 */
+  flex: none;
 }
 
 .shelf-cell-body {
