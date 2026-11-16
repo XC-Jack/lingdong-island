@@ -311,3 +311,9 @@ U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-s
 1. **网易云不响应 SMTC seek**：`musicControl({cmd:'seek'})` 返回 `ACK=true`（桥接层 `TryChangePlaybackPositionAsync` 真的返回 true），但连采 45 秒 `position` 恒为 0、歌名未变 ⇒ SMTC 层谎报成功。所以点进度条后**只有我们自己的钟跳过去**，播放器本身不会真跳。这是网易云自身缺陷，不是本轮改动能修的。
 2. 汽水音乐等正常报时间轴的播放器本轮未复测切页场景（其 position 由播放器提供，理论上不受模块钟影响）。
 3. 安装版仍未重新打包，用户机器上跑的是 `3a68dff` 那版（不含任何歌词功能）。
+
+### 10.6 第二十轮补记（2026-11-16 22:05，e2e 断言口径修正）
+
+`scripts/e2e-music.mjs` 的 U4b 原来拿主进程快照 `musicGet().position` 当对齐基准。网易云**从不向系统上报进度**（`position` 恒 0），界面上显示的是我们自己按墙钟算的秒数，于是「界面高亮在第 34 行、快照说还在 0 秒」被误判成错位（实测输出 `{"pos":0,"expectIdx":-1,"activeIdx":0,"beforeFirstLine":true}`）。
+
+改成以**界面显示的 `.music-time` 左端**为基准（新增 `shownSec`，取不到才回退快照），并把上面那段「快照外推」的过时注释改准。改后 `e2e-music` PASS 44 过 / 0 败 / 2 跳过。

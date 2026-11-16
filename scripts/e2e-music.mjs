@@ -564,11 +564,18 @@ try {
           };
         })()`)
         const state = await islandEval(`window.island.musicGet().then((s) => ({ pos: s.position, canSeek: s.canSeek === true }))`)
-        const pos = Number(state?.pos ?? -1)
-        // 渲染层为了让歌词跟着人声平滑走，会在两次快照之间按真实流逝时间外推（最多超前 1.2 秒，
-        // 见 src/renderer/src/App.tsx 的 liveBaseRef）。而这里的 pos 是主进程快照，本身落后于
-        // 界面上的插值，所以允许高亮行落在「快照对应行」到「快照 + 外推上限对应行」之间，
-        // 再往前就是真错位了。
+                // 对齐基准取界面上显示的那个时间（`.music-time` 左端），不能只用主进程快照：
+        // 网易云从不向系统上报进度（position 恒 0），界面显示的是我们自己按墙钟算的秒数，
+        // 拿快照当基准会把本来正确的高亮判成错位（用户 m06607 那一轮就这么误报过一次）。
+        const shownSec = await islandEval(`(() => {
+          const t = document.querySelector('.music-time');
+          const parts = t ? t.textContent.trim().split(':') : [];
+          return parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : null;
+        })()`)
+        const pos = typeof shownSec === 'number' ? shownSec : Number(state?.pos ?? -1)
+        // 屏幕上那句亮的是按「界面显示时间」算的，这里就以它为基准（上面刚取的 shownSec）。
+        // 允许往前多算一行（+1.6 秒）：渲染层为了让歌词跟着人声平滑走，会按真实流逝时间
+        // 略微超前（见 src/renderer/src/App.tsx 的 progressClock / liveBaseRef），再往前才是真错位。
         const expectIdx = align ? align.times.filter((t) => t <= pos + 0.3).length - 1 : -1
         const aheadIdx = align ? align.times.filter((t) => t <= pos + 1.6).length - 1 : -1
         const activeIdx = align ? align.times.indexOf(align.activeTime) : -1
