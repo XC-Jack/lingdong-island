@@ -2530,8 +2530,12 @@ div.pm-row[draggable='true'] {
   opacity: 1;
   pointer-events: auto;
 }
+/* 用户 m03141「音量建无法拖动」：根因是本机实测命中宽度只有 11px（.app 上 zoom:.75 后的
+   视觉宽度），真人瞄 3px 宽的可见轨道时横向偏 6px 就落到 .music-vol-pop 上，
+   按下不落在 input 上 → 拖不动。这里把 input 的盒子加宽到 28px（轨道仍 3px、视觉不变），
+   多出来的两侧是透明热区；同时 touch-action:none 让指针拖动不被手势识别打断。 */
 .music-vol-pop input[type='range'] {
-  width: 14px;
+  width: 28px;
   height: 84px;
   margin: 0;
   appearance: none;
@@ -2540,6 +2544,7 @@ div.pm-row[draggable='true'] {
   direction: rtl;
   background: transparent;
   cursor: pointer;
+  touch-action: none;
 }
 .music-vol-pop input[type='range']::-webkit-slider-runnable-track {
   width: 3px;
@@ -2548,9 +2553,9 @@ div.pm-row[draggable='true'] {
 }
 .music-vol-pop input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
-  margin-left: -3.5px;
+  width: 12px;
+  height: 12px;
+  margin-left: -4.5px;
   border: none;
   border-radius: 50%;
   background: #ff8fa3;

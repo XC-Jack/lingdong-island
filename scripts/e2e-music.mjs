@@ -320,6 +320,22 @@ try {
       ok('U3 点喇叭后竖条显现且完整落在岛内（不被 overflow 裁）',
         popShown && popShown.visibility === 'visible' && popShown.inside === true && popShown.h > 60 && popShown.w < 60,
         JSON.stringify(popShown))
+      // 用户 m03141「音量建无法拖动」：3px 可见轨道若只占 11px 命中宽度，真人横向偏 6px
+      // 就按到浮层上、拖不动。这里用 elementFromPoint 量真实可点宽度做回归护栏。
+      const volHit = await islandEval(`(() => {
+        const i = document.querySelector('.music-vol-pop input[type="range"]');
+        if (!i) return null;
+        const r = i.getBoundingClientRect();
+        const y = r.top + r.height / 2;
+        const cxs = r.left + r.width / 2;
+        let hit = 0;
+        for (let dx = -30; dx <= 30; dx += 1) {
+          if (document.elementFromPoint(cxs + dx, y) === i) hit += 1;
+        }
+        return { boxW: Math.round(r.width), hitPx: hit };
+      })()`)
+      ok('U3b 音量滑块的透明热区够宽（可点命中 ≥20px，横向偏 10px 仍能按下）',
+        volHit && volHit.hitPx >= 20, JSON.stringify(volHit))
       // 收起，避免影响后续 M3/M4
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
       const lyricSlot = await islandEval(`(() => {

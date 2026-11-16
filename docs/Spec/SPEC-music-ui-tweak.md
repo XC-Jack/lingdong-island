@@ -7,7 +7,12 @@
 > **最新修订（2026-11-15 22:00，见第十节）**：用户 m02917「音量调节用不了，还有就是我要竖线调节，不要横线」。
 > 第九节中「音量由竖直改横向」这一条被**明确推翻**——诊断证实写入链路没坏、「用不了」是方向错配，
 > 音量已改回**竖直向上弹出**。第九节其余结论（播放按钮居中、诚实歌词占位、负数剩余、控制行三列）继续有效。
-> **当前代码以第十节为准**：第一~八节的「按钮右上」、第九节的「横向音量」均为历史、不代表当前代码。
+>
+> **再修订（2026-11-16 10:20，见第十一节）**：用户 m03141「解决音量建无法拖动的问题」。
+> 第十节的「方向错配」判定**只对了一半**：写入链路确实没坏，但真因是**命中热区只有 11px**——
+> 3px 可见轨道两侧各只剩约 4px 余量，真人横向偏一点就按在浮层背景上，表现为拖不动。
+> 已把 input 盒子加宽到 28px（轨道仍 3px、视觉不变，两侧为透明热区）+ `touch-action:none`，并加 `U3b` 回归护栏。
+> **当前代码以第十一节为准**：第十节的 `width:14px` 已被 `width:28px` 取代。
 
 - 基线：`main` @ `5a855b9`
 - 分支：`music-ui-tweak`
@@ -165,3 +170,46 @@
 7. [已核验] `vision_describe` 看展开态真实画面：喇叭在下方靠右、上方弹出竖直滑块浮层、竖条完整可见未被裁掉一截、未超出面板；三个播放按钮居中成行。浮层与上方内容「轻微重叠」是弹出层盖在内容之上的正常表现（点开才显现、收起即恢复），几何 `popInside=true` 已确认不越界。
 8. [未核验] 真人预览版观感：竖直拖动手感、浮层向上弹出的位置是否合意、真实播放器下的整体相似度。只有真人能验，待用户试预览版确认。
 9. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机；安装版仍是第 1+2 批产物。合并与打包各需用户单独授权。
+
+## 十一、音量滑块「拖不动」根因定位与热区修复（2026-11-16，用户 m03141「解决音量建无法拖动的问题」）
+
+### 缘起与结论
+
+1. 用户 m03141 报「音量建无法拖动」。上一轮第十节把音量改竖直后，当时判定「写入链路没坏、是方向错配」，**该判定不完整**：竖直方向确实能拖，但要求鼠标落在极窄的一条上。
+2. 排查方法：全部用**真 OS 鼠标**（`SetCursorPos` + `mouse_event`），而不是 CDP 注入，避免注入路径掩盖命中问题。造真实 SMTC 会话用 `scripts/e2e-music-session.mjs` 的 `SCENE_PS1` 那段 PowerShell（`Windows.Media.Playback.MediaPlayer` 放静音 wav）。
+3. [已核验] **安装版（`d04b4e5` 产物，横向旧条）真鼠标能拖且落地**：`GEOM` 里 `input 69×11`、中心左右 ±20px 全部 `elementFromPoint` 命中 `INPUT`；右→左 `1→0.06`、左→右 `0.06→0.92`，DOM 值 / 百分比文本 / 主进程 poll 快照三者一致。⇒ 「物理拖不动」在安装版不成立。
+4. [已核验] **分支竖直条真鼠标也能拖且落地**：`probe-drag3.mjs` 三组拖动 `DOWN_TO_UP 0.91→1`、`UP_TO_DOWN 1→0.01`、`MID_TO_UP 0.01→1`，同样三者一致；`probe-slowdrag.mjs` 跨 3 次 1s poll 的 3.6 秒慢拖 `backJumpCount:0`、`inputEventCount:57`，**「松手被 poll 快照弹回」这条被排除**。
+5. [已核验] **真根因是命中宽度只有 11px**：`.tmp/probe-hitdrag.mjs` 沿输入框中心 X 轴逐像素 `elementFromPoint` 扫描，得到
+   `GEOM={"input":{"x":319,"y":33,"w":11,"h":63},"hitOffsets":[-5,5,11],"scan":[..."-6:DIV.music-vol-pop","-5:INPUT"..."5:INPUT","6:DIV.music-vol-pop"...]}`
+   ⇒ 可点宽度 = 11px（`-5..+5`）；`.app` 上还有 `zoom:.75`，视觉上 3px 轨道两侧各只剩约 4px 余量。随后真 OS 鼠标四次拖动：中心 `dx=0` 命中，**`dx=+10`、`dx=-10`、`dx=+18` 全部 `changed:false` 且 `active="DIV"`（焦点没落到 input）**。这与用户手感完全吻合：人眼瞄 3px 细线，横向偏一点就按在浮层背景上，看起来就是「拖不动」。
+6. [已核验] **不需要自己写 pointer capture**：`.tmp/probe-drift.mjs` 斜向拖动，X 方向同时漂 +30px（远超输入框宽度），`DRIFT={"eventCount":41,"first":"0.01","last":"1","after":{"dom":"1","num":"100%","poll":1}}` ⇒ Chromium 原生 range 一旦在 input 上按下会隐式捕获指针，横向漂出也不中断。所以**只需扩大命中宽度**。
+
+### 修改范围（同一分支增量）
+
+| 文件 | 改动 |
+|---|---|
+| `src/renderer/src/styles.css` | `.music-vol-pop input[type='range']`：`width:14px` → `width:28px`（盒子加宽，轨道仍 3px、视觉不变，两侧多出的是透明热区）；新增 `touch-action:none`；`::-webkit-slider-thumb` 由 `10×10 / margin-left:-3.5px` 改为 `12×12 / margin-left:-4.5px`（视觉中心不变）。加中文注释说明根因与「透明热区」取舍 |
+| `scripts/e2e-music.mjs` | 新增 `U3b` 回归护栏：用 `elementFromPoint` 在输入框水平中线沿 `dx=-30..+30` 逐像素统计命中，断言 `hitPx >= 20` |
+| `docs/Spec/SPEC-music-ui-tweak.md` | 本节 |
+| `docs/状态.md` | 顶部新增一句话状态 |
+
+### 预期行为与验收
+
+1. 音量竖条可见宽度不变（轨道仍 3px、浮层宽度仍 < 60px），但真人在轨道左右偏 10px 内按下都能命中滑块。
+2. 命中宽度 ≥ 20px（`U3b` 护栏）；`U3` 的 `h>60 && w<60 && inside` 不回归。
+3. 拖动仍端到端落地：DOM 值、百分比文本、主进程 poll 三者一致，跨 poll 不回弹。
+4. `canVolume===false` 仍置灰 + `disabled` + `--`（第 1 批行为不回归）。
+5. `U1/U4/U5`、`M2i/M2l/M3/M4/M5`、会话版 `S1–S19` 全不回归。
+
+### 自检记录（本轮热区修复，2026-11-16）
+
+1. [已核验] 修复前基线（重启预览后）`.tmp/probe-hitdrag.mjs`：`GEOM={"input":{"x":319,...,"w":11,...,"hitOffsets":[-5,5,11]}`；`DRAGS` 中 `PLUS10/MINUS10/PLUS18` 均 `changed:false`、`active:"DIV"`。
+2. [已核验] `npm run typecheck` 两段（node/web tsc）无输出通过。
+3. [已核验] `npm run build` EXIT=0（`✓ built in 147ms`；`out/renderer/assets/index-B4yi3lAK.css 64.26 kB`、`index-DWeI-30V.js 108.22 kB`、`vendor-DeLoXG_s.js 564.37 kB`）。
+4. [已核验] 修复后重启预览（`Get-Process electron | Stop-Process -Force` 再起 `node_modules\electron\dist\electron.exe . --remote-debugging-port=9321`，否则跑的是旧内存样式），再跑 `.tmp/probe-hitdrag.mjs`：
+   `GEOM={"input":{"x":314,...,"w":21,...,"hitOffsets":[-11,10,22],"scan":[... "-12:DIV.music-vol-pop","-11:INPUT" ... "10:INPUT","11:DIV.music-vol-pop" ...]}` ⇒ **命中点数 11 → 22（约 21~22px）**；
+   `DRAGS`：`PLUS10 {after dom:"1",num:"100%",poll:1,active:"INPUT",changed:true}`、`MINUS10 {同上,changed:true}`、`PLUS18 {changed:false,active:"DIV"}` ⇒ 原先按不到的 ±10px 现在都能拖到顶，±18px 仍在外侧（预期边界）。
+5. [已核验] `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**，含新增 `U3b 音量滑块的透明热区够宽（可点命中 ≥20px…）`，`U3` 及 `M1–M5` 全不回归。
+6. [已核验] `node scripts/e2e-music-session.mjs` → **PASS（20 过 / 0 败）**。首跑曾 FAIL 1 条（`S2 PLAYING_IDX=0`），原因是上一轮遗留的假会话场景进程还在（同时存在 4 个会话，播放中那个恰好排在索引 0），杀掉残留 PowerShell 后重跑即 PASS；**不是产品回归**。
+7. [未核验] 真人对修复后的手感：需要用真实播放器（汽水音乐）在预览版或装机版上亲手拖一次，确认「偏一点也能拖」符合预期。
+8. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机。
