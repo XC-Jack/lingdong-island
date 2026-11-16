@@ -102,15 +102,23 @@ body {
 }
 
 .island.expanded {
-  /* 固定尺寸（2026-11-11 用户要求「不希望添加任务会拉伸界面，通知页和待办页也一样」）。
-     原来是 width/height: max-content + min/max 区间，内容多了岛就长高、日程页还比别的页宽 100px，
-     翻页和加条目时整块跟着跳。现在各页统一尺寸，内容超出就在列表内部滚动。
-     布局 px（zoom 0.75 之后视觉 330×189）；主进程 EXPANDED_MIN/MAX 与 expandedSize 按此同步。 */
+  /* 尺寸随内容自适应（2026-11-16 用户 m00791/m00795 推翻 2026-11-11 的固定尺寸决定）：
+     用户原话「下面的空间就是一块黑布……希望它可以根据里面的东西自行伸缩空间，当然也要有最大的范围」
+     「高度宽度都可以自适应」「达到最大限度，内容可以继续往里面放，通过滚轮查看，只显示 3 条」。
+     所以恢复成 max-content + min/max 夹逼：内容少就收（去掉空黑块），内容多就长，到上限为止，
+     超出上限的部分在列表内部滚动。
+     数值换算：这棵树在 .app 上 zoom:0.75，这里写布局 px。
+     布局 420~720 × 220~420 = 视觉 315~540 × 165~315，与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，
+     改一边必须同步改另一边（src/main/index.ts:40-43）。 */
   flex-shrink: 0;
-  /* 高度 320 而不是按 0.75 等比（252）：日程页日历要放表头 + 6 行日期 + 内边距，
-     252 布局 px 下日历底部会被裁掉。320 是实测「日历刚好完整显示（calCH=calSH=203）」的最小值。 */
-  width: 470px;
-  height: 320px;
+  width: max-content;
+  min-width: 300px;
+  max-width: 720px;
+  height: max-content;
+  min-height: 150px;
+  /* 上限 420 布局 px（=视觉 315）沿用主进程 EXPANDED_MAX.height。
+     日程页日历要表头 + 6 行日期 + 内边距，2026-11-11 实测完整显示需要 320 布局 px 高，420 有余量。 */
+  max-height: 420px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -780,6 +788,9 @@ body {
 .todo-list {
   flex: 0 1 auto;
   min-height: 0; /* 父级收缩链贯通后这里才能真的滚起来（US-037） */
+  /* 2026-11-16 用户 m00795：「只显示 3 条」，再多就靠滚轮在这条列表里看。
+     一行 34 布局 px + 6px 行距 ⇒ 3 条 = 34*3 + 6*2 = 114 布局 px（≈85 视觉 px）。 */
+  max-height: 114px;
   list-style: none;
   overflow-y: auto;
   scrollbar-width: none; /* Firefox 写法，Chromium 121+ 也支持 */
@@ -918,6 +929,9 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 岛宽改成随内容自适应后（2026-11-16），nowrap 长文本的 max-content 会一路把岛顶到
+     max-width 720。给个上限，让长文本照旧省略号截断，而不是把岛撑宽。 */
+  max-width: 300px;
 }
 
 .todo-del {
@@ -1103,14 +1117,16 @@ body {
 }
 
 /* 列表视图：列表本体限高内滚——shelf-drop 高度随内容自然增长时 overflow-y 永远不触发，
-   必须给列表一个确定的 max-height（高于 4 项后滚动），岛高上限交给主进程 clamp */
+   必须给列表一个确定的 max-height，岛高上限交给主进程 clamp。
+   2026-11-16 用户 m00795「只显示 3 条」：一行 34 布局 px + 6px 行距 + 列表自身 8px 上下内边距
+   ⇒ 3 条 = 34*3 + 6*2 + 8*2 = 130 布局 px（≈98 视觉 px），第 4 条起在列表内滚动。 */
 .shelf-drop.list {
   display: block;
   overflow: visible;
 }
 
 .shelf-drop.list .shelf-list {
-  max-height: 288px;
+  max-height: 130px;
 }
 
 .shelf-drop.over {
@@ -1490,6 +1506,10 @@ body {
   width: 100%;
   flex: 0 1 auto;
   min-height: 0; /* 收缩链贯通后通知多了在岛内滚动（US-037） */
+  /* 2026-11-16 用户 m00795「只显示 3 条」：通知行最高 40 布局 px + 6px 行距
+     ⇒ 3 条 = 40*3 + 6*2 = 132 布局 px（≈99 视觉 px），第 4 条起在列表内滚动。
+     实测 40.4px 的行加 2px 内边距后 132 只能露出 2 条，抬到 136 保证 3 条稳定可见。 */
+  max-height: 136px;
   overflow-y: auto;
   scrollbar-width: none; /* 不显示滚动条，与待办/日程列表一致（US-037） */
   display: flex;
@@ -2013,12 +2033,25 @@ body {
   gap: 1px;
 }
 
+/* 应用名与标题同排（2026-11-16 用户 m00795「只显示 3 条」）：
+   原来应用名单独占一行，没图标的条目因此比有图标的高一行（54 vs 40 布局 px），
+   行高不一致时固定 max-height 会把第 3 条切掉。同排后两种条目行高一致。 */
+.notify-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
 .notify-app {
+  flex: none;
   font-size: 10px;
   color: #9f8bff;
 }
 
 .notify-title {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   line-height: 1.35;
   color: #f2f3f5;

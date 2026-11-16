@@ -1344,10 +1344,15 @@ function NotifyPanel({
                 >
                   {renderIcon(g.icon, g.app, g.list.length)}
                   <span className="notify-main">
-                    {!g.icon && <span className="notify-app">{g.app}</span>}
-                    <span className="notify-title">
-                      {latest.title}
-                      {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
+                    {/* 应用名与标题同排（2026-11-16 用户 m00795「只显示 3 条」）：
+                        原来应用名单独占一行，导致没图标的条目 3 行、有图标的 2 行，
+                        行高不一致时按固定高度裁切会切掉第 3 条。同排后行高统一。 */}
+                    <span className="notify-line">
+                      {!g.icon && <span className="notify-app">{g.app}</span>}
+                      <span className="notify-title">
+                        {latest.title}
+                        {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
+                      </span>
                     </span>
                     {latest.body && <span className="notify-text">{latest.body}</span>}
                   </span>
@@ -1365,8 +1370,10 @@ function NotifyPanel({
                         >
                           {renderIcon(it.icon, it.app, 1)}
                           <span className="notify-main">
-                            {!it.icon && <span className="notify-app">{it.app}</span>}
-                            <span className="notify-title">{it.title}</span>
+                            <span className="notify-line">
+                              {!it.icon && <span className="notify-app">{it.app}</span>}
+                              <span className="notify-title">{it.title}</span>
+                            </span>
                             {it.body && <span className="notify-text">{it.body}</span>}
                           </span>
                         </button>
