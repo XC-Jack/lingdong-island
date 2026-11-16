@@ -2006,14 +2006,61 @@ function MusicPanel(): React.JSX.Element {
    * 让当前那句始终停在歌词栏正中：每句平均约 20~30 布局 px 高，
    * 用 scrollTop = 行顶 − 容器一半 + 行高一半 让它居中，行为 smooth。
    * 不用 scrollIntoView —— 那会把外层岛一起滚。
+   *
+   * 用户 m05419「一条一条出来，不是 txt 这样揉成一团」之后歌词区变高了，
+   * 靠 scrollTop 计算在容器尺寸刚变（开合歌词栏 / 岛展开收起）时用的是旧 clientHeight，
+   * 结果当前行跑到框外。改成「先量容器和行的实际矩形，按差值补一次」，
+   * 并且首帧/尺寸变化时用 auto（立即到位），之后切句仍走 smooth。
    */
   useEffect(() => {
     const box = lyricScrollRef.current
     const row = lyricActiveRef.current
     if (!box || !row) return
-    const target = row.offsetTop - box.clientHeight / 2 + row.clientHeight / 2
-    box.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
-  }, [lyricActive])
+    /**
+     * 按实际矩形把当前行推到正中。做两遍：第一遍滚过去之后，
+     * 当前行字号变化（12→15）会让各行高度重新排布，位置会偏半行，
+     * 第二遍按实测差值补正。差值 <2px 就不动了，避免抖动。
+     */
+    const align = (smooth: boolean): void => {
+      for (let pass = 0; pass < 2; pass += 1) {
+        const boxRect = box.getBoundingClientRect()
+        const rowRect = row.getBoundingClientRect()
+        if (boxRect.height <= 0 || rowRect.height <= 0) return
+        const delta = rowRect.top + rowRect.height / 2 - (boxRect.top + boxRect.height / 2)
+        if (Math.abs(delta) < 2) return
+        box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: smooth ? 'smooth' : 'auto' })
+        smooth = false
+      }
+    }
+    align(false)
+    const raf = requestAnimationFrame(() => align(false))
+    return () => cancelAnimationFrame(raf)
+  }, [lyricActive, lyricLines.length])
+
+  // 歌词栏开合 / 尺寸变化时重新把当前句摆到中间（此时刚 display:flex，高度是新的）
+  useEffect(() => {
+    if (!lyricOpen) return
+    const box = lyricScrollRef.current
+    if (!box) return
+    const align = (): void => {
+      const row = lyricActiveRef.current
+      if (!row) return
+      const boxRect = box.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      if (boxRect.height <= 0 || rowRect.height <= 0) return
+      const delta = rowRect.top + rowRect.height / 2 - (boxRect.top + boxRect.height / 2)
+      if (Math.abs(delta) < 2) return
+      box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: 'auto' })
+    }
+    const raf = requestAnimationFrame(align)
+    const timer = setTimeout(align, 260)
+    const timer2 = setTimeout(align, 700)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+      clearTimeout(timer2)
+    }
+  }, [lyricOpen])
 
   // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
   // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂

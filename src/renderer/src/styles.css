@@ -2394,6 +2394,12 @@ div.pm-row[draggable='true'] {
 }
 .music-panel.lyric-open .music-main {
   justify-content: flex-start;
+  /* 用户 m05419「这个范围都可以显示歌词，而且是像音乐软件那样，一条一条出来」：
+     右栏歌词区要一整块，不能再是 84px 小窗口。但 .music-main 高度是 auto，
+     右栏 flex:1 会被内容撑到 786px、把岛顶到 max-height 再裁掉，
+     所以这里给主区一个确定高度（132 布局 px ＝ 视觉 99），左栏内容在里面居中、
+     右栏滚动区吃满这块高度 */
+  height: 168px;
 }
 /* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽。
    用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
@@ -2522,30 +2528,36 @@ div.pm-row[draggable='true'] {
   text-overflow: ellipsis;
 }
 
-/* 歌词滚动区：固定高度、只露几行，当前行滚到正中。
-   高度取 84（布局 px）＝与左栏封面+进度条那一块视觉高度接近，两栏不至于一高一矮 */
+/* 歌词滚动区：占满右栏剩下的一整块（不再只露 4 行）。
+   用户 m05419「以我截图的区域为参考，这个范围都可以显示歌词，而且是像音乐软件那样，
+   一条一条出来，不是 txt 这样揉成一团」——原来 max-height 写死 84px、行距 2px、字号 12px，
+   一行行挤在一个小窗口里像 txt。现在改成吃满高度 + 行距拉开（见 .music-lyric-row） */
 .music-lyric-scroll {
-  max-height: 84px;
+  flex: 1 1 auto;
+  min-height: 168px;
+  max-height: none;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   padding-right: 2px;
   /* 上下渐隐，暗示还能往下滚，不显得像被裁断 */
-  mask-image: linear-gradient(180deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 .music-lyric-scroll::-webkit-scrollbar {
   display: none;
 }
 
-/* 一句歌词。平时灰、当前那句变白变粗并稍微放大一点点，不抢戏但能看清 */
+/* 一句歌词。平时灰、当前那句变白变粗并稍微放大一点点，不抢戏但能看清。
+   用户 m05419：要「一条一条出来」⇒ 字号 12→14、行高 1.45→1.5、行间 gap 2→6，
+   一行连间距占 27 布局 px（视觉 20），132 高的歌词区排得下 5 行，读起来是歌词不是 txt */
 .music-lyric-row {
   flex: 0 0 auto;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(242, 243, 245, 0.34);
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(242, 243, 245, 0.32);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2555,7 +2567,7 @@ div.pm-row[draggable='true'] {
 .music-lyric-row.active {
   color: #ffffff;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 15px;
   transform: scale(1.02);
 }
 

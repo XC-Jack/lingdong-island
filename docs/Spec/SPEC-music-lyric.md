@@ -46,3 +46,44 @@
 2. 不做歌词翻译、不做双语对照、不做卡拉 OK 逐字。
 3. 不做手动粘贴歌词的编辑界面（本轮不做，后续如需另开 SPEC）。
 4. 不改音量、进度、控制行等既有交互。
+
+## 七、实现记录与自检
+
+### 7.1 实现（提交 `243304b`，2026-11-16 19:10）
+
+1. 新增 `src/main/lyricStore.ts`：缓存键 = 歌名/歌手/专辑/时长 的 sha1；`userData/lyrics/<key>.json` 懒建；`/api/get` 精确查 → `/api/search` 打分（歌名 60/40、歌手 25/15、时长 20/12，差 >8 秒直接淘汰）→ 都失败就给具体原因。
+2. 只认 `syncedLyrics`：没有时间轴的歌词一律当没有（滚不起来反而误导）。
+3. `src/shared/types.ts` 加 `LyricLine` / `LyricResult` / `LyricQuery`；`src/preload/index.ts` 暴露 `lyricGet()`；`src/main/index.ts` 在 `setupMusicStore()` 后调 `setupLyricStore()`。
+4. 渲染层只在「歌词栏打开 + 有歌名」时查，换歌按 key 去重；当前行 = `time <= live + 0.15` 的最后一行；滚动用 `scrollTo`（不用 `scrollIntoView`，会把整岛一起滚）。
+
+### 7.2 第十五轮修正（2026-11-16 19:20，用户 m05419）
+
+用户原话：「以我截图的区域为参考，这个范围都可以显示歌词，而且是像音乐软件那样，一条一条出来，不是txt这样揉成一团」。
+
+改前实测：歌词滚动区只有 `84px`（视觉 63px）、行高 13.1、字号 12px，一屏 4 行且挤在一起。
+
+改动：
+
+1. `.music-lyric-scroll`：`max-height:84px` → `flex:1 1 auto; min-height:168px; max-height:none; gap:6px`。
+2. `.music-lyric-row`：字号 `12px → 14px`、`line-height 1.45 → 1.5`、未选中色 `0.34 → 0.32`；`.active` `12.5px → 15px`。
+3. `.music-panel.lyric-open .music-main` 加 `height:168px`（布局 px，视觉 126）——**必须给确定高度**，否则 `.music-main` 是 auto，右栏会被 39 行歌词撑到 786px，岛顶到 max-height 后整块被裁掉（实测 `ctlRow.y=853.2` 跑到岛外）。
+4. 居中算法重写：原来的 `row.offsetTop - box.clientHeight/2 + row.clientHeight/2` 用的是旧 `clientHeight`，开栏瞬间/字号变化后实测偏移 −59.4 与 +54.9 px。改成按 `getBoundingClientRect` 求「行中心 − 框中心」的差值再补，循环两遍；另加一个 `[lyricOpen]` 的 effect，在 `rAF` / `260ms` / `700ms` 各对一次。
+
+改后实测（`.tmp/lyric-measure.mjs`、`.tmp/lyric-center3.mjs`）：岛 `401.4×268.6`、`main/side/slot/scroll` 高均 126（视觉）、`rowCount 39`、`rowH 15.8`、`rowFS 14px`、`visibleRows 5`；当前行中心偏移 `NOW 1.2` / `SEEK90 1.4` / `SEEK150 -0.8` / `SEEK210 -0.8`。
+
+### 7.3 自检
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 类型 | `npm run typecheck` | EXIT=0（node + web 两个 project） |
+| 构建 | `npm run build` | EXIT=0 |
+| 歌词 e2e | `node scripts/e2e-music.mjs` | PASS 48 过 / 0 败（U4/U4b/U4c 全绿） |
+| 会话 e2e | `node scripts/e2e-music-session.mjs` | PASS 20 过 / 0 败 |
+| 页头 | `node scripts/e2e-head-order.mjs` | PASS 14 过 / 0 败 |
+| 美化 | `node scripts/e2e-beautify-04.mjs` | PASS 27 过 / 0 败 |
+
+### 7.4 未核验
+
+1. 真人观感（滚动动画是否顺滑、字号是否合适）——只有本机开发实例截图，等用户验收。
+2. 安装版：本轮之后未重新打包装机，安装版里仍是只有「暂无歌词」占位的那版。
+3. 长歌词（几百行）时的滚动性能与内存——本次样本 39 行，未做压测。
