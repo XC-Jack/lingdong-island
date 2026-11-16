@@ -74,7 +74,21 @@
 3. 展开态实测：`island{w:255,h:170.3}`、`head{minH:58px,h:43.5}`、`status{w:99.1,h:42.8}`、`pet{w:21}`、`clock{fs:17.5px,fw:800}`、`ring{w:20.3,numFs:10.5px}`、`wifi{w:13.5}`、`bell{w:13.5}` —— **两态字体、字重、图标、电量环完全一致**。
 4. `e2e-head-order` PASS 14/0（H5a 转绿）、`e2e-banner-fit` PASS 8/0、`e2e-code-hint` 10/0、`e2e-collapse-order` PASS 22/0、`e2e-collapse-beautify` 7/0、`e2e-beautify-04` 27/0、`e2e-settings-shell` PASS 51/0、`e2e-pages-custom` 6 项、`e2e-bell-notify` 15/0、`e2e-todo-today` PASS、`e2e-notify-compact` 2/0、`e2e-schedule-day` PASS、`e2e-music` PASS 38/0。
 
-## 八、实现记录
+## 八、第三轮（用户 m02546「每个界面的左上角的也统一一下」）
+
+用户发了通知页左上角局部图（灰色圆角方块 + 铃铛图标 + 「通知」二字），要求各页左上角也跟头部状态区统一。
+
+1. `.panel-badge`（页头彩色徽章）：`26×26 → 30×30`、圆角 `9 → 11px`、内图标 `svg 15 → 17px`。
+2. `.panel-title`（页头标题）：`font-size 14 → 16px`、`font-weight 600 → 800`、颜色 `rgba(242,243,245,.92) → #ffffff`，与状态区时钟同一档字重与纯度。
+3. **展开态宽度下限 340 → 380 布局 px**（主进程 `EXPANDED_MIN.width` 270 → 285）：逐页实测「置物架」三字标题在 340 时标题右缘越过状态区左缘 6.9 视觉 px（`e2e-head-order` 只测待办页所以没报），360 时仍差 0.6 视觉 px，最终定 380，置物架页留 8.1 视觉 px 余量。
+
+第三轮自检：
+
+1. `npm run typecheck` EXIT=0、`npm run build` EXIT=0。
+2. 逐页实测（CDP，六页各量一次）：标题 `16px/800/rgb(255,255,255)`、徽章 `22.5×22.5`（布局 30×30 经 0.75 缩放）、圆角 `11px`、内图标 `12.8`（布局 17）。各页「标题右缘 → 状态区左缘」间距：音乐 29.6、通知 84.9、日程 74.2、待办 20.1、置物架 8.1，**六页全部无重叠**。
+3. 全量 e2e：`head-order` 14/0、`beautify-04` 27/0、`banner-fit` 8/0、`code-hint` 10/0、`collapse-order` 22/0、`collapse-beautify` 7/0、`bell-notify` 15/0、`todo-today` PASS、`pages-custom` 6 项、`settings-shell` 51/0、`schedule-day` PASS、`notify-compact` 2/0、`music` 38/0（首跑 1 败，清 `.tmp/e2e-userdata` 后重跑 PASS，是残留数据不是回归）。
+
+## 九、实现记录
 
 | 项 | 改前 | 改后 |
 | --- | --- | --- |

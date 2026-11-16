@@ -115,12 +115,14 @@ body {
      数值换算：这棵树在 .app 上 zoom:0.75，这里写布局 px。
      2026-11-16 晚（用户 m01634 第二轮「里面的要和外面的统一一下，还可以再大一点」）：
      头部状态区放大到 27px 电量环 + 17.5px 时钟后横向吃掉约 132 布局 px，居中后左缘压到
-     标题右缘（e2e-head-order 的 H5a 报 overlapTitle=true）。所以 min-width 300→340，
-     给两侧各留出约 17 布局 px 余量。布局 340~720 × 150~420 = 视觉 255~540 × 113~315，
+     标题右缘（e2e-head-order 的 H5a 报 overlapTitle=true）。所以 min-width 300→340。
+     随后用户 m02546「每个界面的左上角的也统一一下」把页头徽章 26→30、标题 14→16/800，
+     逐页实测「置物架」这种三字标题在 340 时仍差 9 布局 px（gap -6.9 视觉 px），再提到 360。
+     布局 380~720 × 150~420 = 视觉 285~540 × 113~315，
      与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，改一边必须同步改另一边（src/main/index.ts:40-45）。 */
   flex-shrink: 0;
   width: max-content;
-  min-width: 340px;
+  min-width: 380px;
   max-width: 720px;
   height: max-content;
   min-height: 150px;
@@ -606,12 +608,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标） */
+/* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标）。
+   2026-11-16 用户 m02546「每个界面的左上角的也统一一下」：头部状态区放大后（时钟 17.5px/800、
+   电量环 27px），左上角徽章 26 与标题 14px/600 显小一圈，逐项提一档：
+   徽章 26→30、圆角 9→11、内图标 15→17；标题 14px/600 → 16px/800 且改纯白，
+   与状态区同一档而不是同一像素值（标题是文字块，和图标不必等宽）。 */
 .panel-badge {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  border-radius: 9px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -621,14 +627,14 @@ body {
 }
 
 .panel-badge svg {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
 }
 
 .panel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(242, 243, 245, 0.92);
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
 }
 
 /* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。

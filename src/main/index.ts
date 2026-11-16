@@ -42,8 +42,9 @@ let collapsedWidth = 168
 //    styles.css 的 .island.expanded 改成 width/height:max-content + min/max 上下限。
 //    布局 340~720 × 150~420 与这里 0.75 缩放后的 {255,113}~{540,315} 一一对应，
 //    改一边必须同步改另一边。（宽度下限 2026-11-16 晚由 300 抬到 340：头部状态区放大后
-//    居中会压到左侧标题，e2e-head-order 的 H5a 报 overlapTitle=true。）
-const EXPANDED_MIN = { width: 255, height: 113 }
+//    居中会压到左侧标题，e2e-head-order 的 H5a 报 overlapTitle=true。随后用户 m02546
+//    要求统一各页左上角，徽章 26→30、标题 14→16/800，三字标题页仍差 9 布局 px，再抬到 380。）
+const EXPANDED_MIN = { width: 285, height: 113 }
 const EXPANDED_MAX = { width: 540, height: 315 }
 /** 展开态当前尺寸（渲染层量出来的；初始值只用于首帧开窗，随后被 ResizeObserver 纠正） */
 let expandedSize = { width: 353, height: 240 }
