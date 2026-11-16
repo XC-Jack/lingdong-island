@@ -11,13 +11,20 @@ import type { LyricLine, LyricQuery, LyricResult } from '../shared/types'
  * 没有歌词字段；汽水音乐的 LunaCacheV2 是私有压缩二进制，解不开、也随版本失效。
  * 所以歌词只能另外去公开歌词库查。
  *
- * 为什么用 lrclib.net：公开、免费、不用注册也不用 key，直接 GET 就返回 JSON，
- * 而且带 LRC 时间轴（`syncedLyrics`），正好能对上进度滚动。
+ * 为什么首选网易云自己的公开接口（用户 m05794「我现在播的都是官方歌曲，你去找的歌词对不上，
+ * 要不然就没有」）：
+ *   lrclib.net 是国外社区库，中文/韩文官方歌收录很差，还经常给「音译版」「翻唱版」
+ *   ——实测 TAEYANG《눈, 코, 입》lrclib 给的是罗马音，而网易云给的是原版韩文。
+ *   网易云网页版那套公开接口（`music.163.com/api/search/get/web` + `/api/song/lyric`）
+ *   不需要登录、不需要 key，返回的正是它自己客户端显示的歌词，且带 LRC 时间轴与准确时长。
+ *   实测 8 首里 6 首精确命中（含《Love Song/方大同》《美人鱼/林俊杰》《눈, 코, 입/TAEYANG》）。
+ * lrclib 保留为备用：网易云没搜到（小众、外语、纯音乐）时再试一次。
  *
- * 三级降级（用户 m05013「可以按你的来」已确认）：
+ * 四级降级（用户 m05013「可以按你的来」已确认联网）：
  *   1. 本地缓存优先——`userData/lyrics/*.json`，断网可用、秒出、不再联网；
- *   2. 没有就联网查 lrclib（只在换歌时查一次，只发 歌名/歌手/专辑/时长 四个字段）；
- *   3. 都拿不到就返回 ok=false + 一句具体原因，界面显示「暂无歌词」。
+ *   2. 没有就联网查网易云（只在换歌时查一次，只发 歌名/歌手 两个字段）；
+ *   3. 网易云没拿到再查 lrclib；
+ *   4. 都拿不到就返回 ok=false + 一句具体原因，界面显示「暂无歌词」。
  *      **任何情况下都不编造歌词文本**——这是 SPEC 里写死的红线。
  */
 
@@ -27,14 +34,26 @@ const FETCH_TIMEOUT_MS = 6000
 const DURATION_TOLERANCE = 8
 
 const LRC_API = 'https://lrclib.net/api'
+/** 网易云网页版公开接口（无需登录、无需 key，只读） */
+const NETEASE_API = 'https://music.163.com/api'
+/** 这两条请求头是网易云接口能正常返回结果的必要条件（缺 Referer 会被拒） */
+const NETEASE_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+  Referer: 'https://music.163.com/'
+}
 
 /**
- * 缓存格式版本。改了歌词解析逻辑就要 +1，让旧缓存整体失效。
+ * 缓存格式版本。改了歌词解析逻辑或换了数据源就要 +1，让旧缓存整体失效。
  *
- * 用户 m05794 那次：`parseLrc` 漏剥逐字时间标记 `<00:00.352>`，把陈年乱码写进了缓存文件；
- * 只改解析不改版本号的话，同一首歌永远读回那堆带尖括号的旧数据。
+ * 2：用户 m05794 那次——`parseLrc` 漏剥逐字时间标记 `<00:00.352>`，把陈年乱码写进了缓存文件。
+ * 3：歌词来源从 lrclib 换成网易云，且结果里多了 duration 字段；旧缓存里的罗马音/翻唱歌词
+ *    正是用户 m05794「你去找的歌词对不上」的来源，必须整体作废重查。
+ * 4：署名行过滤放宽（`[00:15.638]出品：网易飓风` 这种落在旧 15 秒窗口外），
+ *    旧缓存里还留着「出品/营销/OP」当歌词，正是用户 m06116「对不上」的一部分，整体作废。
+ * 5：补齐「营销/推广/版权/授权」等网易云常见的宣发署名前缀（v4 缓存里还漏了「营销：网易飓风」）。
  */
-const CACHE_VERSION = 2
+const CACHE_VERSION = 5
 
 /**
  * 把 歌名/歌手/专辑/时长 压成一个稳定缓存键。
@@ -98,11 +117,28 @@ function writeCache(key: string, result: LyricResult): void {
  *    行首 `[...]` 剥掉后，后面 `<00:00.352>` 这一串逐字标记被原样当成歌词文字显示出来。
  *    这些尖括号标记只标「这个字从第几秒开始唱」，对逐行滚动没用，全部删掉、保留字本身。
  */
+/**
+ * 哪些行是「创作人员名单」而不是唱出来的歌词。
+ *
+ * 网易云的 LRC 开头常常是 `[00:00.000] 作词 : xxx`、`[00:01.000] 作曲 : yyy`
+ * 这类署名行，时间戳还都挤在 0~3 秒。真实音乐软件不会把它们当歌词显示
+ * （用户 m06116「音乐字幕不会自己跟着音乐滚动」：这些行抢在最前面，前几十秒歌还没唱，
+ * 高亮就一直在这些署名上打转）。
+ * 只在**前 20 秒**内且**以这些后缀加冒号打头**时才丢，避免误删真歌词里的「词：…」句子。
+ * 「词」「曲」这类单字前缀太容易撞正文，所以额外用 BARE_CREDIT 把它限制在前 20 秒内；
+ * 「出品」「OP」这种特异前缀不限时间——实测网易云《红》的署名行时间戳是 `[00:15.638]`
+ * （四条同名时间），用户 m06116 报「歌词对不上」正是因为 15 秒窗口刚好把它们漏了。
+ */
+const CREDIT_RE =
+  /^(作词|作曲|编曲|作詞|作曲|制作人|製作人|出品|监制|監製|混音|母带|母帶|录音|錄音|配唱|和声|和聲|合声|吉他|貝斯|贝斯|鼓|键盘|鍵盤|弦乐|弦樂|口琴|钢琴|鋼琴|小提琴|大提琴|制作|製作|统筹|統籌|策划|策劃|企划|企劃|宣传|宣傳|营销|營銷|推广|推廣|发行|發行|版权|版權|授权|授權|词|曲|词曲|詞曲|OP|SP|ISRC)\s*[:：]/
+/** 单字前缀（词/曲），只在前 20 秒内认定为署名，避免误删正文里的「词：…」 */
+const BARE_CREDIT_RE = /^(词|曲|词曲|詞曲)\s*[:：]/
+
 function parseLrc(lrc: string): LyricLine[] {
   const out: LyricLine[] = []
   const timeRe = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g
   const wordRe = /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g
-  for (const rawLine of lrc.split(/\r?\n/)) {
+  for (const rawLine of lrc.split(/\r\n|\r|\n/)) {
     const line = rawLine.trim()
     if (!line) continue
     timeRe.lastIndex = 0
@@ -122,6 +158,10 @@ function parseLrc(lrc: string): LyricLine[] {
     // 先剥逐字标记再取文字：`<mm:ss.xxx>` 之间夹的是真正的字，只能删标记、不能丢整行
     const text = line.slice(lastEnd).replace(wordRe, '').trim()
     if (!text) continue // 时间标记后面没字（常见于纯间奏标记），丢掉
+    // 署名行（作词/作曲/出品/OP…）不是歌词，丢掉。
+    // 单字前缀（词/曲）只在前 20 秒内认定，其它特异前缀（出品/OP/编曲…）不限时间：
+    // 实测网易云《红》的 `[00:15.638]出品：网易飓风` 正好卡在旧的 15 秒窗口外面没被过滤掉。
+    if (CREDIT_RE.test(text) && (times[0] < 20 || !BARE_CREDIT_RE.test(text))) continue
     for (const t of times) out.push({ time: Math.round(t * 100) / 100, text })
   }
   out.sort((a, b) => a.time - b.time)
@@ -207,6 +247,111 @@ async function fetchJson(url: string): Promise<unknown | null> {
   }
 }
 
+/** 和 fetchJson 一样，只是带上网易云要求的两条请求头 */
+async function fetchNetease(url: string): Promise<unknown | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { ...NETEASE_HEADERS, Accept: 'application/json' }
+    })
+    if (!res.ok) return null
+    return (await res.json()) as unknown
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 网易云搜索结果里我们用得到的字段 */
+interface NeteaseSong {
+  id?: number
+  name?: string
+  /** 毫秒 */
+  duration?: number
+  artists?: { name?: string }[]
+}
+
+/** 网易云 `/api/song/lyric` 的返回结构里我们用得到的部分 */
+interface NeteaseLyricPayload {
+  lrc?: { lyric?: string }
+  /** 逐字歌词（YRC/KLYRIC），有的话时间轴更细，但我们按行滚动用 lrc 就够了 */
+  klyric?: { lyric?: string }
+  /** 翻译歌词，暂不使用（用户要的是原词跟着唱） */
+  tlyric?: { lyric?: string }
+}
+
+/**
+ * 查网易云：先按「歌名 歌手」搜，挑最像的一条，再取它的歌词。
+ *
+ * 挑哪条也用 scoreItem 那套打分（歌名/歌手/时长），保证不会拿同名不同歌的歌词糊上去。
+ * 返回里带上 `duration`，因为网易云播放器自己不报时长（用户 m05794 的进度条问题就靠它补）。
+ */
+async function lookupNetease(q: LyricQuery): Promise<LyricResult | null> {
+  const word = [q.title.trim(), q.artist.trim()].filter(Boolean).join(' ')
+  if (!word) return null
+
+  const searchUrl =
+    `${NETEASE_API}/search/get/web?s=${encodeURIComponent(word)}` + '&type=1&limit=10&offset=0'
+  const found = await fetchNetease(searchUrl)
+  if (!found || typeof found !== 'object') return null
+  const songs = ((found as { result?: { songs?: NeteaseSong[] } }).result?.songs ?? []).filter(
+    (s) => s && typeof s.id === 'number'
+  )
+  if (songs.length === 0) return null
+
+  const ranked = songs
+    .map((s) => ({
+      song: s,
+      score: scoreItem(
+        {
+          trackName: s.name,
+          artistName: (s.artists ?? [])
+            .map((a) => a?.name ?? '')
+            .filter(Boolean)
+            .join(' / '),
+          // 网易云给的是毫秒
+          duration: s.duration ? s.duration / 1000 : undefined
+        },
+        q
+      )
+    }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+  if (ranked.length === 0) return null
+
+  const best = ranked[0].song
+  const durSec = best.duration ? best.duration / 1000 : 0
+  const lyricUrl = `${NETEASE_API}/song/lyric?id=${best.id}&lv=1&kv=1&tv=-1`
+  const payload = await fetchNetease(lyricUrl)
+  if (!payload || typeof payload !== 'object') return null
+  const raw = (payload as NeteaseLyricPayload).lrc?.lyric ?? ''
+  const lines = parseLrc(raw)
+  if (lines.length === 0) {
+    // 搜到了歌但没歌词：可能是纯音乐、也可能是新歌还没人传歌词
+    return {
+      ok: false,
+      title: q.title,
+      artist: q.artist,
+      source: 'none',
+      lines: [],
+      reason: '网易云上这首歌没有歌词（可能是纯音乐，或者还没人上传）',
+      duration: durSec > 0 ? Math.round(durSec * 10) / 10 : undefined
+    }
+  }
+  return {
+    ok: true,
+    title: q.title,
+    artist: q.artist,
+    source: 'netease',
+    lines,
+    reason: '',
+    duration: durSec > 0 ? Math.round(durSec * 10) / 10 : undefined
+  }
+}
+
 function pickLines(item: LrclibItem): LyricLine[] {
   if (item.syncedLyrics) {
     const parsed = parseLrc(item.syncedLyrics)
@@ -217,20 +362,38 @@ function pickLines(item: LrclibItem): LyricLine[] {
 }
 
 /**
- * 联网查一次 lrclib。先走精确接口 `/api/get`（歌名+歌手+专辑+时长，最准），
+ * 联网查一次歌词：先网易云（中文/韩文官方歌命中率高、给原版词），没拿到再退到 lrclib。
+ *
+ * lrclib 的用法：先走精确接口 `/api/get`（歌名+歌手+专辑+时长，最准），
  * 不成再走 `/api/search` 拿一堆结果按打分挑最好的一条。
  */
 async function lookupRemote(q: LyricQuery): Promise<LyricResult> {
-  const fail = (reason: string): LyricResult => ({
+  const fail = (reason: string, duration?: number): LyricResult => ({
     ok: false,
     title: q.title,
     artist: q.artist,
     source: 'none',
     lines: [],
-    reason
+    reason,
+    duration
   })
 
   if (!q.title.trim()) return fail('当前歌曲没有歌名，查不了歌词')
+
+  // 第一优先：网易云。用户 m05794「我现在播的都是官方歌曲，你去找的歌词对不上，要不然就没有」，
+  // 实测网易云接口对官方歌命中率高得多，且给的是原版词（不是音译/翻唱）。
+  let neteaseRejectDur: number | undefined
+  try {
+    const ne = await lookupNetease(q)
+    if (ne) {
+      if (ne.ok) return ne
+      // 搜到了歌但没有歌词：先记下它给的准确时长（进度条要靠它），再让 lrclib 试一次
+      neteaseRejectDur = ne.duration
+      if (ne.duration) return ne
+    }
+  } catch {
+    // 网易云接口变了/被限流都不影响主流程，继续往下退到 lrclib
+  }
 
   const params = new URLSearchParams({
     track_name: q.title.trim(),
@@ -239,22 +402,22 @@ async function lookupRemote(q: LyricQuery): Promise<LyricResult> {
   if (q.album.trim()) params.set('album_name', q.album.trim())
   if (q.duration > 0) params.set('duration', String(Math.round(q.duration)))
 
-  // 第一优先：精确接口。404 表示没收录，其余错误（断网/超时）当作网络问题
+  // 第二优先：lrclib 精确接口。404 表示没收录，其余错误（断网/超时）当作网络问题
   const exact = await fetchJson(`${LRC_API}/get?${params.toString()}`)
   if (exact && typeof exact === 'object' && !Array.isArray(exact)) {
     const item = exact as LrclibItem
-    if (item.instrumental) return fail('纯音乐，没有歌词')
+    if (item.instrumental) return fail('纯音乐，没有歌词', neteaseRejectDur)
     const lines = pickLines(item)
     if (lines.length > 0) {
       return { ok: true, title: q.title, artist: q.artist, source: 'lrclib', lines, reason: '' }
     }
   }
 
-  // 第二优先：搜索。中文翻唱 / DJ 版经常精确接口查不到，但搜索能搜到同曲
+  // 第三优先：lrclib 搜索。小众、外语歌精确接口常查不到，但搜索能搜到同曲
   const searchQ = [q.title.trim(), q.artist.trim()].filter(Boolean).join(' ')
   const search = await fetchJson(`${LRC_API}/search?q=${encodeURIComponent(searchQ)}`)
   if (!Array.isArray(search)) {
-    return fail('连不上歌词库（lrclib.net），请检查网络后重试')
+    return fail('连不上歌词库，请检查网络后重试', neteaseRejectDur)
   }
   const items = (search as LrclibItem[])
     .map((it) => ({ it, score: scoreItem(it, q) }))
@@ -262,15 +425,23 @@ async function lookupRemote(q: LyricQuery): Promise<LyricResult> {
     .sort((a, b) => b.score - a.score)
 
   if (items.length === 0) {
-    return fail('lrclib 上没收录这首歌（中文翻唱、DJ 版常常没有）')
+    return fail('没搜到这首歌的歌词（可能太新，或者还没人上传）', neteaseRejectDur)
   }
   const best = items[0].it
-  if (best.instrumental) return fail('纯音乐，没有歌词')
+  if (best.instrumental) return fail('纯音乐，没有歌词', neteaseRejectDur)
   const lines = pickLines(best)
   if (lines.length === 0) {
-    return fail('找到这首歌但没有带时间轴的歌词，滚不起来')
+    return fail('找到这首歌但没有带时间轴的歌词，滚不起来', neteaseRejectDur)
   }
-  return { ok: true, title: q.title, artist: q.artist, source: 'lrclib', lines, reason: '' }
+  return {
+    ok: true,
+    title: q.title,
+    artist: q.artist,
+    source: 'lrclib',
+    lines,
+    reason: '',
+    duration: best.duration && best.duration > 0 ? best.duration : undefined
+  }
 }
 
 /** 同一首歌的并发请求合并成一次，避免列表滚动/重渲染时连发好几次 */

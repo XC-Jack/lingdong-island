@@ -166,12 +166,20 @@ export interface LyricResult {
   title: string
   /** 查询用的歌手 */
   artist: string
-  /** 来源：cache=本地缓存命中、lrclib=这次联网查到、none=没拿到 */
-  source: 'cache' | 'lrclib' | 'none'
+  /** 来源：cache=本地缓存命中、netease=网易云、lrclib=备用库、none=没拿到 */
+  source: 'cache' | 'netease' | 'lrclib' | 'none'
   /** 歌词行，按时间升序；ok=false 时为空数组 */
   lines: LyricLine[]
-  /** ok=false 时给用户看的一句话原因（如「lrclib 上没收录这首歌」「纯音乐」），界面直接显示它 */
+  /** ok=false 时给用户看的一句话原因（如「没搜到这首歌」「纯音乐」），界面直接显示它 */
   reason: string
+  /**
+   * 这首歌的真实总时长（秒），来自歌词库那条记录。
+   *
+   * 为什么需要：网易云（cloudmusic.exe）不往系统媒体接口写时间轴，拿到的 duration 恒为 0，
+   * 进度条就算不出来（用户 m05794「你用这个我怎么看播放时间」）。
+   * 歌词库里同一条记录带准确时长，正好补上这个缺口。
+   */
+  duration?: number
 }
 
 /** 歌词查询入参（渲染层把当前播放快照里的这四个字段发过去） */

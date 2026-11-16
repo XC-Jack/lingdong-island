@@ -526,18 +526,29 @@ try {
           actives: actives.length,
           activeText: actives[0] ? actives[0].textContent.trim() : null,
           tip: slot ? !!slot.querySelector('.music-lyric-tip') : false,
-          why: slot?.querySelector('.music-lyric-why')?.textContent ?? null
+          why: slot?.querySelector('.music-lyric-why')?.textContent ?? null,
+          firstTime: rows.length > 0 ? Number(rows[0].getAttribute('data-time')) : null
         };
       })()`)
       // 用户 m04986/m05013 起歌词栏是真歌词了（SPEC-music-lyric）：能查到就渲染带时间轴的行并高亮当前那句，
       // 查不到就还是「暂无歌词」+ 一句具体原因。两种都合法，但绝不允许既没歌词又不说明原因。
+      //
+      // 用户 m06116 起还要区分第三种合法态：**前奏还没开始唱**。网易云那条《红》第一句在 15.6 秒，
+      // 歌刚起时不该有任何一行亮着——以前这里死要求 actives === 1，等于要求「还没唱就先亮一句」，
+      // 本身就是错的断言。现在按「位置有没有过第一句」分流判定。
+      const posNow = Number(await islandEval(`window.island.musicGet().then((s) => s.position)`) ?? -1)
+      const firstAt = typeof lyricSlot.firstTime === 'number' && Number.isFinite(lyricSlot.firstTime)
+        ? lyricSlot.firstTime
+        : null
+      const beforeFirst = firstAt !== null && posNow >= 0 && posNow + 1.6 < firstAt
       const lyricOk = !!lyricSlot && lyricSlot.online === 0 && (
         (lyricSlot.rows === 0 && lyricSlot.tip === true && lyricSlot.text.includes('暂无歌词')) ||
-        (lyricSlot.rows > 1 && lyricSlot.actives === 1 && !!lyricSlot.activeText)
+        (lyricSlot.rows > 1 && lyricSlot.actives === 1 && !!lyricSlot.activeText) ||
+        (lyricSlot.rows > 1 && lyricSlot.actives === 0 && beforeFirst)
       )
       ok('U4 歌词栏只有真歌词或诚实占位（有词则当前行唯一高亮，没词则「暂无歌词」+原因）',
         lyricOk,
-        JSON.stringify(lyricSlot))
+        JSON.stringify({ ...lyricSlot, posNow, firstAt, beforeFirst, text: undefined }))
       if (lyricSlot && lyricSlot.rows > 1) {
         // 有歌词时验「亮的那句对得上当前播放位置」：高亮行的 data-time 必须是 <= position+0.3 的最后一个时间点。
         // 这比「调 seek 看行号变不变」稳——假会话（powershell MediaPlayer）常常不支持 seek，会把断言变成假失败。
@@ -561,14 +572,18 @@ try {
         const expectIdx = align ? align.times.filter((t) => t <= pos + 0.3).length - 1 : -1
         const aheadIdx = align ? align.times.filter((t) => t <= pos + 1.6).length - 1 : -1
         const activeIdx = align ? align.times.indexOf(align.activeTime) : -1
+        // 前奏还没唱（pos 早于第一句歌词）时不该有任何一行高亮——这是正确行为，不是失败。
+        // 网易云那条《눈, 코, 입》第一句在 6.38 秒，前 6 秒确实没有可亮的行。
+        const beforeFirstLine = align ? pos + 1.6 < align.times[0] : false
+        const highlightOk = beforeFirstLine
+          ? activeIdx === -1
+          : activeIdx >= expectIdx && activeIdx <= aheadIdx + 1
         ok('U4b 亮着的那句正是当前播放位置对应的一行、时间轴单调递增（用户 m04986「播到哪句亮哪句」）',
           align &&
-            align.actives === 1 &&
+            align.actives <= 1 &&
             align.sorted === true &&
-            expectIdx >= 0 &&
-            activeIdx >= expectIdx &&
-            activeIdx <= aheadIdx + 1,
-          JSON.stringify({ pos, expectIdx, aheadIdx, activeIdx, actives: align?.actives, sorted: align?.sorted }))
+            highlightOk,
+          JSON.stringify({ pos, expectIdx, aheadIdx, activeIdx, beforeFirstLine, actives: align?.actives, sorted: align?.sorted }))
         // 播放器支持 seek 时再验「往后跳当前行真的跟着走」。
         // 注意：canSeek=true 不等于 seek 真能生效（假的 powershell MediaPlayer 会话就是这样），
         // 所以先确认位置真的变了，没变就跳过而不是判失败。

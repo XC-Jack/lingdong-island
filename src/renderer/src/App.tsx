@@ -1957,16 +1957,18 @@ function MusicPanel(): React.JSX.Element {
   /**
    * 换歌就要换歌词（SPEC-music-lyric）。
    *
-   * 只在歌词栏打开时去查：不开歌词就不联网，省得每首歌都往 lrclib 发一次请求。
-   * 查询键用「歌名+歌手+专辑+时长取整」，同一首歌反复开关歌词栏不会重复请求
-   * （主进程那边还有本地缓存，第二次直接命中文件）。
+   * 用户 m06116「你用这个我怎么看播放时间」之后改成**一直查**，不再等歌词栏打开：
+   * 网易云不报总时长，进度条要靠歌词库里那条记录的时长来算；只有歌词栏打开才查的话，
+   * 关着歌词栏就永远是 `--:--`。每首歌只查一次（主进程有本地缓存，第二次直接命中文件），
+   * 并把结果顺手用在歌词栏上，一举两得。
+   * 查询键用「歌名+歌手+专辑+时长取整」，同一首歌反复开关歌词栏不会重复请求。
    */
   const lyricKey =
     music?.active && music.title
       ? `${music.title}|${music.artist}|${music.album}|${Math.round(music.duration)}`
       : ''
   useEffect(() => {
-    if (!lyricOpen || !lyricKey) return
+    if (!lyricKey) return
     if (lyricForRef.current === lyricKey && lyric) return
     lyricForRef.current = lyricKey
     let alive = true
@@ -1999,7 +2001,67 @@ function MusicPanel(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [lyricOpen, lyricKey, lyric, music?.title, music?.artist, music?.album, music?.duration])
+  }, [lyricKey, lyric, music?.title, music?.artist, music?.album, music?.duration])
+
+  /**
+   * 播放器报的进度可不可信。
+   *
+   * 用户 m05794「我换了一个软件网易云，歌词进度条封面都直接卡住了」：
+   * 实测网易云（cloudmusic.exe）只往系统媒体接口写 歌名/歌手/封面，时间轴永远是
+   * `pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false`（连采 30 次不变）。
+   *
+   * 用户 m06116「--:-- 你用这个我怎么看播放时间」：上一版在这里直接显示两个横杠，
+   * 那是逃避。改成自己算：歌词库那条记录带着这首歌的准确总时长（`lyric.duration`），
+   * 拿它当分母，位置从「开始播放那一刻」起按真实时间累加，暂停就不动、换歌就归零。
+   * 算不出来（连总时长都没有）才退回横杠。
+   */
+  const playerNoTimeline = music?.active === true && music.duration <= 0
+  /** 歌词库给的总时长，用来补播放器不报的那一份 */
+  const lyricDuration = lyric?.duration && lyric.duration > 0 ? lyric.duration : 0
+  /**
+   * 实际用来算进度的总时长：优先用播放器自己报的（最可信），
+   * 播放器不报就用歌词库那条的时长（网易云场景）。
+   */
+  const totalDur = music && music.duration > 0 ? music.duration : lyricDuration
+  /** 自己估算的位置：播放器不报进度时，从这次开始播放起累加真实流逝时间 */
+  const [ownPos, setOwnPos] = useState(0)
+  const ownBaseRef = useRef<{ title: string; at: number; start: number } | null>(null)
+  useEffect(() => {
+    if (!playerNoTimeline) {
+      ownBaseRef.current = null
+      setOwnPos(0)
+      return
+    }
+    const titleKey = `${music?.title ?? ''}|${music?.artist ?? ''}`
+    const base = ownBaseRef.current
+    if (!base || base.title !== titleKey) {
+      // 换歌或首次进入：从现在开始算，起点 0
+      ownBaseRef.current = { title: titleKey, at: performance.now(), start: 0 }
+      setOwnPos(0)
+      return
+    }
+    // 同一首歌：暂停时把已流逝的时间固化进 start，恢复播放后从那里继续
+    if (!music?.playing) {
+      ownBaseRef.current = { title: titleKey, at: performance.now(), start: ownPos }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playerNoTimeline, music?.title, music?.artist, music?.playing])
+  useEffect(() => {
+    if (!playerNoTimeline || !music?.playing || totalDur <= 0) return
+    const tick = (): void => {
+      const base = ownBaseRef.current
+      if (!base) return
+      const elapsed = (performance.now() - base.at) / 1000
+      setOwnPos(Math.min(base.start + elapsed, totalDur))
+    }
+    tick()
+    const id = window.setInterval(tick, 250)
+    return () => window.clearInterval(id)
+  }, [playerNoTimeline, music?.playing, totalDur])
+  /** 真正显示在进度条/时间上的位置 */
+  const shownPos = playerNoTimeline ? ownPos : live
+  /** 连总时长都算不出来时，才诚实显示横杠（此时确实无法给出任何时间） */
+  const noTimeline = playerNoTimeline && totalDur <= 0
 
   // 当前该高亮第几句：取「开始时间 ≤ 当前播放位置」的最后一行。没拿到歌词就是 -1
   const lyricLines = lyric?.ok && lyric.lines.length > 0 ? lyric.lines : []
@@ -2007,11 +2069,11 @@ function MusicPanel(): React.JSX.Element {
     if (lyricLines.length === 0) return -1
     let idx = -1
     for (let i = 0; i < lyricLines.length; i += 1) {
-      if (lyricLines[i].time <= live + 0.15) idx = i
+      if (lyricLines[i].time <= shownPos + 0.15) idx = i
       else break
     }
     return idx
-  }, [lyricLines, live])
+  }, [lyricLines, shownPos])
 
   /**
    * 让当前那句始终停在歌词栏正中：每句平均约 20~30 布局 px 高，
@@ -2147,20 +2209,10 @@ function MusicPanel(): React.JSX.Element {
   )
 
   const active = music?.active === true
-  /**
-   * 这个播放器有没有报播放进度。
-   *
-   * 用户 m05794「我换了一个软件网易云，歌词进度条封面都直接卡住了」：
-   * 实测网易云（cloudmusic.exe）只往系统媒体接口写 歌名/歌手/封面，时间轴永远是
-   * `pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false`（连采 30 次不变）；
-   * 汽水音乐则正常报。总时长恒为 0 时进度条没法算，硬画就是永远停在 0:00。
-   * 这里如实降级：不假装在走，改成 `--:--` 并说明原因。
-   */
-  const noTimeline = music?.active === true && music.duration <= 0
   const pct =
-    music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
-  // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03；总时长未知时诚实显示 -0:00
-  const remain = Math.max(0, (music?.duration ?? 0) - live)
+    totalDur > 0 ? Math.min(1, Math.max(0, (noTimeline ? 0 : shownPos) / totalDur)) : 0
+  // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03
+  const remain = Math.max(0, totalDur - (noTimeline ? 0 : shownPos))
 
   /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
   const secAt = (clientX: number): number => {
@@ -2257,7 +2309,7 @@ function MusicPanel(): React.JSX.Element {
           </div>
 
           {/* 进度条只占左栏宽度，不横穿整页（用户 m03368） */}
-          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
+          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(totalDur)} aria-valuenow={Math.round(shownPos)}>
             {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
             <div
               className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
@@ -2271,9 +2323,9 @@ function MusicPanel(): React.JSX.Element {
               </div>
             </div>
             <div className="music-times">
-              {/* 播放器不报进度时（网易云）两端都显示 --:--，不假装停在 0:00 —— 见上面 noTimeline 注释。
-                  原因放在 title 里，不塞进这一行免得撑破版面；
-                  e2e 的 U5 断言「右端是 -mm:ss」，所以只有这种降级态才换，正常播放器不受影响 */}
+              {/* 只有在「播放器不报时长 + 歌词库也没给出时长」时才显示 --:--（此时确实算不出来）。
+                  网易云那种情况用歌词库的总时长 + 自己累加位置，能正常显示时间（用户 m06116）。
+                  e2e 的 U5 断言「右端是 -mm:ss」，正常播放器与补齐后的网易云都走下面那支，不受影响 */}
               {noTimeline ? (
                 <>
                   <span className="music-time" title="这个播放器没向系统报告播放进度">
@@ -2285,7 +2337,7 @@ function MusicPanel(): React.JSX.Element {
                 </>
               ) : (
                 <>
-                  <span className="music-time">{fmtDuration(live)}</span>
+                  <span className="music-time">{fmtDuration(shownPos)}</span>
                   <span className="music-time">-{fmtDuration(remain)}</span>
                 </>
               )}
