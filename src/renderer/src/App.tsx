@@ -1820,6 +1820,10 @@ function MusicPanel(): React.JSX.Element {
   // 音量竖直滑块是否弹出：平时只留喇叭按钮，点一下展开、再点收起（用户 m02462 定义「点声标才显现」；
   // m02917 纠正回竖直，保留「平时隐形、点喇叭显现」这条交互）
   const [volOpen, setVolOpen] = useState(false)
+  // 用户 m04356「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+  // 音量条的容器，用来判断一次点击是不是落在条内。点条内不算「别的地方」，
+  // 否则拖滑块的第一下就会把条收掉
+  const volBoxRef = useRef<HTMLDivElement>(null)
   // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
   // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
   const [lyricOpen, setLyricOpen] = useState(false)
@@ -1837,6 +1841,21 @@ function MusicPanel(): React.JSX.Element {
   useEffect(() => () => {
     if (volTimer.current !== null) clearTimeout(volTimer.current)
   }, [])
+
+  // 用户 m04356「我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+  // 音量条展开时，在 document 上挂一次捕获阶段的 pointerdown —— 落点不在喇叭/滑条那块就收起。
+  // 用 pointerdown 而不是 click：点空白处、点其它按钮都能立刻收起，不必等一次完整点击；
+  // 用捕获阶段：即使目标元素自己 stopPropagation 也照收。点条内不收起，否则拖滑块第一下就没了。
+  useEffect(() => {
+    if (!volOpen) return
+    const onDown = (e: PointerEvent) => {
+      const box = volBoxRef.current
+      if (box && e.target instanceof Node && box.contains(e.target)) return
+      setVolOpen(false)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [volOpen])
 
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
   useEffect(() => {
@@ -2095,6 +2114,7 @@ function MusicPanel(): React.JSX.Element {
 
             <div className="music-extra">
               <div
+                ref={volBoxRef}
                 className={`music-volume ${music?.canVolume !== true ? 'off' : ''}`}
                 title={music?.canVolume === true ? '当前播放应用的音量（只影响这个应用）' : '没找到这个播放应用的音量，无法单独调'}
               >

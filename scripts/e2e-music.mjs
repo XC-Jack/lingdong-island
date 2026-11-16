@@ -454,8 +454,46 @@ try {
       })()`)
       ok('U3b 音量滑块的透明热区够宽（可点命中 ≥20px，横向偏 10px 仍能按下）',
         volHit && volHit.hitPx >= 20, JSON.stringify(volHit))
-      // 收起，避免影响后续 M3/M4
+      // 用户 m04356「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」：
+      // 音量条开着时，在别处按下应当收起它；点条内（尤其拖滑块）不能收起。
+      const clickOutside = await islandEval(`(() => {
+        const pop = () => {
+          const p = document.querySelector('.music-vol-pop');
+          return p ? getComputedStyle(p).visibility : null;
+        };
+        const before = pop();
+        const head = document.querySelector('.panel-title') || document.querySelector('.panel-head');
+        head?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        return { before };
+      })()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const afterOutside = await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        return { vis: p ? getComputedStyle(p).visibility : null, expanded: document.querySelector('.music-vol-toggle')?.getAttribute('aria-expanded') };
+      })()`)
+      ok('U3c 音量条开着时点别处会收起（用户 m04356）',
+        clickOutside?.before === 'visible' && afterOutside?.vis === 'hidden' && afterOutside?.expanded === 'false',
+        JSON.stringify({ ...clickOutside, after: afterOutside }))
+      // 再点喇叭展开，然后点/拖条内本身，不应收起
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const insideKeeps = await islandEval(`(() => {
+        const input = document.querySelector('.music-vol-pop input[type=range]');
+        input?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+        const p = document.querySelector('.music-vol-pop');
+        return { vis: p ? getComputedStyle(p).visibility : null };
+      })()`)
+      await new Promise((r) => setTimeout(r, 260))
+      const insideStill = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
+      ok('U3d 点音量条内部不会把它收起（否则拖滑块第一下就没了）',
+        insideKeeps?.vis === 'visible' && insideStill === 'visible',
+        JSON.stringify({ atDown: insideKeeps?.vis, after: insideStill }))
+      // 收起，避免影响后续 M3/M4（若已收起，再点一次会重新打开，故先读状态）
+      await islandEval(`(() => {
+        const p = document.querySelector('.music-vol-pop');
+        if (p && getComputedStyle(p).visibility === 'visible') document.querySelector('.music-vol-toggle')?.click();
+      })()`)
+      await new Promise((r) => setTimeout(r, 220))
       const lyricSlot = await islandEval(`(() => {
         const slot = document.querySelector('.music-lyric-slot');
         const online = document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length;

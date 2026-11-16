@@ -415,3 +415,25 @@ e2e 连带改写（`scripts/e2e-music.mjs`）：U1b 由「喇叭右缘贴控制�
 
 - [未核验] 用户对「喇叭贴回下一首右侧」后的位置是否满意（当前净间距 33.3 视觉 px，比 m03435 那轮的 6 宽，因为多了「词」按钮让整组变宽、又回到居中；若要更贴可把 gap 收到 6）。
 - [未核验] 装机版观感（安装版仍是旧横向音量那版，未重新打包）。
+### 7.13 第十一轮修正（2026-11-16 17:15，用户 m04356）
+
+**用户原话**：「就是喇叭这个拉条，我想我点别的地方它也可以隐藏，而不是每次都要去点那个喇叭」（附截图 m04354：竖直音量条展开、20%、下方喇叭按钮）。
+
+**问题**：音量条只能靠再点一次喇叭收起。用户拖完音量为腾地方、或想接着点别的按钮时，必须精确点到那枚 28×28 的喇叭才关得掉。
+
+**做法**（`src/renderer/src/App.tsx`）：
+1. 新增 `const volBoxRef = useRef<HTMLDivElement>(null)`，挂到 `.music-volume` 容器上（喇叭 + 浮层都在里面）。
+2. 新增 `useEffect`，依赖 `[volOpen]`：只在展开时给 `document` 挂 `pointerdown` **捕获阶段**监听；落点 `box.contains(e.target)` 为真就放过（点条内/拖滑块不收起），否则 `setVolOpen(false)`。收起即卸载监听。
+
+**选型理由**：
+- 用 `pointerdown` 而非 `click`：按下即收，不必等一次完整点击（拖到一半松手也不会漏）。
+- 用捕获阶段：目标元素自己 `stopPropagation` 也照收，不依赖各按钮的实现细节。
+- 判断容器而不是判断「是不是喇叭」：拖滑块的第一下 `pointerdown` 就在条内，按「非喇叭即收起」会当场把它关掉。
+
+**自检**（`scripts/e2e-music.mjs` 新增两条）：
+- U3c 音量条开着时在 `.panel-title` 上按下 → `.music-vol-pop` 由 `visible` 变 `hidden`、`aria-expanded` 变 `false`。
+- U3d 在音量 `input[type=range]` 上按下 → 前后都还是 `visible`（拖滑块不会误收）。
+
+**实测**：`e2e-music` PASS 46 过 / 0 败（U3c、U3d 全绿）；`.tmp/word/volout.mjs` 手工复核 `OPEN=visible` → 点标题 → `AFTER_OUTSIDE=hidden`；截图 `.tmp/word/shot-vol-open.png`、`.tmp/word/shot-vol-closed.png`。
+
+**未核验**：①真机触屏/触摸板上的手感（只用 CDP 合成 `PointerEvent` 验过）；②点岛外区域（窗口失焦）时是否也收起 —— 窗口 blur 已由主进程收整岛，未单独验音量条这一层。
