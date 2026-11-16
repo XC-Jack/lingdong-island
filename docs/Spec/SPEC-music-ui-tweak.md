@@ -211,5 +211,13 @@
    `DRAGS`：`PLUS10 {after dom:"1",num:"100%",poll:1,active:"INPUT",changed:true}`、`MINUS10 {同上,changed:true}`、`PLUS18 {changed:false,active:"DIV"}` ⇒ 原先按不到的 ±10px 现在都能拖到顶，±18px 仍在外侧（预期边界）。
 5. [已核验] `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**，含新增 `U3b 音量滑块的透明热区够宽（可点命中 ≥20px…）`，`U3` 及 `M1–M5` 全不回归。
 6. [已核验] `node scripts/e2e-music-session.mjs` → **PASS（20 过 / 0 败）**。首跑曾 FAIL 1 条（`S2 PLAYING_IDX=0`），原因是上一轮遗留的假会话场景进程还在（同时存在 4 个会话，播放中那个恰好排在索引 0），杀掉残留 PowerShell 后重跑即 PASS；**不是产品回归**。
-7. [未核验] 真人对修复后的手感：需要用真实播放器（汽水音乐）在预览版或装机版上亲手拖一次，确认「偏一点也能拖」符合预期。
-8. 边界 [已核验]：仍只在 `music-ui-tweak` 分支，未合并 `main`、未打包、未装机。
+7. [未核验] 真人对修复后的手感：需要用真实播放器（汽水音乐）在装机版上亲手拖一次，确认「偏一点也能拖」符合预期。
+8. 边界 [已核验，2026-11-16 12:20 更新]：已合并 `main`（`5e6f356`）、已打包（`release\灵动岛 Setup 0.1.0.exe`，SHA256 `C797A35F…654E`）、已装机（`D:\软件\灵动岛\resources\app.asar` 10971158 B / SHA256 `BBB4BF03…80FB`，与 `release\win-unpacked` 逐字节一致）。**打包踩坑**：本机 Node `v24.22.2` 下 `npm run dist` 会先报 `unable to verify the first certificate`（不信任本机根证书链），仅加 `NODE_OPTIONS=--use-system-ca` 后又卡 `Timeout awaiting 'request' for 600000ms`（GitHub 拉 Electron 超时）；最终可用组合＝`NODE_OPTIONS=--use-system-ca` + `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` + `ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/`。
+
+### 装机版热区复验（2026-11-16 12:20）
+
+1. [已核验] 在**已安装版**（`D:\软件\灵动岛\灵动岛.exe`，`--remote-debugging-port=9322` + 隔离 `user-data-dir`）上跑 `.tmp/verify-installed-hotzone.mjs`（起假 SMTC 场景 + `elementFromPoint` 扫描 + 真 OS 鼠标 `SetCursorPos`/`mouse_event` 拖动）：
+   - `MUSIC={"active":true,"app":"powershell.exe","canVolume":true,"volume":1}`
+   - `GEOM={"input":{"x":314,"y":33,"w":21,"h":63},"cx":324,"cy":65,"disabled":false,"hitPx":22,"hitOffsets":[-11,10]}`
+   - `DRAGS`：`CENTER`/`PLUS10`/`MINUS10` 全部 `changed:true`、`active:"INPUT"`、`before{dom:"0",poll:0} → after{dom:"1",num:"100%",poll:1}`
+   ⇒ 装机版上可点宽度 22px（修复前 11px），中心偏 ±10px 也能拖，且 DOM / 百分比文本 / 主进程 poll 三者一致。
