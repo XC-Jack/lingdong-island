@@ -288,7 +288,10 @@ try {
       }
       // 用户 m02652 整页照参考图重排：播放按钮独立控制行；
       // 用户 m03435「播放和切换要位于歌名的正下方中心位置」把基准从整岛改成了左栏（封面+歌名那块），
-      // 喇叭则挪到「下一首」右边（见 U1b）。音量仍竖直弹出（m02917），右侧只留诚实「暂无歌词」占位。
+      // 喇叭则挪到「下一首」右边（见 U1b）。
+      // 用户 m03577「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」：
+      // 喇叭与「词」现在是正常 flex item 跟三个按钮并排，整组在左栏里居中 ⇒
+      // 三按钮组的中心必然落在左栏中心的左边，且整组（含词）不得越出左栏。
       const ctlPos = await islandEval(`(() => {
         const row = document.querySelector('.music-control-row');
         const ctl = row?.querySelector('.music-ctl');
@@ -299,18 +302,24 @@ try {
         const btns = [...ctl.querySelectorAll('.music-btn')];
         const first = btns[0]?.getBoundingClientRect(), last = btns[btns.length - 1]?.getBoundingClientRect();
         const grpCenter = (first && last) ? (first.left + last.right) / 2 : null;
+        const box = document.querySelector('.music-ctl-buttons')?.getBoundingClientRect();
         return {
           inRow: !!row,
           inMain: main ? main.contains(ctl) : null,
           btnCount: btns.length,
           ctlCenterX: (c.left + c.right) / 2,
           grpCenterX: grpCenter,
-          sideCenterX: (sr.left + sr.right) / 2
+          sideCenterX: (sr.left + sr.right) / 2,
+          boxLeft: box ? box.left : null,
+          boxRight: box ? box.right : null,
+          sideLeft: sr.left,
+          sideRight: sr.right
         };
       })()`)
-      ok('U1 播放/切换落在歌名（左栏）正下方居中（用户 m03435 改基准为左栏，不再按整岛居中）',
+      ok('U1 播放/切换落在左栏、加「词」后整体向左移（用户 m03435 + m03577）',
         ctlPos && ctlPos.inRow === true && ctlPos.inMain === false && ctlPos.btnCount === 3 &&
-        Math.abs(ctlPos.grpCenterX - ctlPos.sideCenterX) <= 6,
+        ctlPos.grpCenterX < ctlPos.sideCenterX - 10 &&
+        ctlPos.boxLeft >= ctlPos.sideLeft - 1 && ctlPos.boxRight <= ctlPos.sideRight + 1,
         JSON.stringify(ctlPos))
       const volSide = await islandEval(`(() => {
         const btns = [...document.querySelectorAll('.music-ctl .music-btn')];
@@ -323,6 +332,28 @@ try {
       ok('U1b 喇叭紧贴在「下一首」右侧、不再吊在整岛最右端（用户 m03435）',
         volSide && volSide.gap >= 0 && volSide.gap <= 24 && volSide.toggleRight < volSide.islandRight - 20,
         JSON.stringify(volSide))
+      // 用户 m03577：喇叭右边还要一枚「词」。它只是照参考图占位（歌词功能已被 m02341 否决），
+      // 所以这里只断言存在、在喇叭右边、点了不改任何东西。
+      const wordUi = await islandEval(`(() => {
+        const w = document.querySelector('.music-word');
+        const t = document.querySelector('.music-vol-toggle');
+        if (!w || !t) return { found: false };
+        const wr = w.getBoundingClientRect(), tr = t.getBoundingClientRect();
+        const island = document.querySelector('.island').getBoundingClientRect();
+        return { found: true, text: w.textContent.trim(), gap: wr.left - tr.right, insideIsland: wr.right <= island.right + 1, w: wr.width, h: wr.height };
+      })()`)
+      ok('U1c 喇叭右边有「词」按钮且完全在岛内（用户 m03577）',
+        wordUi && wordUi.found === true && wordUi.text === '词' && wordUi.gap >= 0 && wordUi.gap <= 24 && wordUi.insideIsland === true,
+        JSON.stringify(wordUi))
+      await islandEval(`document.querySelector('.music-word')?.click()`)
+      await sleep(200)
+      const wordNoop = await islandEval(`(() => ({
+        lyricText: document.querySelector('.music-lyric-slot')?.textContent?.trim() ?? null,
+        lyricHits: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length
+      }))()`)
+      ok('U1d 点「词」不拉歌词、不编造歌词（歌词功能已被 m02341 否决）',
+        wordNoop && wordNoop.lyricText === '暂无歌词' && wordNoop.lyricHits === 0,
+        JSON.stringify(wordNoop))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)

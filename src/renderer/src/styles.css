@@ -2530,11 +2530,11 @@ div.pm-row[draggable='true'] {
 
 /* 参考图（用户 m02652）控制行＝左留白 / 中三个播放按钮 / 右音量。
    三列 1fr auto 1fr 让播放按钮相对整岛真正居中，不被右侧音量宽度带偏 */
-/* 控制行：用户 m03435「喇叭移到下一首的右边，所以播放和切换要位于歌名的正下方中心位置」。
-   做法＝这一行跟上面 .music-main 用同一套分栏（左栏 212 / 分隔线 1 / 右栏 212、间距 14），
-   三个播放按钮摆进左栏并居中，正好落在「封面＋歌名」那块的正下方；
-   喇叭绝对定位贴在「下一首」右边（.music-extra 见下），不再吊在整岛最右端。
-   e2e U1 随之从「相对整岛居中」改为「相对左栏（.music-side）居中」，理由记在 SPEC */
+/* 控制行：用户 m03435 第二轮「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」。
+   控制行仍与上面 .music-main 同分栏（左栏 212 / 分隔线 1 / 右栏 212、间距 14），
+   但左栏里现在装的是「三按钮 + 喇叭 + 词」一整组，
+   整组在左栏（＝封面＋歌名那块）内居中 ⇒ 加了右边两件之后，播放/切歌自然向左让位，
+   既满足「整体向左移」，也仍然落在歌名正下方 */
 .music-control-row {
   display: grid;
   grid-template-columns: 212px 1px 212px;
@@ -2556,13 +2556,17 @@ div.pm-row[draggable='true'] {
   width: 100%;
   padding-top: 2px;
 }
-/* 三按钮这一组：作为绝对定位音量层的参考系，同时也是居中的那个盒子 */
+/* 三按钮 + 喇叭 + 词 这一整组：宽度由内容决定，在左栏（212 布局 px）里居中。
+   「词」和「喇叭」现在是正常 flex item（不再绝对定位），所以整组变宽，
+   居中后三个按钮的几何中心随之左移 —— 这就是用户 m03577 要的「整体向左移」，
+   而按钮中心到喇叭/词的这段新增宽度被均分到两侧，看起来仍是「播放居中偏左」。
+   净间距：喇叭紧贴下一首 6 布局 px、词紧贴喇叭 8 布局 px（都是减去负 margin 之后的值） */
 .music-ctl-buttons {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 10px;
 }
 .music-btn {
   display: flex;
@@ -2622,13 +2626,16 @@ div.pm-row[draggable='true'] {
    不占控制行宽度，因此不会把三按钮挤离「歌名正下方」。
    left:100% + 8px 是相对 .music-ctl-buttons 的右缘（那正好是「下一首」右缘） */
 .music-extra {
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
+  /* 用户 m03577 第二轮「再喇叭右边加一个"词"这样的ui，所有播放和切歌整体要向左移」：
+     喇叭从「绝对定位吊在按钮组右边」改为正常 flex item，跟三个按钮并排。
+     这样整组变宽，居中后三个按钮自然左移；喇叭与「下一首」的净间距仍保持 6 布局 px（14 间隙 − 8 负边距），
+     维持上一轮「喇叭紧贴下一首右侧」的效果 */
+  position: static;
+  transform: none;
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-left: -2px;
   min-width: 0;
 }
 .music-volume {
@@ -2728,6 +2735,30 @@ div.pm-row[draggable='true'] {
   font-variant-numeric: tabular-nums;
   color: rgba(242, 243, 245, 0.38);
   text-align: center;
+}
+/* 喇叭右边的「词」按钮（用户 m03577：「再喇叭右边加一个"词"这样的ui」）。
+   样式对齐上一行三个 .music-btn 的 36×36 圆形，只把图标换成一个「词」字，
+   并沿用参考图里的胶囊味道：圆角略小一点、字重 700、颜色跟普通按钮一致。
+   ⚠ 歌词功能已被用户 m02341 否决，这枚按钮点下去不做事，只是照参考图占位 */
+.music-word {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(242, 243, 245, 0.9);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
+}
+.music-word:hover {
+  background: rgba(255, 255, 255, 0.14);
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {

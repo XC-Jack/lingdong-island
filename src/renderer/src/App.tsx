@@ -2108,6 +2108,19 @@ function MusicPanel(): React.JSX.Element {
                 </div>
               </div>
             </div>
+
+            {/* 参考图里的「词」按钮（用户 m03435 第二轮：「再喇叭右边加一个"词"这样的ui」）。
+                歌词功能已由用户 m02341 实测否决、不再实现，所以这里只是照参考图摆的入口，
+                点它不会拉歌词、也不会编造歌词——只在 title 里诚实说明没做。
+                类名刻意不叫 .music-lyric-* 以免撞 e2e U4 的「不许偷偷接歌词」探测 */}
+            <button
+              type="button"
+              className="music-word"
+              title="歌词功能没有做（用户已决定不做），这里只占参考图里的位置"
+              aria-label="歌词"
+            >
+              词
+            </button>
           </div>
         </div>
       </div>
