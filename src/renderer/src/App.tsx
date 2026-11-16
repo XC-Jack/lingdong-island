@@ -1283,10 +1283,12 @@ function NotifyPanel({
    * 2026-11-11 用户实机反馈后调整：①去掉原来的「打开」按钮（点了没效果，正文点击已经能打开，
    * 组条目的正文点击被「展开/收起」占用，要打开就展开到具体条目再点）；②蓝点从时间左边
    * 挪到时间右边，成为整行的最右端标记，扫一眼就能看出哪几条没读。
+   * 2026-11-16 用户 m03042「可以把主干下面的这个时间给去掉」：组条目（主干）不再显示时间，
+   * 只留未读蓝点——组内每条自己带时间，展开就能看到，主干那条反而和图标/标题挤在一起。
    */
-  const renderSide = (arrival: number, unread: boolean): React.JSX.Element => (
+  const renderSide = (arrival: number, unread: boolean, showTime = true): React.JSX.Element => (
     <span className="notify-side">
-      <span className="notify-time">{fmtRel(arrival)}</span>
+      {showTime && <span className="notify-time">{fmtRel(arrival)}</span>}
       {unread && <i className="notify-unread" title="未读" />}
     </span>
   )
@@ -1393,7 +1395,7 @@ function NotifyPanel({
                     {latest.body && <span className="notify-text">{latest.body}</span>}
                   </span>
                 </button>
-                {renderSide(latest.arrival, latest.order > lastOrder)}
+                {renderSide(latest.arrival, latest.order > lastOrder, false)}
                 {isOpen && (
                   <ul className="notify-sublist">
                     {g.list.map((it) => (

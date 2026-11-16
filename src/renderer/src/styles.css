@@ -1959,6 +1959,16 @@ body {
   background: rgba(255, 255, 255, 0.045);
 }
 
+/* 2026-11-16 用户 m03042：截图里「主干和分支隔得有点开，主干下面和时间打架」。
+   真因是 .notify-item 没换行——展开后 .notify-sublist 作为第三个 flex item
+   和主干并排横挤，把 .notify-body 压成 0 宽（实测 w=0），时间就叠到了图标上。
+   这里让组条目允许换行，分支独占下一行。 */
+.notify-group {
+  flex-wrap: wrap;
+  /* 换行后 flex 的 gap 会同时作用于行距，7px 看着略空；行距收到 3px（用户 m03042「距离可以缩短」） */
+  row-gap: 3px;
+}
+
 .notify-item:hover {
   background: rgba(140, 110, 255, 0.12);
 }
@@ -1997,15 +2007,20 @@ body {
   flex: none;
   white-space: nowrap;
 }
-/* 单级缩进：展开后的具体条目列表挂在 li 内 */
+/* 单级缩进：展开后的具体条目列表挂在 li 内
+   2026-11-16 用户 m03042「两个之间的距离可以缩短」：原来 margin 是 `2px 0 2px 14px`，
+   加上主干自身 padding 底部 4px，视觉上分支离主干有一小段空档。压到 0 上边距、缩进收到 8px。 */
 .notify-sublist {
   list-style: none;
-  margin: 2px 0 2px 14px;
+  margin: 0 0 0 8px;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  width: calc(100% - 14px);
+  /* 缩进收到 8px 后宽度同步（原来按 14px 算，收窄后会溢出一个 padding 的宽度） */
+  width: calc(100% - 8px);
+  /* 分支独占一行，不被 flex 收缩 */
+  flex: 0 0 auto;
 }
 .notify-leaf > .notify-body {
   padding-left: 8px;
