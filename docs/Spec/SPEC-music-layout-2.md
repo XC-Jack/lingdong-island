@@ -482,3 +482,55 @@ e2e 连带改写（`scripts/e2e-music.mjs`）：U1b 由「喇叭右缘贴控制�
 
 **未核验**：①真机触摸/触摸板手势（只用 OS 鼠标 `mouse_event` 与 CDP 合成验过）；
 ②其它播放器（网易云 / QQ 音乐）下的落地点手感是否一致；③高分屏不同 DPI 缩放下的换算误差。
+
+### 7.15 第十三轮修正（2026-11-16 17:50，用户 m04736）
+
+**用户原话**：「现在的喇叭颜色太浅，然后拖动音量没有变化」。
+
+#### 根因（不是上一轮热区的锅）
+
+现场读到的快照是 `musicGet()` = `{active:true, app:"汽水音乐", title:"体面（Cover 于文文）",
+canVolume:false, volume:0}`。`canVolume:false` 会让滑块 `disabled`、数字显示 `--`、
+容器加 `.music-volume.off`（`opacity:0.4`）——**看起来同时像「喇叭太浅」和「拖了没反应」，其实是同一个原因**。
+直接调 `musicControl({cmd:"volume", value:0.3})` 返回 `ok:true` 且 `canVolume` 随即自愈为 true，
+随后连采 40 次全是 `canVolume:true`，说明**桥接能写能读，只是「找会话」这一步会间歇性对不上号**。
+
+为什么对不上号：`AppVol.Find(smtc)` 原来的两条路是「按名字匹配会话」与「全场只有一个 active 会话时用它」。
+汽水音乐的 SMTC id 是「汽水音乐」，但进程名 / ProductName / FileDescription 全叫 `SodaMusic`，
+5 个进程的 MainWindowTitle 全空（`EnumWindows` 也找不到它的顶层窗口），**名字这条路对它天然不成立**，
+实际长期只靠「全场唯一 active 会话」。音频会话会随播放器子进程出现 / 消失，这条路就时真时假。
+
+#### 改动（4 处，`src/main/smtcScript.ts`）
+
+1. `AppVol` 加 `static int LastPid = -1` / `static string LastName = ""` / `static string LastSmtc = ""`。
+2. 新增 `FindByPid(int pid)`：进程还在就枚举音频会话按 pid 找回 `ISimpleAudioVolume`，不在了就清缓存。
+3. `Find(smtc)` 先看缓存——**且缓存必须跟 SMTC 应用绑定**（`LastSmtc` 与当前 smtc 相等才用），
+   否则换了播放器会把上一位的会话当成当前这位，控制错应用比抖动更糟；没命中再走原来的两层。
+4. `FindOnce` 三个返回点都调 `Remember(pid, smtc)`；`Candidates()` 把记住的真实进程名并进候选集，
+   这样即使以后 Tier3 不再唯一，也能靠 `SodaMusic` 这个名字直接认回来。
+
+#### 喇叭提亮（`src/renderer/src/styles.css`）
+
+| 属性 | 改前 | 改后 |
+| --- | --- | --- |
+| `.music-vol-toggle` 图标色 | `rgba(242,243,245,0.75)` | `#ffffff` |
+| `.music-vol-toggle` 底色 | `rgba(255,255,255,0.07)` | `rgba(255,255,255,0.14)` |
+| `.music-vol-toggle svg` 尺寸 | `15px` | `17px` |
+| `.music-volume.off` 禁用态 | `opacity: 0.4` | `opacity: 0.62` |
+
+最后一条的理由：`canVolume:false` 本来是「暂时找不到这个应用的音量」，压到 0.4 会让人以为功能坏了。
+
+#### 自检
+
+- `npm run typecheck` EXIT=0、`npm run build` EXIT=0。
+- `node scripts/e2e-music.mjs` **PASS 46 过 / 0 败**。
+- `node .tmp/probe-prod-bridge-volume.mjs`（抽生产桥接 C# 真跑）**PASS 5/0**，
+  `Q3 canVolume=true`、真实会话 `app="汽水音乐" title="幻听" volume=0.74`。
+- CDP 实测：`.music-vol-toggle` 计算样式 `color rgb(255,255,255)` / `background rgba(255,255,255,0.14)` / `svg 17px`；
+  连做三轮拖动 `during=["0.19"…"0.79"]`、`after=0.79`、主进程回读 `real=0.79`。
+
+#### 未核验
+
+①只在本机汽水音乐上验过，网易云 / QQ 音乐是否也受益于 pid 缓存未验证；
+②缓存是进程内静态变量，应用重启后第一次仍需靠 Tier3 认一次；
+③车主日（多播放器同时出声）下缓存仍可能指错应用，本轮没有构造这种场景。

@@ -212,6 +212,11 @@ namespace IslandAppVol {
       var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
       string exe = Exe(smtc);
       if (exe.Length > 0) set.Add(exe);
+      // 一旦成功对号入座过，就把那个进程名并进候选集（用户 m04736）：
+      // 汽水音乐的 SMTC id 是「汽水音乐」、进程名却是 SodaMusic，名字天生对不上；
+      // 它又有 5 个进程、音频会话会随子进程换人。记住一次真实进程名之后，
+      // 以后即使换了进程（Tier 3 不再唯一）也能靠这个名字直接认回来。
+      if (!string.IsNullOrEmpty(LastName)) set.Add(LastName);
       if (!string.IsNullOrEmpty(smtc)) {
         try {
           foreach (var p in Process.GetProcesses()) {
@@ -248,14 +253,60 @@ namespace IslandAppVol {
       return false;
     }
 
+    // 记住上一次成功对号入座的音频会话进程（用户 m04736「拖动音量没有变化」）。
+    // 原因："汽水音乐" 有 5 个进程、音频会话会随内部子进程反复出现/消失，Tier 3 的
+    // 「全场只有一个 active 会话」这条会时真时假 ⇒ canVolume 在 true/false 之间抖，
+    // 滑块被禁用、拖了当然没反应。一旦成功匹配过，就把那个 pid / 进程名记下来复用它，
+    // 只要该进程还活着、还有会话，就直接返回它，不再每次重新猜。
+    static int LastPid = -1;
+    static string LastName = "";
+    // 缓存跟着 SMTC 应用走：换了播放器（smtc id 变了）就不复用，避免把上一位播放器的
+    // 会话当成当前这位（那种情况下滑条会控制错的应用，比抖动更糟）
+    static string LastSmtc = "";
+    // Tier 0: 上次成功匹配的 pid 还在（缓存优先，解决抖动）。
     // Tier 1: active (state==1) session of a name-matched app. Tier 2: any name-matched session.
     // Tier 3: exactly one active session with a real PID -> that is the only app producing sound,
     // use it. Still an application audio session, never the system master volume. Multiple active
     // sessions with no name match stay unresolved (slider disabled), so we never guess wrong.
     static ISimpleAudioVolume Find(string smtc) {
       try {
-        return FindOnce(smtc, Candidates(smtc, false)) ?? FindOnce(smtc, Candidates(smtc, true));
+        var cached = (LastPid > 0 && string.Equals(LastSmtc, smtc, StringComparison.OrdinalIgnoreCase))
+          ? FindByPid(LastPid) : null;
+        if (cached != null) return cached;
+        var sv = FindOnce(smtc, Candidates(smtc, false)) ?? FindOnce(smtc, Candidates(smtc, true));
+        return sv;
       } catch { return null; }
+    }
+    // 只按 pid 找一个仍在的音频会话（缓存命中路径，不做名字匹配）
+    static ISimpleAudioVolume FindByPid(int pid) {
+      if (pid <= 0) return null;
+      try { Process.GetProcessById(pid); } catch { LastPid = -1; return null; }
+      try {
+        var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        IMMDevice device;
+        int hr = en.GetDefaultAudioEndpoint(0, 1, out device);
+        if (hr != 0 || device == null) return null;
+        Guid iid = typeof(IAudioSessionManager2).GUID;
+        object o;
+        hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+        if (hr != 0 || o == null) return null;
+        var mgr = (IAudioSessionManager2)o;
+        IAudioSessionEnumerator e;
+        hr = mgr.GetSessionEnumerator(out e);
+        if (hr != 0 || e == null) return null;
+        int count;
+        hr = e.GetCount(out count);
+        if (hr != 0) return null;
+        for (int i = 0; i < count; i++) {
+          IAudioSessionControl ctl;
+          hr = e.GetSession(i, out ctl);
+          if (hr != 0 || ctl == null) continue;
+          int spid = -1;
+          try { var c2 = (IAudioSessionControl2)ctl; c2.GetProcessId(out spid); } catch { continue; }
+          if (spid == pid) return ctl as ISimpleAudioVolume;
+        }
+      } catch { }
+      return null;
     }
     static ISimpleAudioVolume FindOnce(string smtc, HashSet<string> names) {
       var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
@@ -274,7 +325,9 @@ namespace IslandAppVol {
       hr = e.GetCount(out count);
       if (hr != 0) return null;
       ISimpleAudioVolume namedActive = null, namedIdle = null;
+      int namedActivePid = -1, namedIdlePid = -1;
       var active = new List<ISimpleAudioVolume>();
+      var activePids = new List<int>();
       for (int i = 0; i < count; i++) {
         IAudioSessionControl ctl;
         hr = e.GetSession(i, out ctl);
@@ -287,16 +340,24 @@ namespace IslandAppVol {
         } catch { continue; }
         var sv = ctl as ISimpleAudioVolume;
         if (sv == null) continue;
-        if (state == 1 && pid > 0) active.Add(sv);
+        if (state == 1 && pid > 0) { active.Add(sv); activePids.Add(pid); }
         if (AppMatches(smtc, pid, names)) {
-          if (state == 1) namedActive = sv;
-          else if (namedIdle == null) namedIdle = sv;
+          if (state == 1) { namedActive = sv; namedActivePid = pid; }
+          else if (namedIdle == null) { namedIdle = sv; namedIdlePid = pid; }
         }
       }
-      if (namedActive != null) return namedActive;
-      if (namedIdle != null) return namedIdle;
-      if (active.Count == 1) return active[0];
+      if (namedActive != null) { Remember(namedActivePid, smtc); return namedActive; }
+      if (namedIdle != null) { Remember(namedIdlePid, smtc); return namedIdle; }
+      // Tier 3 只在真的只有一个 active 会话时可用；记住它，下次优先复用，避免这条时真时假
+      if (active.Count == 1) { Remember(activePids[0], smtc); return active[0]; }
       return null;
+    }
+    // 记下成功对号入座的 pid / 进程名，供下次 Find 先走缓存（用户 m04736）
+    static void Remember(int pid, string smtc) {
+      if (pid <= 0) return;
+      LastPid = pid;
+      LastSmtc = smtc ?? "";
+      try { LastName = Process.GetProcessById(pid).ProcessName; } catch { LastName = ""; }
     }
 
     // -1 means no matching audio session: caller must disable the slider and never touch system volume.
