@@ -260,3 +260,20 @@
 3. [已核验] `node scripts/e2e-music.mjs` → **PASS（38 过 / 0 败）**（`M2c` 只断言 `.music-title` 文本非空，不受影响）。
 4. [已核验] 截图 `.tmp/shot-music-title.png`（675×255）：歌名末尾显示省略号、右侧「暂无歌词」完整。
 5. [未核验] 真实超长歌名（用户那条 mp4 标题）在装机版的观感 —— 需用户看预览版确认 66% 这个比例是否合适（嫌窄可调到 72%，嫌宽可调到 60%）。
+
+### 修正（2026-11-16 14:35，用户 m02825「还是没有改好，整个篇幅太宽了」）
+
+1. [已核验] 第一版用 `max-width:66%` **无效**：百分比以 `.music-main` 可用宽为基准，而 `.music-main` 宽又由岛宽决定，形成「按比例算永远够宽」的循环——实测音乐页被顶到岛宽上限 `540` 视觉 px（布局 `720px`），比待办页 `285` 宽近一倍。
+2. [已核验] 改法：`.music-meta` 的 `max-width` 改为固定 `200px`（布局 px，视觉 150）。分档实测（临时注入样式，真鼠标 hover 保持展开）：
+
+   | `.music-title`/`.music-artist` 上限 | 岛视觉宽 | 布局宽 |
+   |---|---|---|
+   | 160 / 200px | 285 | 380px |
+   | 210px | 285 | 380px |
+   | 230px | 297.1 | 396.1px |
+   | 250px | 312.1 | 416.1px |
+
+   ⇒ 想与待办页同宽（285），歌名可用宽上限在 210px 布局 px 以内；最终取 `.music-meta: 200px`（其间 `.music-meta` 有 padding/border，实测歌名落在 150）。
+3. [已核验] 改后实测：`island {w:285, h:203.3}`、`layout:"380px"`、`meta:150`、`title:150`、`artist:150`、`lyric:36`（完整）、`bar/ctl:247.4`、`overflowEls:[]`（无元素越出岛右缘）。
+4. [已核验] `npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` PASS 38/0、`e2e-beautify-04` PASS 27/0、`e2e-head-order` PASS 14/0。截图 `.tmp/shot-music-fixed.png`。
+5. [未核验] 用户对 285 这个宽度的观感：音乐页现在与待办页同宽，若嫌窄可把 `.music-meta` 调到 `240px`（岛约 304.6 视觉 px）。
