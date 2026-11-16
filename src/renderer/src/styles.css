@@ -2369,18 +2369,28 @@ div.pm-row[draggable='true'] {
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
-/* 参考图布局（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」）：
-   封面行改成两栏 —— 左栏（封面 + 曲名/歌手）｜竖分隔线｜右栏歌词位。
-   左栏宽度被 .music-meta 的省略号上限钉住，右栏吃剩余宽度，整页因此比原来宽。
-   align-items:stretch 是为了让分隔线能拉满这一行的高度，不是居中 */
+/* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」）：
+   .music-main 横向两块 —— 左栏 .music-side（内部再竖排：.music-id 封面+曲名/歌手 / .music-progress 进度条+时间）｜
+   .music-divider 竖分隔线｜右栏 .music-lyric-slot 歌词位。
+   进度条因此在左栏内，宽度＝左栏宽，不再横穿整页。
+   align-items:stretch 是为了让分隔线拉满整行高度、右栏能上下居中 */
 .music-main {
   display: flex;
   align-items: stretch;
   gap: 14px;
   min-width: 0;
 }
+/* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽 */
 .music-side {
   flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* 左栏第一行：封面 + 文字 */
+.music-id {
   display: flex;
   align-items: center;
   gap: 12px;

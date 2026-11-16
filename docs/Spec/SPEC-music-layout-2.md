@@ -54,6 +54,19 @@
 
 ## 七、实现记录与自检
 
+### 7.0 修正（2026-11-16 15:30，用户 m03368「两边分开，你现在还是播放进度条横穿整个页面」）
+
+**第一版做错了**：只把「封面 + 曲名/歌手」与「歌词位」分成两栏，进度条仍留在 `.music-main` 之外的同级位置，所以它横穿整页（从岛左内边距一直到右内边距 390.8 宽），与参考图不符。参考图里进度条只占**左栏**宽度（宽度＝封面+曲名那一块的宽度），右栏是与它并排的整块歌词区。
+
+**改法**：
+1. `src/renderer/src/App.tsx`：把 `.music-progress`（含 `.music-seek`、`.music-bar`、`.music-times`）整段移进 `.music-side`，排在 `.music-id` 之后；左侧封面+文字再包一层 `.music-id`。
+2. `src/renderer/src/styles.css`：`.music-side` 由 `flex-direction:row` 改 `column`（`justify-content:center; gap:8px`）；新增 `.music-id{display:flex; align-items:center; gap:12px; min-width:0}`。
+3. 结构变为：`.music-main` → [`.music-side`( `.music-id` + `.music-progress` ) | `.music-divider` | `.music-lyric-slot` ]。
+
+**改后实测**：`side.w=249`、`progress.w=249`（**两者同宽，进度条不再横穿整页**）、`progress.x=19.8`（左对齐岛内边距）、`divider.x=279.3`、`lyric.x=290.6 w=120`、岛 `428.4×219.1`。改前 `progress.w=390.8`（横穿整行）。
+
+**自检**：`npm run typecheck` EXIT=0、`npm run build` EXIT=0、`node scripts/e2e-music.mjs` **PASS 38/0**（M2a 进度条仍在、M2j 拖拽热区仍在、U1 控制行仍居中）。
+
 ### 7.1 尺寸演进（CDP 实测，dev electron 9321 + 假 SMTC 会话）
 
 | 版本 | 封面 | `.music-meta` 上限 | 歌词栏 min | 岛视觉宽 | 问题 |

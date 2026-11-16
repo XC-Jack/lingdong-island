@@ -1973,31 +1973,54 @@ function MusicPanel(): React.JSX.Element {
 
   return (
     <div className="todo-panel music-panel">
-      {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」）：
-          封面行改两栏 —— 左栏封面+曲名/歌手，中间一条竖分隔线，右栏歌词位。
-          左栏宽度由 .music-meta 的省略号上限决定，右栏吃掉剩余宽度，所以整页比原来宽。
+      {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」，
+          2026-11-16 用户 m03368 指出进度条不该横穿整页）：
+          上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
+          中间一条竖分隔线；右栏＝歌词位，独占右侧、上下居中。
           歌词文本仍只放诚实占位「暂无歌词」（真歌词在用户 m02341 实测否决过，未重新授权） */}
       <div className="music-main">
         <div className="music-side">
-          {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
-          <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
-            {music?.cover && coverFailedFor !== music.cover ? (
-              <img
-                className="music-cover-img"
-                src={music.cover}
-                alt=""
-                onError={() => setCoverFailedFor(music.cover)}
-              />
-            ) : (
-              <IcoMusic />
-            )}
-          </div>
-          <div className="music-meta">
-            <div className="music-title" title={music?.title || '未知曲目'}>
-              {music?.title || '未知曲目'}
+          <div className="music-id">
+            {/* 真实封面：主进程从 SMTC Thumbnail 读出的 data URL；取不到或解码失败时回落音符占位 */}
+            <div className={`music-cover ${music?.playing ? 'playing' : ''}`} aria-hidden="true">
+              {music?.cover && coverFailedFor !== music.cover ? (
+                <img
+                  className="music-cover-img"
+                  src={music.cover}
+                  alt=""
+                  onError={() => setCoverFailedFor(music.cover)}
+                />
+              ) : (
+                <IcoMusic />
+              )}
             </div>
-            <div className="music-artist" title={music?.artist || music?.album || ''}>
-              {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+            <div className="music-meta">
+              <div className="music-title" title={music?.title || '未知曲目'}>
+                {music?.title || '未知曲目'}
+              </div>
+              <div className="music-artist" title={music?.artist || music?.album || ''}>
+                {music?.artist || music?.album || (music?.app ? music.app.replace(/\.exe$/i, '') : '—')}
+              </div>
+            </div>
+          </div>
+
+          {/* 进度条只占左栏宽度，不横穿整页（用户 m03368） */}
+          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
+            {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+            <div
+              className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+              ref={barRef}
+              onPointerDown={onSeekPointerDown}
+              onPointerMove={onSeekPointerMove}
+              onPointerUp={onSeekPointerUp}
+            >
+              <div className="music-bar">
+                <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
+              </div>
+            </div>
+            <div className="music-times">
+              <span className="music-time">{fmtDuration(live)}</span>
+              <span className="music-time">-{fmtDuration(remain)}</span>
             </div>
           </div>
         </div>
@@ -2006,25 +2029,6 @@ function MusicPanel(): React.JSX.Element {
             类名刻意不用 .music-lyric-line —— 那个选择器在 e2e-music 的 U4 里用来
             探测「有没有偷偷接联网歌词」，占位不能撞上它 */}
         <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
-      </div>
-
-      <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-        {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
-        <div
-          className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
-          ref={barRef}
-          onPointerDown={onSeekPointerDown}
-          onPointerMove={onSeekPointerMove}
-          onPointerUp={onSeekPointerUp}
-        >
-          <div className="music-bar">
-            <div className="music-bar-fill" style={{ transform: `scaleX(${pct})` }} />
-          </div>
-        </div>
-        <div className="music-times">
-          <span className="music-time">{fmtDuration(live)}</span>
-          <span className="music-time">-{fmtDuration(remain)}</span>
-        </div>
       </div>
 
       {/* 参考图（用户 m02652）：控制行＝左侧留白 / 中间三个播放按钮 / 右侧音量。
