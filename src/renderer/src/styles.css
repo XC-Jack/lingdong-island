@@ -90,27 +90,45 @@ body {
   /* 宽度由主进程按渲染层上报的内容宽度定窗口；这里用 max-content 让内容自然撑开 */
   flex-shrink: 0;
   width: max-content;
-  height: 42px;
-  border-radius: 21px;
+  /* 2026-11-16 用户 m01634「这个截图的 ui 可以大一点，字体粗一点，然后提高一点亮度，
+     效果不要太过，只提高一点」，随后又补「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：
+     第二版把收起态与展开态统一成同一套尺寸再整体放大——胶囊高 42→52、圆角 21→26、
+     内边距 16→19、间距 10→12，岛仔 22→28、时钟 17.5、电量环 27。
+     高度变化要同步主进程 COLLAPSED_WIN_HEIGHT 与 .collapsed-banner 的 top。 */
+  height: 52px;
+  border-radius: 26px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  gap: 10px;
+  padding: 0 19px;
+  gap: 12px;
   cursor: default;
   /* 横幅锚点：.collapsed-banner 相对本岛定位（覆盖在胶囊上方弹出） */
   position: relative;
 }
 
 .island.expanded {
-  /* 固定尺寸（2026-11-11 用户要求「不希望添加任务会拉伸界面，通知页和待办页也一样」）。
-     原来是 width/height: max-content + min/max 区间，内容多了岛就长高、日程页还比别的页宽 100px，
-     翻页和加条目时整块跟着跳。现在各页统一尺寸，内容超出就在列表内部滚动。
-     布局 px（zoom 0.75 之后视觉 330×189）；主进程 EXPANDED_MIN/MAX 与 expandedSize 按此同步。 */
+  /* 尺寸随内容自适应（2026-11-16 用户 m00791/m00795 推翻 2026-11-11 的固定尺寸决定）：
+     用户原话「下面的空间就是一块黑布……希望它可以根据里面的东西自行伸缩空间，当然也要有最大的范围」
+     「高度宽度都可以自适应」「达到最大限度，内容可以继续往里面放，通过滚轮查看，只显示 3 条」。
+     所以恢复成 max-content + min/max 夹逼：内容少就收（去掉空黑块），内容多就长，到上限为止，
+     超出上限的部分在列表内部滚动。
+     数值换算：这棵树在 .app 上 zoom:0.75，这里写布局 px。
+     2026-11-16 晚（用户 m01634 第二轮「里面的要和外面的统一一下，还可以再大一点」）：
+     头部状态区放大到 27px 电量环 + 17.5px 时钟后横向吃掉约 132 布局 px，居中后左缘压到
+     标题右缘（e2e-head-order 的 H5a 报 overlapTitle=true）。所以 min-width 300→340。
+     随后用户 m02546「每个界面的左上角的也统一一下」把页头徽章 26→30、标题 14→16/800，
+     逐页实测「置物架」这种三字标题在 340 时仍差 9 布局 px（gap -6.9 视觉 px），再提到 360。
+     布局 380~720 × 150~420 = 视觉 285~540 × 113~315，
+     与主进程 EXPANDED_MIN/EXPANDED_MAX 一一对应，改一边必须同步改另一边（src/main/index.ts:40-45）。 */
   flex-shrink: 0;
-  /* 高度 320 而不是按 0.75 等比（252）：日程页日历要放表头 + 6 行日期 + 内边距，
-     252 布局 px 下日历底部会被裁掉。320 是实测「日历刚好完整显示（calCH=calSH=203）」的最小值。 */
-  width: 470px;
-  height: 320px;
+  width: max-content;
+  min-width: 380px;
+  max-width: 720px;
+  height: max-content;
+  min-height: 150px;
+  /* 上限 420 布局 px（=视觉 315）沿用主进程 EXPANDED_MAX.height。
+     日程页日历要表头 + 6 行日期 + 内边距，2026-11-11 实测完整显示需要 320 布局 px 高，420 有余量。 */
+  max-height: 420px;
   border-radius: 26px;
   padding: 20px 24px;
   display: flex;
@@ -122,8 +140,9 @@ body {
 /* 新消息到岛横幅（US 通知图标故事）：显示在胶囊正下方，弹出/收回动画。
    参考苹果灵动岛：胶囊向下「鼓出」一小条再收回。
    位置换算：横幅相对 .app（position:relative，全窗口）定位。
-   收起窗口常驻高 88（主进程 COLLAPSED_WIN_HEIGHT）：胶囊 42 在窗口顶（flex-start），
-   top:48px = 胶囊下沿(42) + 6px 间隙，横幅 43px 高落在 48~91（窗口 88 内放得下主体）。
+   收起窗口常驻高由主进程 COLLAPSED_WIN_HEIGHT 决定（现在 76）：胶囊 52 布局 px 在窗口顶，
+   top:56px 布局 px = 胶囊下沿(52) + 4px 间隙，横幅落在胶囊下方。
+   2026-11-16 用户 m01634 把胶囊从 42 放大到 52，这里与主进程高度已同步改动。
    （不能放胶囊上方：岛贴屏幕顶 TOP_GAP=6，上方屏幕空间不足——第五轮截图实锤）
    （不能挂 .island 内：island overflow:hidden 会把超出胶囊的横幅整个裁掉——六轮排障最终根因） */
 .collapsed-banner {
@@ -132,7 +151,7 @@ body {
   /* 2026-11-11 独立验收（a54d9af）实测：整岛缩到 0.75 后收起窗口只有 144×67 逻辑 px，
      而横幅原来 max-width 300 / top 48 是按旧窗口（190×88）调的，长标题时左右各越出约 30px、
      底部越出 1.7px，肉眼可见被切。这里改成跟着窗口宽度走，并上移让底部留在窗口内。 */
-  top: 44px;
+  top: 56px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
@@ -274,8 +293,10 @@ body {
 }
 
 .collapsed-clock {
-  font-size: 15px;
-  font-weight: 600;
+  /* 2026-11-16 用户 m01634：字号 15→17.5、字重 600→800、亮度纯白；第二版再放大一档 */
+  font-size: 17.5px;
+  font-weight: 800;
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
 }
 
@@ -284,19 +305,21 @@ body {
 .collapsed-todo {
   display: flex;
   align-items: center;
-  color: rgba(125, 216, 125, 0.9);
+  /* 2026-11-16 用户 m01634：绿色 0.9 → 0.98，亮度提一点 */
+  color: rgba(125, 216, 125, 0.98);
 }
 
 .collapsed-todo-num {
-  font-size: 12.5px;
-  font-weight: 600;
+  /* 2026-11-16 用户 m01634：12.5→14.5、600→800，绿色也提一点亮度 */
+  font-size: 14.5px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .collapsed-battery {
-  font-size: 12px;
-  color: rgba(242, 243, 245, 0.55);
+  font-size: 14px;
+  color: rgba(242, 243, 245, 0.72);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -307,12 +330,19 @@ body {
   position: relative;
   display: inline-flex;
   align-items: center;
-  color: rgba(242, 243, 245, 0.92);
+  color: rgba(242, 243, 245, 0.98);
   cursor: pointer;
   border-radius: 4px;
 }
 .collapsed-bell:hover {
   color: #fff;
+}
+/* 2026-11-16 用户 m01634「里面的要和外面的统一一下」：铃铛原来没写尺寸、靠 svg 属性默认定
+   （实测视觉只有 11.3），比同一行的 Wi-Fi（13.5）小一圈，也和展开态（18px）不统一。补上 18px。 */
+.collapsed-bell svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .collapsed-bell:focus-visible {
   outline: 2px solid rgba(159, 139, 255, 0.9);
@@ -334,11 +364,12 @@ body {
 .collapsed-wifi {
   display: flex;
   align-items: center;
-  color: rgba(242, 243, 245, 0.82);
+  color: rgba(242, 243, 245, 0.94);
 }
 .collapsed-wifi svg {
-  width: 15px;
-  height: 15px;
+  /* 2026-11-16 用户 m01634：图标 15→18，跟着胶囊一起放大 */
+  width: 18px;
+  height: 18px;
 }
 .collapsed-wifi.offline {
   color: #ffb74d;
@@ -357,8 +388,9 @@ body {
 }
 
 .collapsed-pet {
-  width: 22px;
-  height: 22px;
+  /* 2026-11-16 用户 m01634：岛仔 22→28（第二版再放大一档），与展开态头部同一尺寸 */
+  width: 28px;
+  height: 28px;
   flex: none;
   animation: pet-breathe 3.2s ease-in-out infinite;
 }
@@ -434,6 +466,10 @@ body {
   gap: 10px;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  /* 2026-11-16 用户 m01634「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：
+     展开态状态区改成与收起态同一套尺寸（岛仔 28 + 间距 2 + 信息行 27 = 57 布局 px），
+     而 .head-status 是绝对定位不占流，所以这里给头部撑出足够高度，否则会压到下方内容。 */
+  min-height: 58px;
 }
 
 /* 展开态头部常驻状态区：绝对定位真正居中（margin:0 auto 会被 flex:1 的 spacer
@@ -468,8 +504,9 @@ body {
 }
 
 .head-status .collapsed-pet {
-  width: 16px;
-  height: 16px;
+  /* 2026-11-16 用户 m01634：16→28，与收起态岛仔同一套尺寸（收起态 24，这里再大一档） */
+  width: 28px;
+  height: 28px;
 }
 
 /* 岛仔独占上层（美化-03：不参与顺序排列，永远在信息行之上） */
@@ -490,53 +527,61 @@ body {
   display: none;
 }
 
-/* 展开态里信息行比收起态胶囊略小一圈，避免挤到标题行 */
+/* 展开态信息行（2026-11-16 用户 m01634「里面的要和外面的统一一下，还可以再大一点」）：
+   删掉原来那套「略小一圈」的覆盖值，改成与收起态胶囊同一套尺寸再放大一档——
+   时钟 15→17.5（新加粗到 800）、电量环 24→27、环内数字 9.5→10.5、Wi-Fi/铃铛 17→18。 */
 .head-info .collapsed-clock {
-  font-size: 12.5px;
+  font-size: 17.5px;
+  font-weight: 800;
+  color: #ffffff;
 }
 .head-info .head-battery-ring {
-  width: 20px;
-  height: 20px;
+  width: 27px;
+  height: 27px;
 }
 .head-info .head-battery-ring svg {
-  width: 20px;
-  height: 20px;
+  width: 27px;
+  height: 27px;
 }
 .head-info .head-battery-ring .ring-num {
-  font-size: 8px;
+  font-size: 10.5px;
+  font-weight: 700;
 }
 .head-info .collapsed-wifi svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
 }
 .head-info .collapsed-bell svg {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
 }
 
-/* 电量圆环（用户 m02391 截图：白圈 + 百分比数字居中，类似表盘）——收起态/展开态共用 */
+/* 电量圆环（用户 m02391 截图：白圈 + 百分比数字居中，类似表盘）——收起态/展开态共用。
+   2026-11-16 用户 m01634 要求「ui 大一点、字体粗一点、亮度提一点」，随后又补
+   「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：第二版统一到 27px、
+   环内数字 10.5px/700；展开态不再单独缩小（.head-info 段只保留同值覆盖）。 */
 .head-battery-ring {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 27px;
+  height: 27px;
   flex: none;
 }
 .head-battery-ring svg {
-  width: 22px;
-  height: 22px;
+  width: 27px;
+  height: 27px;
   display: block;
 }
 .head-battery-ring .ring-bg {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.16);
+  stroke: rgba(255, 255, 255, 0.2);
   stroke-width: 3;
 }
 .head-battery-ring .ring-fg {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.85);
+  stroke: rgba(255, 255, 255, 0.98);
   stroke-width: 3;
   stroke-linecap: round;
   transition: stroke-dasharray 400ms;
@@ -557,18 +602,22 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8.5px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.92);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.98);
   font-variant-numeric: tabular-nums;
 }
 
-/* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标） */
+/* 页头彩色徽章：圆角小方块托一枚图标（对照视频每页左上角的彩色图标）。
+   2026-11-16 用户 m02546「每个界面的左上角的也统一一下」：头部状态区放大后（时钟 17.5px/800、
+   电量环 27px），左上角徽章 26 与标题 14px/600 显小一圈，逐项提一档：
+   徽章 26→30、圆角 9→11、内图标 15→17；标题 14px/600 → 16px/800 且改纯白，
+   与状态区同一档而不是同一像素值（标题是文字块，和图标不必等宽）。 */
 .panel-badge {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   flex: none;
-  border-radius: 9px;
+  border-radius: 11px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -578,14 +627,14 @@ body {
 }
 
 .panel-badge svg {
-  width: 15px;
-  height: 15px;
+  width: 17px;
+  height: 17px;
 }
 
 .panel-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(242, 243, 245, 0.92);
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
 }
 
 /* 待办完成度（自启开关正下方一行）：美化-04 起左边多一个小圆环，右边仍是 0/0 纯数字。
@@ -645,41 +694,8 @@ body {
   flex: 1;
 }
 
-/* 开机自启开关（面板头右上角） */
-.autostart-toggle {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 11px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(242, 243, 245, 0.6);
-  transition: background 120ms, color 120ms;
-}
-
-.autostart-toggle:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: rgba(242, 243, 245, 0.85);
-}
-
-.autostart-toggle.on {
-  background: rgba(123, 87, 255, 0.25);
-  color: #cfc4ff;
-}
-
-.autostart-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(242, 243, 245, 0.35);
-}
-
-.autostart-toggle.on .autostart-dot {
-  background: #8b6bff;
-}
+/* 开机自启胶囊样式已删除（2026-11-16 用户 m01514「岛上的这个自启开关去掉吧，在设置页里即可」）。
+   唯一的开关在设置窗口「常规」分区，样式见 src/renderer/src/settings/settings.css 的 .set-switch。 */
 
 .panel-body {
   flex: 1;
@@ -780,6 +796,9 @@ body {
 .todo-list {
   flex: 0 1 auto;
   min-height: 0; /* 父级收缩链贯通后这里才能真的滚起来（US-037） */
+  /* 2026-11-16 用户 m00795：「只显示 3 条」，再多就靠滚轮在这条列表里看。
+     一行 34 布局 px + 6px 行距 ⇒ 3 条 = 34*3 + 6*2 = 114 布局 px（≈85 视觉 px）。 */
+  max-height: 114px;
   list-style: none;
   overflow-y: auto;
   scrollbar-width: none; /* Firefox 写法，Chromium 121+ 也支持 */
@@ -918,6 +937,9 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 岛宽改成随内容自适应后（2026-11-16），nowrap 长文本的 max-content 会一路把岛顶到
+     max-width 720。给个上限，让长文本照旧省略号截断，而不是把岛撑宽。 */
+  max-width: 300px;
 }
 
 .todo-del {
@@ -1103,14 +1125,16 @@ body {
 }
 
 /* 列表视图：列表本体限高内滚——shelf-drop 高度随内容自然增长时 overflow-y 永远不触发，
-   必须给列表一个确定的 max-height（高于 4 项后滚动），岛高上限交给主进程 clamp */
+   必须给列表一个确定的 max-height，岛高上限交给主进程 clamp。
+   2026-11-16 用户 m00795「只显示 3 条」：一行 34 布局 px + 6px 行距 + 列表自身 8px 上下内边距
+   ⇒ 3 条 = 34*3 + 6*2 + 8*2 = 130 布局 px（≈98 视觉 px），第 4 条起在列表内滚动。 */
 .shelf-drop.list {
   display: block;
   overflow: visible;
 }
 
 .shelf-drop.list .shelf-list {
-  max-height: 288px;
+  max-height: 130px;
 }
 
 .shelf-drop.over {
@@ -1170,7 +1194,10 @@ body {
 
 /* 横向滚动区：图标视图一排放不下时左右滚。
    max-width 是关键：不限制的话 nowrap 行的自然宽度会把整个岛（width:max-content）撑到 720 上限，
-   内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发 */
+   内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发。
+   2026-11-16 用户 m01366「显示太多了，4个最多」：宽度按「正好放下 4 格」算，
+   多出来的格子靠左右箭头（首尾循环）和滚轮查看。
+   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ lg 380 / md 300 / sm 236。 */
 .shelf-hscroll {
   display: flex;
   align-items: center;
@@ -1182,10 +1209,18 @@ body {
 .shelf-strip {
   flex: 1;
   min-width: 0;
-  max-width: 460px;
+  max-width: 380px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+}
+
+.shelf-drop.md .shelf-strip {
+  max-width: 300px;
+}
+
+.shelf-drop.sm .shelf-strip {
+  max-width: 236px;
 }
 
 .shelf-strip::-webkit-scrollbar {
@@ -1218,6 +1253,10 @@ body {
 .shelf-cell {
   position: relative;
   width: 84px;
+  /* 不许被 flex 压缩（2026-11-16 用户 m01366「显示太多了，4个最多」）：
+     网格是 flex + nowrap，子项默认 flex-shrink:1，容器一窄就把每格压扁、
+     一屏反而塞进 6~8 个。锁定格子宽度后，「一屏 4 个」才真正成立。 */
+  flex: none;
 }
 
 .shelf-cell-body {
@@ -1488,8 +1527,18 @@ body {
   margin: 0;
   padding: 2px 4px;
   width: 100%;
+  /* 2026-11-16 用户 m02896「这个通知消息的也改一下，宽幅有点长」：
+     通知标题是 nowrap + ellipsis，但整行被超长标题撑到岛宽上限 540 视觉 px。
+     这里给列表一个固定上限 300px（布局 px；.app 上 zoom:.75，视觉 225），
+     与音乐页同思路——百分比在宽岛上等于没限制，实测 300 对应岛宽 285（与待办页一致）。
+     分档实测：220/260/300/330 布局 px 岛宽都是 285，360 才涨到 307.6，取 300 留足歌名/标题空间。 */
+  max-width: 300px;
   flex: 0 1 auto;
   min-height: 0; /* 收缩链贯通后通知多了在岛内滚动（US-037） */
+  /* 2026-11-16 用户 m00795「只显示 3 条」：通知行最高 40 布局 px + 6px 行距
+     ⇒ 3 条 = 40*3 + 6*2 = 132 布局 px（≈99 视觉 px），第 4 条起在列表内滚动。
+     实测 40.4px 的行加 2px 内边距后 132 只能露出 2 条，抬到 136 保证 3 条稳定可见。 */
+  max-height: 136px;
   overflow-y: auto;
   scrollbar-width: none; /* 不显示滚动条，与待办/日程列表一致（US-037） */
   display: flex;
@@ -1910,6 +1959,16 @@ body {
   background: rgba(255, 255, 255, 0.045);
 }
 
+/* 2026-11-16 用户 m03042：截图里「主干和分支隔得有点开，主干下面和时间打架」。
+   真因是 .notify-item 没换行——展开后 .notify-sublist 作为第三个 flex item
+   和主干并排横挤，把 .notify-body 压成 0 宽（实测 w=0），时间就叠到了图标上。
+   这里让组条目允许换行，分支独占下一行。 */
+.notify-group {
+  flex-wrap: wrap;
+  /* 换行后 flex 的 gap 会同时作用于行距，7px 看着略空；行距收到 3px（用户 m03042「距离可以缩短」） */
+  row-gap: 3px;
+}
+
 .notify-item:hover {
   background: rgba(140, 110, 255, 0.12);
 }
@@ -1941,17 +2000,27 @@ body {
 .notify-more-hint {
   color: rgba(255, 255, 255, 0.45);
   font-size: 10px;
-  margin-left: 4px;
+  /* 2026-11-16 用户 m02896：通知列表收窄到 300px 后，「（等 N 条）」原本作为行内 span
+     会跟着超长标题一路排到岛外（实测右缘 340.3 超出岛 285.7）。
+     .notify-title 改成 flex 后这里必须是 flex:none —— 否则弹性收缩会把它压成「（…」，
+     标题文本自己带省略号让位即可。 */
+  flex: none;
+  white-space: nowrap;
 }
-/* 单级缩进：展开后的具体条目列表挂在 li 内 */
+/* 单级缩进：展开后的具体条目列表挂在 li 内
+   2026-11-16 用户 m03042「两个之间的距离可以缩短」：原来 margin 是 `2px 0 2px 14px`，
+   加上主干自身 padding 底部 4px，视觉上分支离主干有一小段空档。压到 0 上边距、缩进收到 8px。 */
 .notify-sublist {
   list-style: none;
-  margin: 2px 0 2px 14px;
+  margin: 0 0 0 8px;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  width: calc(100% - 14px);
+  /* 缩进收到 8px 后宽度同步（原来按 14px 算，收窄后会溢出一个 padding 的宽度） */
+  width: calc(100% - 8px);
+  /* 分支独占一行，不被 flex 收缩 */
+  flex: 0 0 auto;
 }
 .notify-leaf > .notify-body {
   padding-left: 8px;
@@ -2013,18 +2082,45 @@ body {
   gap: 1px;
 }
 
+/* 应用名与标题同排（2026-11-16 用户 m00795「只显示 3 条」）：
+   原来应用名单独占一行，没图标的条目因此比有图标的高一行（54 vs 40 布局 px），
+   行高不一致时固定 max-height 会把第 3 条切掉。同排后两种条目行高一致。 */
+.notify-line {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
 .notify-app {
+  flex: none;
   font-size: 10px;
   color: #9f8bff;
 }
 
 .notify-title {
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   line-height: 1.35;
   color: #f2f3f5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 2026-11-16 用户 m02896：标题行要同时装「标题 + （等 N 条）」，用的是 flex，
+     超长标题在 .notify-title-text 内部省略，右侧提示不被推出岛外。 */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+/* 标题文本本身承担省略号（父级 .notify-title 改成 flex 后不再直接吃 text-overflow） */
+.notify-title-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .notify-text {
@@ -2320,6 +2416,13 @@ div.pm-row[draggable='true'] {
 .music-meta {
   flex: 1 1 auto;
   min-width: 0;
+  /* 2026-11-16 用户 m02666「这个音乐名太长了，我觉得可以后面的用省略号或者隐藏起来」，
+     随后 m02825「还是没有改好，整个篇幅太宽了」：
+     第一版给的是 max-width:66%，按比例算在宽岛上等于没限制——实测音乐页被顶到岛宽上限
+     540 视觉 px（布局 720px），比待办页 285 宽一倍。改成分档固定上限 200px（布局 px），
+     实测岛宽收到 285 视觉 px、与待办页一致，歌名在 150px 内出省略号。
+     注意这是「布局 px」，.app 上有 zoom:.75，视觉值 = 该值 × 0.75。 */
+  max-width: 200px;
   display: flex;
   flex-direction: column;
   gap: 4px;

@@ -245,18 +245,19 @@ try {
     await sleep(700)
   }
 
-  // ========== S9 自启状态双向同步（独立验收阻断项 B2 的回归） ==========
+  // ========== S9 自启：设置页是唯一入口 + 广播仍然生效 ==========
+  // 2026-11-16 用户 m01514「岛上的这个自启开关去掉吧，在设置页里即可」：
+  // 岛头部那枚 .autostart-toggle 胶囊已删，原来的 S9a/S9c/S9d 依赖点胶囊，改写为
+  // 「确认岛上没有胶囊 + 设置页开关能改主进程 + 主进程变化仍会广播到设置页」。
   {
     // 自启会真的改注册表，先记原值（模块级变量，finally 里兜底恢复）
     const orig = await islandEval(`window.island.autostartGet()`)
     autostartOrig = orig
-    // 展开岛，头部那枚胶囊才在 DOM 里
+    // 展开岛，确认头部没有胶囊了
     await islandEval(`(() => { const el = document.querySelector('.island'); if (el && !el.className.includes('expanded')) el.click(); return 'ok' })()`)
     await sleep(900)
-    const islandAuto = () => islandEval(`(() => { const e = document.querySelector('.autostart-toggle'); return e ? (e.className.includes('on') ? 1 : 0) : -1 })()`)
-    ok('S9a 展开态头部有自启胶囊且状态与主进程一致',
-      (await islandAuto()) === (orig ? 1 : 0),
-      `主进程 ${orig}，胶囊 ${await islandAuto()}`)
+    const chipCount = await islandEval(`document.querySelectorAll('.autostart-toggle').length`)
+    ok('S9a 岛上不再有自启胶囊（用户 m01514 起只在设置页）', chipCount === 0, `胶囊数=${chipCount}`)
 
     // 在设置窗口「常规」点开关
     await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('常规')); if (b) b.click(); return 'ok' })()`)
@@ -266,18 +267,16 @@ try {
 
     const flipped = await islandEval(`window.island.autostartGet()`)
     ok('S9b 设置窗口改自启后主进程状态已翻转', flipped === !orig, `原 ${orig}，现 ${flipped}`)
-    const islandAfter = await islandAuto()
-    ok('S9c 岛头部胶囊当场跟着变（autostart:changed 广播生效，未重启）',
-      islandAfter === (flipped ? 1 : 0),
-      `主进程 ${flipped}，胶囊 ${islandAfter}`)
+    const switchAfter = await settingsEval(`(() => { const s = document.querySelector('.set-switch'); return s ? (s.getAttribute('aria-checked') === 'true' ? 1 : 0) : -1 })()`)
+    ok('S9c 设置窗口开关显示与主进程一致', switchAfter === (flipped ? 1 : 0), `主进程 ${flipped}，开关 ${switchAfter}`)
 
-    // 反向：设置窗口的开关也要跟随岛那边的改动
-    await islandEval(`(() => { const e = document.querySelector('.autostart-toggle'); if (e) e.click(); return 'ok' })()`)
+    // 反向：主进程状态被别处改掉，设置窗口要跟着变（autostart:changed 广播仍然生效）
+    await islandEval(`window.island.autostartSet(${!flipped})`)
     await sleep(1200)
-    const backAgain = await islandEval(`window.island.autostartGet()`)
-    ok('S9d 从岛侧改回后主进程恢复原值', backAgain === orig, `原 ${orig}，现 ${backAgain}`)
-    const switchState = await settingsEval(`(() => { const s = document.querySelector('.set-switch'); return s ? (s.getAttribute('aria-checked') === 'true' ? 1 : 0) : -1 })()`)
-    ok('S9e 设置窗口开关反向跟随岛侧改动', switchState === (orig ? 1 : 0), `主进程 ${orig}，开关 ${switchState}`)
+    const setByIpc = await islandEval(`window.island.autostartGet()`)
+    ok('S9d 从 IPC 侧改自启后主进程已变', setByIpc === !flipped, `期望 ${!flipped}，实际 ${setByIpc}`)
+    const switchFollow = await settingsEval(`(() => { const s = document.querySelector('.set-switch'); return s ? (s.getAttribute('aria-checked') === 'true' ? 1 : 0) : -1 })()`)
+    ok('S9e 设置窗口开关跟随主进程广播（autostart:changed 生效，未重启）', switchFollow === (setByIpc ? 1 : 0), `主进程 ${setByIpc}，开关 ${switchFollow}`)
 
     // 正常路径先恢复（finally 里还有一道兜底，见 restoreAutostart）
     await restoreAutostart()

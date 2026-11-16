@@ -350,7 +350,11 @@ try {
 
     // H5：不重叠、不外溢
     ok('H5a 状态区与左侧标题不重叠', head.overlapTitle === false, `overlapTitle=${head.overlapTitle}`)
-    ok('H5b 状态区与右侧自启开关不重叠', head.overlapAuto === false, `overlapAuto=${head.overlapAuto}`)
+    // 2026-11-16 用户 m01514：岛头部那枚自启胶囊已删（只在设置页留开关）。
+    // 原 H5b 断言「状态区与右侧自启开关不重叠」，胶囊删掉后 autoR 恒为 null、overlap 恒 false，
+    // 变成空断言；改为直接断言胶囊不存在，顺带防它被误加回来挤坏头部布局。
+    const autoChip = await cdpEval(`document.querySelectorAll('.autostart-toggle').length`)
+    ok('H5b 头部不再有自启胶囊（用户 m01514 起只在设置页）', autoChip === 0, `胶囊数=${autoChip}`)
     ok('H5c .head-status 完整落在岛内', head.statusInsideIsland === true, `statusInsideIsland=${head.statusInsideIsland}`)
 
     // H6：与收起态相对顺序一致

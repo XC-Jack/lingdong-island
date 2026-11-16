@@ -805,8 +805,44 @@ function ShelfPanel(): React.JSX.Element {
     return () => ro.disconnect()
   }, [view, updateCanScroll])
 
+  // 滚轮滚动：竖向滚轮转成横向滚（用户 m01366「支持滚轮滚动」）。
+  // 必须用原生 addEventListener + passive:false，React 的 onWheel 是 passive 的，preventDefault 会被忽略。
+  // 依赖里必须带 items.length：首帧 items 还是空数组时 .shelf-strip 根本没渲染，ref 是 null，
+  // 只依赖 [view] 会让这个 effect 永远拿不到节点、滚轮监听压根没挂上（2026-11-16 实测踩到）。
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      const max = el.scrollWidth - el.clientWidth
+      if (max <= 1) return
+      const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+      if (delta === 0) return
+      e.preventDefault()
+      // 到两端继续滚就绕回另一头（用户 m01366「左右两边的滚动循环」）
+      let next = el.scrollLeft + delta
+      if (next > max) next = 0
+      else if (next < 0) next = max
+      el.scrollLeft = next
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [view, items.length])
+
+  /** 两侧箭头：到头再点一次就绕到另一头（循环，用户 m01366 要求） */
   const scrollBy = (dir: number): void => {
-    scrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' })
+    const el = scrollRef.current
+    if (!el) return
+    const max = el.scrollWidth - el.clientWidth
+    if (max <= 1) return
+    if (dir > 0 && el.scrollLeft >= max - 1) {
+      el.scrollTo({ left: 0, behavior: 'smooth' })
+      return
+    }
+    if (dir < 0 && el.scrollLeft <= 1) {
+      el.scrollTo({ left: max, behavior: 'smooth' })
+      return
+    }
+    el.scrollBy({ left: dir * 220, behavior: 'smooth' })
   }
 
   useEffect(() => {
@@ -1247,10 +1283,12 @@ function NotifyPanel({
    * 2026-11-11 用户实机反馈后调整：①去掉原来的「打开」按钮（点了没效果，正文点击已经能打开，
    * 组条目的正文点击被「展开/收起」占用，要打开就展开到具体条目再点）；②蓝点从时间左边
    * 挪到时间右边，成为整行的最右端标记，扫一眼就能看出哪几条没读。
+   * 2026-11-16 用户 m03042「可以把主干下面的这个时间给去掉」：组条目（主干）不再显示时间，
+   * 只留未读蓝点——组内每条自己带时间，展开就能看到，主干那条反而和图标/标题挤在一起。
    */
-  const renderSide = (arrival: number, unread: boolean): React.JSX.Element => (
+  const renderSide = (arrival: number, unread: boolean, showTime = true): React.JSX.Element => (
     <span className="notify-side">
-      <span className="notify-time">{fmtRel(arrival)}</span>
+      {showTime && <span className="notify-time">{fmtRel(arrival)}</span>}
       {unread && <i className="notify-unread" title="未读" />}
     </span>
   )
@@ -1344,15 +1382,20 @@ function NotifyPanel({
                 >
                   {renderIcon(g.icon, g.app, g.list.length)}
                   <span className="notify-main">
-                    {!g.icon && <span className="notify-app">{g.app}</span>}
-                    <span className="notify-title">
-                      {latest.title}
-                      {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
+                    {/* 应用名与标题同排（2026-11-16 用户 m00795「只显示 3 条」）：
+                        原来应用名单独占一行，导致没图标的条目 3 行、有图标的 2 行，
+                        行高不一致时按固定高度裁切会切掉第 3 条。同排后行高统一。 */}
+                    <span className="notify-line">
+                      {!g.icon && <span className="notify-app">{g.app}</span>}
+                      <span className="notify-title">
+                        <span className="notify-title-text">{latest.title}</span>
+                        {g.list.length > 1 && <span className="notify-more-hint">（等 {g.list.length} 条）</span>}
+                      </span>
                     </span>
                     {latest.body && <span className="notify-text">{latest.body}</span>}
                   </span>
                 </button>
-                {renderSide(latest.arrival, latest.order > lastOrder)}
+                {renderSide(latest.arrival, latest.order > lastOrder, false)}
                 {isOpen && (
                   <ul className="notify-sublist">
                     {g.list.map((it) => (
@@ -1365,8 +1408,10 @@ function NotifyPanel({
                         >
                           {renderIcon(it.icon, it.app, 1)}
                           <span className="notify-main">
-                            {!it.icon && <span className="notify-app">{it.app}</span>}
-                            <span className="notify-title">{it.title}</span>
+                            <span className="notify-line">
+                              {!it.icon && <span className="notify-app">{it.app}</span>}
+                              <span className="notify-title"><span className="notify-title-text">{it.title}</span></span>
+                            </span>
                             {it.body && <span className="notify-text">{it.body}</span>}
                           </span>
                         </button>
@@ -2107,8 +2152,6 @@ export default function App(): React.JSX.Element {
       alive = false
     }
   }, [])
-  // 开机自启开关状态（null=未取到）
-  const [autoStart, setAutoStart] = useState<boolean | null>(null)
   // 通知未读数（收起态红点用；仅在通知页加载/标记时更新）
   const [notifyUnread, setNotifyUnread] = useState(0)
   // 新消息到岛横幅（参考苹果灵动岛）：收起态弹「图标+应用名+标题」，5 秒后收回；
@@ -2294,29 +2337,10 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
-  // 开机自启：读初始状态
-  useEffect(() => {
-    let alive = true
-    void window.island.autostartGet().then((on) => {
-      if (alive) setAutoStart(on)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  // 开机自启：设置窗口改了开关要同步到这里（SPEC-settings-shell 阻断项 B2）。
-  // 头部那枚胶囊和设置窗口「常规」分区是两处独立渲染，靠主进程 autostart:changed 广播对齐。
-  useEffect(() => {
-    const off = window.island.onAutostartChanged((on) => setAutoStart(on))
-    return off
-  }, [])
-
-  const flipAutoStart = useCallback((): void => {
-    const next = !(autoStart === true)
-    setAutoStart(next) // 乐观更新，主进程会回真实值
-    void window.island.autostartSet(next).then((real) => setAutoStart(real))
-  }, [autoStart])
+  // 开机自启：岛头部那枚胶囊 2026-11-16 按用户 m01514「岛上的这个自启开关去掉吧，
+  // 在设置页里即可」删除，岛内不再渲染、也不再订阅 autostart 状态。
+  // 唯一的开关在设置窗口「常规」分区（src/renderer/src/settings/SettingsApp.tsx），
+  // 主进程 IPC `autostart:get`/`autostart:set`/`autostart:changed` 全部保留不动。
 
   // 状态变化时同步给主进程，由它调整窗口尺寸
   useEffect(() => {
@@ -2770,21 +2794,9 @@ export default function App(): React.JSX.Element {
                   {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
                 </span>
               </span>
-              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度+自启开关推到右侧，
+              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度推到右侧，
                   与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
               <span className="panel-head-spacer" />
-              <button
-                type="button"
-                className={`autostart-toggle ${autoStart ? 'on' : ''}`}
-                title={autoStart ? '开机自启已开启，点击关闭' : '开机自启已关闭，点击开启'}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipAutoStart()
-                }}
-              >
-                <span className="autostart-dot" />
-                {autoStart === null ? '自启…' : autoStart ? '自启开' : '自启关'}
-              </button>
               {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
                   右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
                   e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}
