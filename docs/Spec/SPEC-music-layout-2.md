@@ -269,3 +269,37 @@
 - [未核验] 「右栏 260 / 左栏 212」这个比例你看着合不合适（再宽就是改 `.music-lyric-slot` 的 `flex-basis` 与 `.music-panel.lyric-open .music-control-row` 的第二段列宽，两处要同步）。
 - [未核验] 岛从 285 长到 413 的宽度过渡（`.island` 的 220ms width 过渡）在真机的手感。
 - [未核验] 歌词栏里只放「暂无歌词」占位、没有真歌词，是否可接受（歌词已在 m02341 否决）。
+
+### 7.9 第七轮修正（2026-11-16 16:22，用户 m03950「右边这一块空出来干嘛，去掉，让他们直接位于中心」）
+
+**用户原话**：
+
+> 你右边这一块空出来干嘛，去掉，让他们直接位于中心即可
+
+**问题**：7.8 只把右栏设成 `display:none`，但 `.music-main` 与 `.music-control-row` 仍是 `justify-content:flex-start`（7.8 为了开栏对齐改的）⇒ 收起态左栏被顶在左边、右边空出 88 视觉 px 的空白。
+
+**做法**（只改 `src/renderer/src/styles.css` 两处）：
+
+1. `.music-main` 加 `justify-content:center`；`.music-panel.lyric-open .music-main{justify-content:flex-start}`。
+2. `.music-control-row` 单栏的 `justify-content` 由 `start` 改回 `center`；`.music-panel.lyric-open .music-control-row` 由 `center` 改 `flex-start`。
+
+即「默认居中、开栏才贴左」——两个容器始终同侧，不会互相错位。
+
+**实测** [已核验，`.tmp/word/push.mjs`]：
+
+| 指标 | 收起（默认） | 点「词」后 |
+|---|---|---|
+| 岛 | 285×219.1 | 413.4×219.1 |
+| `.music-side` | **x63.7**、宽 159 | x19.7、宽 159 |
+| `.music-ctl` | **x63.7** | x19.7 |
+| 左右留白 | 左 63.7 / 右 63.7（居中对称） | 左 19.7 / 右 19.7 |
+| `.music-divider` / `.music-lyric-slot` | `none` / `none` | `block`（x189.2）/ `flex`（x200.5、宽 195） |
+
+⇒ 收起态左右留白完全对称（各 63.7），内容真居中；开栏后两个容器一起贴左，竖线与歌词栏接在后面。
+
+**自检** [已核验]：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 43 过 / 0 败**、`e2e-music-session` PASS 20/0、`e2e-head-order` PASS 14/0、`e2e-beautify-04` PASS 27/0。截图 `.tmp/word/shot-lyric-closed.png`（358×275）、`.tmp/word/shot-lyric-open.png`（519×275）。
+
+**仍未核验**：
+
+- [未核验] 居中后你是否满意（左栏整块现在离岛左缘 63.7 视觉 px）。
+- [未核验] 岛从 285 撑到 413 时内容整体左移 + 岛变宽的混合动画手感。

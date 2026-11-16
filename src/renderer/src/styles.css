@@ -2381,6 +2381,13 @@ div.pm-row[draggable='true'] {
   align-items: stretch;
   gap: 14px;
   min-width: 0;
+  /* 收起态右栏不渲染，若继续 flex-start 左栏会贴左、右边空出一大块（用户 m03950
+     「你右边这一块空出来干嘛，去掉，让他们直接位于中心即可」）。
+     默认把左栏居中；开歌词栏时再贴左，好让竖线与右栏接在后面 */
+  justify-content: center;
+}
+.music-panel.lyric-open .music-main {
+  justify-content: flex-start;
 }
 /* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽 */
 .music-side {
@@ -2543,14 +2550,14 @@ div.pm-row[draggable='true'] {
   grid-template-columns: 212px;
   column-gap: 14px;
   align-items: center;
-  /* 单栏时必须左对齐：居中会把 212 的列推到容器中间，
-     控制行就跟上面的左栏错开 17 布局 px（实测 ctl x63.7 vs side x19.5） */
-  justify-content: start;
+  /* 收起态与 .music-main 一样居中（用户 m03950「让他们直接位于中心即可」）；
+     开歌词栏时才贴左，与上方三栏对齐 */
+  justify-content: center;
   width: 100%;
 }
 .music-panel.lyric-open .music-control-row {
   grid-template-columns: 212px 1px 260px;
-  justify-content: center;
+  justify-content: flex-start;
 }
 /* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
    主按钮（播放/暂停）实心、比两侧大一档。
