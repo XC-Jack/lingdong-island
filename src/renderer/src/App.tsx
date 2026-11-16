@@ -2065,6 +2065,13 @@ function MusicPanel(): React.JSX.Element {
 
   // 当前该高亮第几句：取「开始时间 ≤ 当前播放位置」的最后一行。没拿到歌词就是 -1
   const lyricLines = lyric?.ok && lyric.lines.length > 0 ? lyric.lines : []
+  /**
+   * 用户 m06418「歌词依旧没反应」：实测《戒烟》第一句在 20.97 秒，前 21 秒全是前奏——
+   * 本来就一句都不该亮。但「一片灰、没一个亮」在用户眼里就是坏了。
+   * 所以前奏期给两个明确信号：①第一句单独提亮一档（.music-lyric-row.next）；
+   * ②歌词栏底部一行「前奏中 · 还有 N 秒开唱」。
+   * preludeLeft 只在「有歌词、还没到第一句」时有值，其余为 0。
+   */
   const lyricActive = useMemo(() => {
     if (lyricLines.length === 0) return -1
     let idx = -1
@@ -2074,6 +2081,8 @@ function MusicPanel(): React.JSX.Element {
     }
     return idx
   }, [lyricLines, shownPos])
+  const preludeLeft =
+    lyricLines.length > 0 && lyricActive === -1 ? Math.max(0, lyricLines[0].time - shownPos) : 0
 
   /**
    * 让当前那句始终停在歌词栏正中：每句平均约 20~30 布局 px 高，
@@ -2363,18 +2372,28 @@ function MusicPanel(): React.JSX.Element {
           {lyricLoading ? (
             <span className="music-lyric-tip">正在查歌词…</span>
           ) : lyricLines.length > 0 ? (
-            <div className="music-lyric-scroll" ref={lyricScrollRef}>
-              {lyricLines.map((ln, i) => (
-                <div
-                  key={`${ln.time}-${i}`}
-                  ref={i === lyricActive ? lyricActiveRef : null}
-                  className={`music-lyric-row ${i === lyricActive ? 'active' : ''}`}
-                  data-time={ln.time}
-                >
-                  {ln.text}
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="music-lyric-scroll" ref={lyricScrollRef}>
+                {lyricLines.map((ln, i) => (
+                  <div
+                    key={`${ln.time}-${i}`}
+                    ref={i === lyricActive ? lyricActiveRef : null}
+                    className={`music-lyric-row ${i === lyricActive ? 'active' : ''}${
+                      preludeLeft > 0 && i === 0 ? ' next' : ''
+                    }`}
+                    data-time={ln.time}
+                  >
+                    {ln.text}
+                  </div>
+                ))}
+              </div>
+              {/* 前奏期（还没到第一句）给一行明确倒计时，免得一片灰看着像坏了——用户 m06418 */}
+              {preludeLeft > 0 ? (
+                <span className="music-lyric-tip music-lyric-prelude">
+                  前奏中 · 还有 {Math.ceil(preludeLeft)} 秒开唱
+                </span>
+              ) : null}
+            </>
           ) : (
             <>
               <span className="music-lyric-tip">暂无歌词</span>

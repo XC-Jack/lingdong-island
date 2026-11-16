@@ -2577,6 +2577,20 @@ div.pm-row[draggable='true'] {
   transform: scale(1.02);
 }
 
+/* 用户 m06418「歌词依旧没反应」：前奏还没到第一句时，把第一句先提亮一档，
+   让用户看到「下一句马上要来」，而不是满屏灰字以为坏了。 */
+.music-lyric-row.next {
+  color: rgba(242, 243, 245, 0.66);
+  font-weight: 600;
+}
+
+/* 前奏倒计时那行：比普通提示更小更淡，不抢歌词的注意力 */
+.music-lyric-prelude {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.3);
+  letter-spacing: 0.2px;
+}
+
 /* 占位与说明：加载中 / 暂无歌词 / 没查到的原因 */
 .music-lyric-tip {
   flex: 0 0 auto;
