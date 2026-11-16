@@ -2479,7 +2479,8 @@ div.pm-row[draggable='true'] {
    2026-11-16 用户 m03435「尽量和右边对称」：从左栏剩下的弹性宽度改成与左栏同定宽 212，
    两栏等比，分隔线正好在正中间 */
 .music-lyric-slot {
-  flex: 0 0 212px;
+  /* 用户 m03840「宽一点看看」：歌词栏比左栏宽一档（布局 260，左栏 212） */
+  flex: 0 0 260px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -2536,15 +2537,20 @@ div.pm-row[draggable='true'] {
    整组在左栏（＝封面＋歌名那块）内居中 ⇒ 加了右边两件之后，播放/切歌自然向左让位，
    既满足「整体向左移」，也仍然落在歌名正下方 */
 .music-control-row {
-  /* position:relative 是给歌词页（.music-lyric-pop）当定位参考系的：
-     它从这个行右上角向上弹出、盖住右栏那块（用户 m03579） */
-  position: relative;
   display: grid;
-  grid-template-columns: 212px 1px 212px;
+  /* 默认单栏：右栏不渲染时不能让固定列宽把岛撑住（否则岛缩不回去）。
+     开歌词栏后变成与 .music-main 一致的三栏（左 212 / 竖线 1 / 右 260） */
+  grid-template-columns: 212px;
   column-gap: 14px;
   align-items: center;
-  justify-content: center;
+  /* 单栏时必须左对齐：居中会把 212 的列推到容器中间，
+     控制行就跟上面的左栏错开 17 布局 px（实测 ctl x63.7 vs side x19.5） */
+  justify-content: start;
   width: 100%;
+}
+.music-panel.lyric-open .music-control-row {
+  grid-template-columns: 212px 1px 260px;
+  justify-content: center;
 }
 /* 控制条：参考图（用户 m02652）播放按钮回到进度条下方、居中独立一行。
    主按钮（播放/暂停）实心、比两侧大一档。
@@ -2769,97 +2775,19 @@ div.pm-row[draggable='true'] {
   color: #ff8fa3;
 }
 
-/* 歌词页（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
-   位置：从控制行右上角弹出、向上盖住右栏那块区域（.music-lyric-slot 所在处），
-   宽 212 布局 px（＝右栏宽）、高 96 布局 px（＝封面上方到控制行约 100，留一点边）。
-   默认 visibility:hidden + opacity:0 + pointer-events:none，点「词」后才 .open。
-   内容只有诚实占位文案：歌词在用户 m02341 实测否决过，这里既不联网也不编造 */
-.music-lyric-pop {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+/* 歌词栏开合（用户 m03837「我指的是整个右边隐藏了…按了歌词，就会把 ui 挤到左边，然后竖线隔开出现歌词」）。
+   默认只渲染左栏 ⇒ 右栏与竖线都不占位，岛自动缩回窄态；点「词」后岛变宽、左侧内容被挤到左边，
+   中线出现那条竖线、右侧多出歌词栏。右栏比左栏宽一点（用户 m03840「宽一点看看」）：左 212、右 260（布局 px）。
+   栏里仍只有诚实占位——歌词内容在用户 m02341 实测否决过，这里不联网、不编造 */
+.music-divider,
+.music-lyric-slot {
+  display: none;
+}
+.music-panel.lyric-open .music-divider {
+  display: block;
+}
+.music-panel.lyric-open .music-lyric-slot {
   display: flex;
-  flex-direction: column;
-  width: 212px;
-  /* 高度上限对齐右栏（布局 76.5）：再高就会顶到上面的状态区（电量环/时钟/铃铛） */
-  max-height: 82px;
-  padding: 8px 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(28, 26, 34, 0.98);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(4px);
-  transition: opacity 140ms ease, transform 140ms ease;
-  z-index: 5;
-}
-.music-lyric-pop.open {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-.music-lyric-pop-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-.music-lyric-pop-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: rgba(242, 243, 245, 0.94);
-}
-.music-lyric-pop-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(242, 243, 245, 0.8);
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-}
-.music-lyric-pop-close:hover {
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-.music-lyric-pop-body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-top: 6px;
-  min-height: 0;
-  overflow: hidden;
-}
-.music-lyric-pop-empty {
-  flex: 0 0 auto;
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(242, 243, 245, 0.82);
-}
-.music-lyric-pop-hint {
-  flex: 0 0 auto;
-  margin: 0;
-  font-size: 10px;
-  line-height: 1.4;
-  color: rgba(242, 243, 245, 0.42);
-}
-@media (prefers-reduced-motion: reduce) {
-  .music-lyric-pop {
-    transition: none;
-  }
 }
 /* 对不上当前播放应用时：整块置灰、滑块不可拖，绝不让用户误以为能调系统音量 */
 .music-volume.off {

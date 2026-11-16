@@ -345,34 +345,74 @@ try {
       ok('U1c 喇叭右边有「词」按钮且完全在岛内（用户 m03577）',
         wordUi && wordUi.found === true && wordUi.text === '词' && wordUi.gap >= 0 && wordUi.gap <= 24 && wordUi.insideIsland === true,
         JSON.stringify(wordUi))
-      const lyricPopBefore = await islandEval(`(() => { const p = document.querySelector('.music-lyric-pop'); return p ? getComputedStyle(p).visibility : null })()`)
-      ok('U1d 歌词页平时不显示（用户 m03579「不然则消失，不显示」）', lyricPopBefore === 'hidden', `visibility=${lyricPopBefore}`)
-      await islandEval(`document.querySelector('.music-word')?.click()`)
-      await sleep(260)
-      const lyricPopOpen = await islandEval(`(() => {
-        const p = document.querySelector('.music-lyric-pop');
-        const w = document.querySelector('.music-word');
-        const island = document.querySelector('.island');
-        if (!p || !island) return null;
-        const pr = p.getBoundingClientRect(), ir = island.getBoundingClientRect();
+      // 用户 m03837「我指的是整个右边隐藏了…按了歌词，就会把 ui 挤到左边，然后竖线隔开出现歌词」：
+      // 歌词栏默认整块不占位（display:none），点「词」后岛变宽、竖线出现、右栏挤出来。
+      const pagedBefore = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const isl = document.querySelector('.island');
         return {
-          visibility: getComputedStyle(p).visibility,
-          inside: pr.left >= ir.left - 1 && pr.right <= ir.right + 1 && pr.top >= ir.top - 1 && pr.bottom <= ir.bottom + 1,
-          wordExpanded: w ? w.getAttribute('aria-expanded') : null,
-          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length,
-          text: p.textContent.replace(/\\s+/g, ' ').trim()
+          slot: slot ? getComputedStyle(slot).display : null,
+          divider: div ? getComputedStyle(div).display : null,
+          islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length
         };
       })()`)
-      ok('U1e 点「词」弹出歌词页、整块落在岛内、且仍不引入联网歌词（用户 m03579）',
-        lyricPopOpen && lyricPopOpen.visibility === 'visible' && lyricPopOpen.inside === true &&
-        lyricPopOpen.wordExpanded === 'true' && lyricPopOpen.online === 0,
-        JSON.stringify(lyricPopOpen))
+      ok('U1d 歌词栏默认整块隐藏、岛是窄态（用户 m03837「整个右边隐藏了」）',
+        pagedBefore && pagedBefore.slot === 'none' && pagedBefore.divider === 'none' && pagedBefore.online === 0,
+        JSON.stringify(pagedBefore))
       await islandEval(`document.querySelector('.music-word')?.click()`)
-      await sleep(240)
-      const lyricPopClosed = await islandEval(`(() => { const p = document.querySelector('.music-lyric-pop'); const w = document.querySelector('.music-word'); return p ? { visibility: getComputedStyle(p).visibility, wordExpanded: w ? w.getAttribute('aria-expanded') : null } : null })()`)
-      ok('U1f 再点一次「词」歌词页收起（用户 m03579）',
-        lyricPopClosed && lyricPopClosed.visibility === 'hidden' && lyricPopClosed.wordExpanded === 'false',
-        JSON.stringify(lyricPopClosed))
+      await sleep(700)
+      const pagedOpen = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const side = document.querySelector('.music-side');
+        const isl = document.querySelector('.island');
+        const w = document.querySelector('.music-word');
+        if (!slot || !div || !side || !isl) return null;
+        const pr = slot.getBoundingClientRect(), sr = side.getBoundingClientRect();
+        const ir = isl.getBoundingClientRect(), dr = div.getBoundingClientRect();
+        return {
+          slot: getComputedStyle(slot).display,
+          divider: getComputedStyle(div).display,
+          islandW: Math.round(ir.width),
+          slotW: Math.round(pr.width),
+          sideW: Math.round(sr.width),
+          dividerX: Math.round(dr.left),
+          leftOfDivider: dr.left >= sr.right - 1,
+          slotRightOfDivider: pr.left >= dr.right - 1,
+          insideIsland: pr.right <= ir.right + 1,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null,
+          online: document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length,
+          text: slot.textContent.replace(/\\s+/g, ' ').trim()
+        };
+      })()`)
+      ok('U1e 点「词」把岛挤宽、竖线出现、右侧多出歌词栏（用户 m03837/m03840「宽一点」）',
+        pagedOpen && pagedOpen.slot === 'flex' && pagedOpen.divider === 'block' &&
+        pagedOpen.islandW > pagedBefore.islandW + 80 &&
+        pagedOpen.slotW > pagedOpen.sideW &&
+        pagedOpen.leftOfDivider === true && pagedOpen.slotRightOfDivider === true &&
+        pagedOpen.insideIsland === true && pagedOpen.wordExpanded === 'true' &&
+        pagedOpen.online === 0,
+        JSON.stringify({ before: pagedBefore, after: pagedOpen }))
+      await islandEval(`document.querySelector('.music-word')?.click()`)
+      await sleep(700)
+      const pagedBack = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot');
+        const div = document.querySelector('.music-divider');
+        const isl = document.querySelector('.island');
+        const w = document.querySelector('.music-word');
+        return {
+          slot: slot ? getComputedStyle(slot).display : null,
+          divider: div ? getComputedStyle(div).display : null,
+          islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null
+        };
+      })()`)
+      ok('U1f 再点一次「词」歌词栏收起、岛缩回原宽（用户 m03837）',
+        pagedBack && pagedBack.slot === 'none' && pagedBack.divider === 'none' &&
+        pagedBack.islandW === pagedBefore.islandW && pagedBack.wordExpanded === 'false',
+        JSON.stringify(pagedBack))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)

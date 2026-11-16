@@ -221,3 +221,51 @@
 - [未核验] 用户是否接受「歌词页里只有占位、没有真歌词」这件事（此前 m02341 已否决歌词，本轮只做开合外壳）。
 - [未核验] 面板弹出/收起的 140ms 过渡在真机上的手感。
 - [未核验] 岛在不同 DPI 下 82px 布局高的上限是否仍够放两行占位文字。
+
+### 7.8 第六轮修正（2026-11-16 16:15，用户 m03837 指出 7.7 理解错了）
+
+**用户原话**：
+
+> 你理解错我的意思了，我指的是整个右边隐藏了，变回之前让你添加歌词面板的那个界面，按了歌词，就会把ui挤到左边，然后竖线隔开出现歌词，我想要的是是这个意思；
+
+**错在哪**：7.7 做的是「浮在内容上方的小面板」（`position:absolute` 盖住右栏区域），用户要的是「右栏整块默认不存在，点「词」才长出来并把内容挤到左边」。
+
+**做法**：
+
+1. 删掉 7.7 的 `.music-lyric-pop` 浮层（`App.tsx` 里整段 JSX + `styles.css` 里 20 条样式全删）。
+2. `src/renderer/src/App.tsx` 根节点类名改为 `todo-panel music-panel ${lyricOpen ? 'lyric-open' : ''}`，由这个类驱动开合。
+3. `src/renderer/src/styles.css`：
+   - `.music-divider, .music-lyric-slot { display: none; }` —— 默认整块不占位。
+   - `.music-panel.lyric-open .music-divider { display: block; }`、`.music-panel.lyric-open .music-lyric-slot { display: flex; }`。
+   - `.music-control-row` 由写死三栏改为**默认单栏** `grid-template-columns:212px` + `justify-content:start`；`.music-panel.lyric-open .music-control-row{grid-template-columns:212px 1px 260px; justify-content:center}`。
+   - `.music-lyric-slot` 的 `flex` 由 `0 0 212px` 改 **`0 0 260px`**（用户 m03840「宽一点看看」：歌词栏比左栏宽一档）。
+4. 「词」按钮保留 `aria-expanded` 与 `.on` 高亮，改成驱动 `lyricOpen`。
+
+**实测** [已核验，`.tmp/word/push.mjs` + dev electron 9321 + 假 SMTC 会话]：
+
+| 指标 | 收起（默认） | 点「词」后 | 再点一次 |
+|---|---|---|---|
+| 岛视觉宽 / 布局宽 | **285 / 380px** | **413.4 / 551.1px** | 285 / 380px（回到原值） |
+| `.music-divider` | `display:none`（0×0） | `display:block`，x **189.2**、高 76.5 | `none` |
+| `.music-lyric-slot` | `display:none`（0×0） | `display:flex`，x **200.5**、宽 **195**（布局 260） | `none` |
+| `.music-side` | x19.5 宽 159 | x19.7 宽 159 | x19.5 宽 159 |
+| `.music-control-row` | `212px` | `212px 1px 260px` | `212px` |
+| `.music-ctl` | x19.5 | x19.7 | x19.5 |
+
+⇒ 竖线正好落在左栏右缘（左栏 19.7+159=178.7，竖线 189.2 在列间隙之后）、歌词栏在竖线右侧且完整在岛内；岛宽 285→413.4（+128.4），收起后精确回到 285。
+
+**单栏时的一个坑**：`.music-control-row` 原来 `justify-content:center`，单栏下会把 212 的列推到容器正中，控制行与上方左栏错开 17 布局 px（实测 `ctl x63.7` vs `side x19.5`）。改为单栏 `justify-content:start`、开栏时才 `center`，两者对齐。
+
+**e2e 连带重写**（`scripts/e2e-music.mjs`）—— 三条全部按新语义重写：
+
+- **U1d** 歌词栏默认整块隐藏（`.music-lyric-slot`/`.music-divider` 都是 `display:none`）、岛是窄态、且仍无联网歌词。
+- **U1e** 点「词」后：`slot=flex`、`divider=block`、岛宽比之前 **+80 以上**、**歌词栏比左栏宽**、竖线在左栏右侧、歌词栏在竖线右侧、整块在岛内、`aria-expanded=true`、联网歌词选择器仍为 0。
+- **U1f** 再点一次：`slot/divider` 回到 `none`、**岛宽精确回到原值**、`aria-expanded=false`。
+
+**自检** [已核验]：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 43 过 / 0 败**（U1d/U1e/U1f 全绿）、`e2e-music-session` PASS 20/0、`e2e-head-order` PASS 14/0、`e2e-beautify-04` PASS 27/0。截图 `.tmp/word/shot-lyric-closed.png`（358×275）、`.tmp/word/shot-lyric-open.png`（519×275）。
+
+**仍未核验**：
+
+- [未核验] 「右栏 260 / 左栏 212」这个比例你看着合不合适（再宽就是改 `.music-lyric-slot` 的 `flex-basis` 与 `.music-panel.lyric-open .music-control-row` 的第二段列宽，两处要同步）。
+- [未核验] 岛从 285 长到 413 的宽度过渡（`.island` 的 220ms width 过渡）在真机的手感。
+- [未核验] 歌词栏里只放「暂无歌词」占位、没有真歌词，是否可接受（歌词已在 m02341 否决）。

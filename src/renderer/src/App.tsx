@@ -1975,7 +1975,7 @@ function MusicPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="todo-panel music-panel">
+    <div className={`todo-panel music-panel ${lyricOpen ? 'lyric-open' : ''}`}>
       {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」，
           2026-11-16 用户 m03368 指出进度条不该横穿整页）：
           上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
@@ -2041,29 +2041,6 @@ function MusicPanel(): React.JSX.Element {
           喇叭（.music-extra）绝对定位贴在「下一首」右外侧，既不挤压按钮、也不再吊在整岛最右端。
           容器仍是 .music-ctl、三个按钮仍是 .music-btn、音量仍包在 .music-volume 里，保住 e2e 断言口径 */}
       <div className="music-control-row">
-        {/* 用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」：
-            歌词页从控制行右上角弹出、盖住右栏区域，再点一次「词」或点面板右上角 × 收起。
-            面板里仍然只有诚实占位文案——歌词内容在用户 m02341 实测否决过、没有重新授权，
-            所以这里既不联网也不编造，只把「歌词位」这个位置做成能开能关的一页。
-            类名刻意不用 .music-lyric-line / [data-lyric] / .music-lyrics，
-            避免撞 e2e-music 的 U4「有没有偷偷接联网歌词」探测 */}
-        <div className={`music-lyric-pop ${lyricOpen ? 'open' : ''}`} role="dialog" aria-label="歌词" aria-hidden={!lyricOpen}>
-          <div className="music-lyric-pop-head">
-            <span className="music-lyric-pop-title">歌词</span>
-            <button
-              type="button"
-              className="music-lyric-pop-close"
-              aria-label="收起歌词"
-              onClick={() => setLyricOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-          <div className="music-lyric-pop-body">
-            <p className="music-lyric-pop-empty">暂无歌词</p>
-            <p className="music-lyric-pop-hint">歌词功能已按你的决定去掉</p>
-          </div>
-        </div>
         <div className="music-ctl">
           <div className="music-ctl-buttons">
             <button
