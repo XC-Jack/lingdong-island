@@ -1831,6 +1831,23 @@ function clockNow(): number {
 }
 
 /**
+ * 把进度钟强行拨到某一秒（用户 m07228）。
+ *
+ * 什么时候用：播放器不报时长、但我们能从它自己窗口的进度条里读到「已播比例」时。
+ * 那个比例乘上总时长就是它的**真实位置**，比墙钟自己数准得多（用户手动在播放器里
+ * 拖一下进度条，墙钟就会一直偏着）。读到就掰回来，之后继续按墙钟平滑往前走，
+ * 不至于让进度条每 2 秒一格一格地跳。
+ *
+ * 以前这里被用来「假装 seek 成功了」（点岛上进度条 → 界面跳、音乐不动），那是错的，
+ * 用户 m06991 抓到过；现在只在**真的读到播放器位置**时掰，点完也真的会去点它的进度条。
+ */
+function clockAnchor(pos: number, playing: boolean): void {
+  progressClock.startPos = Math.max(0, pos)
+  progressClock.startAt = Date.now()
+  progressClock.playing = playing
+}
+
+/**
  * 用一份播放器快照校准/推进进度钟。
  *
  * 两种播放器分开对待：
@@ -2129,6 +2146,34 @@ function MusicPanel(): React.JSX.Element {
   const shownPos = playerNoTimeline ? clockNow() : live
   /** 连总时长都算不出来时，才诚实显示横杠（此时确实无法给出任何时间） */
   const noTimeline = playerNoTimeline && totalDur <= 0
+  /**
+   * 播放器压根不报进度、但我们能从它自己窗口的进度条里读到已播比例（`barOk`）。
+   *
+   * 用户 m07228「做不到也要做」：网易云实现了 SMTC 的歌名/歌手/封面，却把进度藏起来
+   * （`IsPlaybackPositionEnabled=False`、`Position/EndTime` 恒 0），SMTC 的 seek 也只会
+   * 返回 true 而什么都不做。但它自己的窗口底部有一条进度条，已播段有颜色、未播段是灰的，
+   * 用 `PrintWindow` 离屏读像素就能算出真实比例，**点它也真的会让网易云跳**
+   * （实测目标 0.70→0.694、0.20→0.194、0.45→0.444，误差 <0.01）。
+   * 所以这类播放器照样允许拖进度条，只是走 `barseek`（点它窗口里的条）而不是 SMTC seek。
+   */
+  const barClickable = playerNoTimeline && music?.barOk === true && totalDur > 0
+
+  /**
+   * 用播放器窗口进度条读回的真实位置校准自算的墙钟。
+   *
+   * 为什么需要：墙钟从「开始播放那一刻」自己数，用户要是在网易云里手动拖一下进度条，
+   * 墙钟就会一直偏着（差的秒数不会自己回来）。桥接每 2 秒读一次真实比例，
+   * 乘上总时长就是真实位置；**只在偏差超过 1.5 秒时才掰**，否则每 2 秒硬掰一次会让
+   * 进度条一格格地跳，反而难看（桥接那边有 2 秒缓存，读到的值本来就滞后）。
+   */
+  useEffect(() => {
+    if (!playerNoTimeline || !music?.barOk) return
+    if (totalDur <= 0) return
+    const b = Number(music.barPct)
+    if (!Number.isFinite(b) || b < 0) return
+    const target = Math.min(totalDur, Math.max(0, b * totalDur))
+    if (Math.abs(clockNow() - target) > 1.5) clockAnchor(target, music.playing === true)
+  }, [playerNoTimeline, music?.barOk, music?.barPct, music?.playing, totalDur])
 
   // 当前该高亮第几句：取「开始时间 ≤ 当前播放位置」的最后一行。没拿到歌词就是 -1
   const lyricLines = lyric?.ok && lyric.lines.length > 0 ? lyric.lines : []
@@ -2300,6 +2345,15 @@ function MusicPanel(): React.JSX.Element {
     return ratio * totalDur
   }
 
+  /** 同一个横坐标的「比例」形式：窗口点击通道要的是比例不是秒（见 barseek 的注释） */
+  const ratioAt = (clientX: number): number => {
+    const el = barRef.current
+    if (!el) return 0
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0) return 0
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+  }
+
   /**
    * 能不能点进度条。
    *
@@ -2317,8 +2371,13 @@ function MusicPanel(): React.JSX.Element {
    *
    * 所以门槛回到「播放器自己报时间轴才允许跳」：能跳就跳真的，不能跳就不给点，
    * 并且用 title 说清原因，而不是演一个假的跳转。
+   *
+   * 用户 m07228「从第一性原理出发，做不到也要做」之后补上的例外：
+   * 播放器不报时间轴、但**能从它窗口里读到并在它的进度条上点**的（`barClickable`），
+   * 照样允许拖——点击会真的发到它自己的进度条上，网易云会真的跳。这不是变通，
+   * 这是另一条真实的通道（Now Playing 等同类工具也是这么处理这类播放器的）。
    */
-  const canSeekNow = !playerNoTimeline && totalDur > 0 && !busy
+  const canSeekNow = ((!playerNoTimeline && totalDur > 0) || barClickable) && !busy
 
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!canSeekNow) return
@@ -2335,13 +2394,22 @@ function MusicPanel(): React.JSX.Element {
   const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!seekingRef.current) return
     const sec = secAt(e.clientX)
+    const ratio = ratioAt(e.clientX)
+    const wasBar = barClickable
     seekingRef.current = false
     setSeeking(false)
     setLive(sec)
     // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
     // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
     seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
-    ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
+    if (wasBar) {
+      // 播放器不报进度：把钟先拨到目标秒，让进度条/歌词立刻跟手；
+      // 紧接着真的去点它窗口里的进度条（点完它是真的会跳的，`music:state` 回来还会再校准）
+      clockAnchor(sec, music?.playing === true)
+      ctl({ cmd: 'barseek', value: Math.round(ratio * 1000) / 1000 })
+    } else {
+      ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
+    }
   }
 
   const volume = volLocal ?? music?.volume ?? 0
@@ -2414,9 +2482,11 @@ function MusicPanel(): React.JSX.Element {
               ref={barRef}
               title={
                 canSeekNow
-                  ? '点任意位置跳到那里'
+                  ? barClickable
+                    ? '点任意位置跳到那里（点它自己的进度条）'
+                    : '点任意位置跳到那里'
                   : playerNoTimeline
-                    ? '网易云这类播放器不接受系统的跳转指令，只能听它自己播'
+                    ? '这个播放器不接受系统的跳转指令，也没法从它的窗口里读到进度条'
                     : '总时长未知，暂时不能跳'
               }
               onPointerDown={onSeekPointerDown}

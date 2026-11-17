@@ -43,7 +43,9 @@ const EMPTY_STATE: MusicState = {
   canShuffle: false,
   canRepeat: false,
   canVolume: false,
-  cover: ''
+  cover: '',
+  barPct: -1,
+  barOk: false
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -97,6 +99,11 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.canRepeat === b.canRepeat &&
     a.canVolume === b.canVolume &&
     a.cover === b.cover &&
+    // 只比 barOk（以及两档精度下的 barPct），不比逐位 barPct：正常播放器 barPct 恒 -1，
+    // 比对是空操作；只有降级路径（播放器不报时间轴、position 恒 0）才靠 barPct 变化
+    // 触发广播——那种情况若也不广播，界面就永远拿不到新的进度，钟也就没法校准。
+    a.barOk === b.barOk &&
+    Math.round(a.barPct * 100) === Math.round(b.barPct * 100) &&
     // 进度按整秒比：SMTC 给的是带小数的秒，每毫秒都在变，逐位比会每秒重渲染
     Math.round(a.position) === Math.round(b.position) &&
     Math.round(a.duration) === Math.round(b.duration)
@@ -134,6 +141,15 @@ function handleLine(text: string): void {
     canShuffle: Boolean(msg.canShuffle),
     canRepeat: Boolean(msg.canRepeat),
     canVolume: Boolean(msg.canVolume),
+    // 播放器窗口里进度条的已播比例（用户 m07228）。-1 = 没读到；只在播放器压根不报
+    // 时长时桥接才会去读它，正常播放器一直是 -1。
+    // 注意别用 `Number(x) || 0`：-1 是有效值（表示没读到），NaN 才该落到 -1。
+    barPct: (() => {
+      const n = Number(msg.barPct)
+      if (!Number.isFinite(n) || n < 0) return -1
+      return Math.min(1, n)
+    })(),
+    barOk: Boolean(msg.barOk),
     // 封面：桥接只在「换歌」时回传完整 data URL（或 "" 表示这张没封面）；
     // 未换歌时回 null（JSON），沿用缓存，避免每秒往 stdout 重发几十 KB 的 base64。
     // 空态（active=false）时强制清掉封面，否则下次开播会短暂显示上一首歌的封面。
@@ -179,6 +195,9 @@ function isValidCommand(cmd: unknown): cmd is MusicCommand {
     case 'repeat':
       return c.value === 0 || c.value === 1 || c.value === 2
     case 'volume':
+      return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0 && c.value <= 1
+    case 'barseek':
+      // 比例，不是秒：播放器不报时长，我们手上的时长来自歌词库，换算成秒会偏。
       return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0 && c.value <= 1
     default:
       return false

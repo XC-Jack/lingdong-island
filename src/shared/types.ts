@@ -127,6 +127,23 @@ export interface MusicState {
   canVolume: boolean
   /** 当前歌曲的真实封面（data:image/png;base64,... 或 data:image/jpeg;base64,...）；取不到为空串，界面回落音符占位 */
   cover: string
+  /**
+   * 播放器窗口里那条进度条的已播比例 0..1；-1 表示没读到（用户 m07228）。
+   *
+   * 为什么要它：网易云（cloudmusic）实现了 SMTC 的歌名/歌手/封面，却把
+   * IsPlaybackPositionEnabled 设为 false、Position/EndTime 恒 0、LastUpdatedTime 是
+   * 1601-01-01，TryChangePlaybackPositionAsync 会返回 true 但什么都不做。这种情况下
+   * SMTC 里没有任何真实进度可用，只能去它的窗口里看它自己画的那条进度条（已播段有颜色、
+   * 未播段是灰的），用 PrintWindow 离屏读像素算出比例。
+   */
+  barPct: number
+  /**
+   * 能不能用「点播放器窗口里的进度条」来定位（barPct >= 0 即 true）。
+   *
+   * true 时渲染层允许拖进度条，但走的是 `{cmd:'barseek'}` 这条窗口点击通道，
+   * 而不是 SMTC 的 seek——后者对这类播放器是谎言（返回成功、位置不动）。
+   */
+  barOk: boolean
 }
 
 /**
@@ -142,6 +159,13 @@ export type MusicCommand =
   | { cmd: 'shuffle'; value: boolean }
   | { cmd: 'repeat'; value: 0 | 1 | 2 }
   | { cmd: 'volume'; value: number }
+  /**
+   * 通过「点播放器窗口里的进度条」定位（用户 m07228）。
+   * value 是目标位置占整首的比例 0..1，不是秒——因为算不出秒：播放器根本不报时长，
+   * 我们手上的时长来自歌词库，它跟播放器的真实时长可能差几秒，用它换算成秒再点会偏。
+   * 直接用比例点，播放器自己按它的真实时长换算。
+   */
+  | { cmd: 'barseek'; value: number }
 
 /**
  * 歌词（SPEC-music-lyric）。
