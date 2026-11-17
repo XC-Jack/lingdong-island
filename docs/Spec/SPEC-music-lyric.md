@@ -532,3 +532,73 @@ U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-s
 2. **窗口极小/极大时未验**：`Probe` 仍要求 `200 < w < 8000、200 < h < 5000`，且只在窗口下部 1/4 扫。
 3. **`last-player.txt` 只记一个进程名**：同时装多个播放器时，记的是最后一次认到的那个。
 4. **`fallback` 字段仍未透传到 `MusicState`**（第二十二轮 12.6 第 4 条未变）。
+---
+
+## 十四、第二十四轮修正（2026-11-17）
+
+### 14.1 用户反馈
+
+用户 m02409 原话：**「说几个问题：我现在只要一点一下按键，岛就会缩起来」**。
+
+即：岛处于展开态、停在音乐页，点一下播放/暂停（或上一首/下一首）键，岛立刻回收起态，而播放器的播放状态其实切换了。
+
+### 14.2 真因
+
+不是渲染层的收起逻辑出错，而是**桥接侧为了发媒体键把播放器窗口顶到前台，岛因此失焦**。
+
+链路：`src/main/smtcScript.ts` 降级分支（SMTC 会话为 0 时的 `toggle`/`next`/`prev` 兜底）原先是
+
+```
+$h = FindByExe($fb.exe)
+if ($h -ne [IntPtr]::Zero) { [void][IslandBarClick]::Activate($h, $false) }
+[IslandBarClick]::MediaKey($vk)
+```
+
+`Activate` 内部是 `ShowWindow(h, 9)` + `SetForegroundWindow(h)`。网易云被置前台 → 灵动岛主窗口 `blur` → `mainWindow.on('blur')` 发 `island:window-blur` → 渲染层 `setExpanded(false)`。
+
+`userData/collapse-log.txt` 里可见每次点按钮都成对出现：
+
+```
+main window blur; focused-after=false
+render blur -> collapse now
+render set-expanded=false; hasFocus(主进程视角)=false
+```
+
+### 14.3 修法
+
+删掉那次 `Activate`，只发媒体键：
+
+```
+[IslandBarClick]::MediaKey($vk)
+```
+
+依据 [已核验]：`keybd_event` 发的是全局媒体键，**不需要目标窗口在前台**。`.tmp/word/key3.ps1` 不置前台连发三次 `0xB3`，音频峰值依次 `0 → 0.10073 → 0 → 0.07328`，播放/暂停每次都生效。
+
+同时留下 `Activate(h, useKey)` 重载（第二十三轮引入），供未来需要真正置前台的场景（`ClickPct` 里的进度条点击）继续用——那条路径必须置前台，因为 `SetCursorPos` + `mouse_event` 点的是屏幕坐标，会被遮挡物吃掉。
+
+### 14.4 实测
+
+| 场景 | 结果 |
+|---|---|
+| CDP 真鼠标点 `.music-btn-main`（`.tmp/word/uibtn3.mjs`） | `expanded` 保持 `true`，`playing` 由 `true` 翻 `false`，日志零新增 |
+| 连点第二轮 | `expanded` 仍 `true`，`playing` 由 `false` 翻 `true`，日志零新增（行数 3223 → 3223） |
+| 物理鼠标点（`.tmp/word/realbtn.ps1`，岛窗口 `RECT=801,8,319,275`，按钮屏幕坐标 `929,169`） | 岛尺寸保持 `319×275`，`FG_AFTER=灵动岛`（焦点仍在岛），无新增收起日志 |
+| 点进度条 `.tmp/word/uiseek4.mjs 0.2 0.8` | `0.2 → 0.2014`、`0.8 → 0.807`，岛不收起 |
+
+最后一条要注意：**点进度条本身仍然会调 `ClickPct` → `Activate`（无 `useKey`，即会发试探性 `0xB3`）**，但实测岛未收起。原因是 `ClickPct` 在鼠标按下前就 `SetCursorPos` 到进度条并点击，点击动作使岛先失焦——而岛在 `mouseleave`/失焦前已经处理完 `pointerup`，`ctl` 已发出。此处不进一步收敛：进度条点击必须置前台，否则点击落到遮挡物上。
+
+### 14.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npx tsc --noEmit -p tsconfig.node.json` | EXIT=0 |
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 155ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过** |
+| 部署核验 | `%APPDATA%\lingdong-island\music\smtc-bridge.ps1` 含新注释（`Select-String '绝不能在这里 Activate'` 命中 L1391），`LastWriteTime=13:04:23` |
+
+### 14.6 未核验 / 已知限制
+
+1. **只在网易云 3.1.41.205564 上验过**：其它播放器的媒体键响应路径未验。
+2. **`Activate` 的试探性 `0xB3` 仍留在 `ClickPct` 里**：若某次 `SetForegroundWindow` 失败，会出现「点进度条顺带切换一次播放状态」。本轮未观察到，但机制上存在。
+3. **冷启动首帧仍会闪一下空态**（第二十三轮 13.7 已记，未修）。

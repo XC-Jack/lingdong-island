@@ -1419,12 +1419,12 @@ while ($true) {
         if ($cmd -eq "prev") { $vk = 0xB1 }
         $ok = $false
         try {
-          $h = [IslandBarClick]::FindByExe($fb.exe)
-          if ($h -ne [IntPtr]::Zero) {
-            # 先置前台：媒体键本身不需要，但如果该进程有前台锁，keybd_event 也会被吞。
-            # useKey=false：这里马上要自己发一次媒体键，Activate 不能再发。
-            [void][IslandBarClick]::Activate($h, $false)
-          }
+          # 绝不能在这里 Activate 播放器窗口。
+          # 2026-11-17 用户 m02409「一点一下按键，岛就会缩起来」的真因：原来的实现先调
+          # Activate（ShowWindow + SetForegroundWindow）把网易云顶到前台，岛窗口随即失焦，
+          # 主进程 blur → 渲染层 setExpanded(false)，看起来就是「按一下按钮岛自己收起」。
+          # 实测 keybd_event 发的是全局媒体键，根本不需要对方在前台（key3.ps1 不置前台
+          # 连发三次 0xB3，峰值 0 → 0.10073 → 0 → 0.07328，播放/暂停每次都生效）。
           [IslandBarClick]::MediaKey($vk)
           $ok = $true
         } catch { $ok = $false }
