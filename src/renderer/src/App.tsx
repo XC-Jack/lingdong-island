@@ -1820,6 +1820,20 @@ interface ProgressClock {
 const progressClock: ProgressClock = { key: '', startAt: 0, startPos: 0, playing: false }
 let clockWatcherInstalled = false
 
+/**
+ * 「点进度条」期间抑制 blur 收起的时间戳（用户 m02806「我一点进度条，岛就会缩起来」）。
+ *
+ * 为什么会有 blur：播放器不报进度时，跳转靠点它自己窗口里的进度条，而真实鼠标事件
+ * 只对前台窗口有效，所以桥接必须先把它顶到前台（`BringKeyless`）。前台一换，岛就
+ * 失焦 → 主进程发 `island:window-blur` → 渲染层立刻 `setExpanded(false)`。
+ * 用户看到的就是「点一下进度条，岛自己缩起来」——他根本没想收起岛。
+ *
+ * 放模块级而不是 `useRef`：点进度条的 `MusicPanel` 和收岛逻辑的 `App` 是两个组件，
+ * 各自 `useRef` 互不可见；这不是渲染状态，放进 state 还会白刷一帧。
+ * 只在这段时间内忽略 blur，不做全局豁免：超时后点桌面照样正常收起。
+ */
+let blurSuppressUntil = 0
+
 function clockKeyOf(m: MusicState): string {
   return `${m.title}|${m.artist}`
 }
@@ -2406,6 +2420,9 @@ function MusicPanel(): React.JSX.Element {
       // 播放器不报进度：把钟先拨到目标秒，让进度条/歌词立刻跟手；
       // 紧接着真的去点它窗口里的进度条（点完它是真的会跳的，`music:state` 回来还会再校准）
       clockAnchor(sec, music?.playing === true)
+      // 这一下会让桥接把播放器顶到前台，岛紧接着就会失焦。先挂个抑制窗口，
+      // 否则用户「点一下进度条」的观感就是「岛自己缩起来了」（用户 m02806）。
+      blurSuppressUntil = Date.now() + 2500
       ctl({ cmd: 'barseek', value: Math.round(ratio * 1000) / 1000 })
     } else {
       ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
@@ -2962,6 +2979,13 @@ export default function App(): React.JSX.Element {
   // 要等一会才开始缩」）。输入法的保护由收起定时器路径的 typing 判据负责（US-036 已修）。
   useEffect(() => {
     window.island.onWindowBlur(() => {
+      // 「点进度条」这一下不算「用户想收起」：桥接为了点击把播放器顶到前台，岛必然失焦。
+      // 窗口给到 2.5 秒（点击动作本身含 120ms 置前台 + 160ms + 100ms + 480ms 收尾，
+      // 再加 IPC 往返余量），只在按下过进度条时生效，过完这段时间点桌面仍然正常收起。
+      if (Date.now() < blurSuppressUntil) {
+        window.island.logDiag('render blur ignored; bar seek in flight')
+        return
+      }
       hoverRef.current = false
       window.island.logDiag('render blur -> collapse now')
       setExpanded(false)

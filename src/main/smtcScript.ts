@@ -781,9 +781,26 @@ public static class IslandBarClick {
     barStart = -1; playedEnd = -1; barEnd = -1;
     int w = b.Width;
     Color off = b.GetPixel(w - 1, y);
+    // 从右缘向左扫未播段同色（容差 18），但**跳过未播段上的小色块**。
+    // 为什么必须跳：实测（用户 m02806 现场，网易云深色主题）进度条本体只有 10 行
+    // （y=833..842），条上还画着一个**位置固定的小标记点**（x≈729..738，宽 10px，
+    // 纵向也只有 10 行）。它会截停扫描，于是 offL 落到 738、pct 恒为 0.5556 ——
+    // 界面上的进度条就永远卡住，用户看到的就是「点下一首不从零开始」。
+    // 真滑块是凸出到条外的圆点（x≈119..136，宽 18px，纵向 20 行），宽度明显更大。
+    // 所以规则：遇到非未播段色的色块，宽度 <= 12 且左边又回到未播段色 ⇒ 是标记点，
+    // 跳过去继续扫；否则它就是分界。
     int x = w - 1;
-    while (x >= 0 && Df(b.GetPixel(x, y), off) <= 18) x--;
-    int offL = x;                                     // 未播段左端点（其左邻已是另一色）
+    int offL = -1;
+    while (x >= 0) {
+      if (Df(b.GetPixel(x, y), off) <= 18) { x--; continue; }
+      int runR = x, runL = x;
+      while (runL >= 0 && Df(b.GetPixel(runL, y), off) > 18) runL--;
+      int runLen = runR - runL;
+      if (runLen <= 12 && runL >= 0) { x = runL; continue; }
+      // 圆点用中心当分界（右缘会多算半个圆点的宽度）；长渐变段用右端。
+      offL = (runLen <= 24) ? (runL + runR + 1) / 2 : runR;
+      break;
+    }
     if (offL < 0 || (w - 1 - offL) < 4) return false; // 未播段太短，不是进度条（或已播到尽头）
     int offLen = w - 1 - offL;
     for (int k = 1; k <= 3; k++) {
@@ -796,6 +813,12 @@ public static class IslandBarClick {
     while (p >= 0 && Df(b.GetPixel(p, y), off) > 18) p--;
     barStart = p + 1;
     barEnd = w - 1;
+    // 已播侧必须是**干净的条**：真进度条那一行只有一两个亮块（滑块圆点 +
+    // 位置固定的标记点），中间是连续渐变。反例（实测，用户 m02806 换歌瞬间）：
+    // 网易云换歌时整页做过渡动画，y=879 那行扫出 offL=1221、pct 恒为 0.8857，
+    // 它其实是**一排图标和文字**——那一行有十几个 3~5px 的小亮块。
+    // 所以数一下已播侧的亮块，超过 4 个就不认。
+    if (BlockCount(b, y, off, playedEnd) > 4) return false;
     int playedLen = playedEnd - barStart + 1;
     // ⑤ 滑块确认：绿色/橄榄色主题（如「颜色 / Gareth.T」）里已播段与背景只差
     //    20 级，向左扫同色会把 barStart 落到分界左边几像素（实测 s=763,p=766），
@@ -828,6 +851,26 @@ public static class IslandBarClick {
   // 窄亮块，且它左右两侧都是未播段同色——那就是滑块，滑块中心即当前进度。
   static bool ThumbRow(Bitmap b, int y, int w, Color off) {
     return ThumbX(b, y, off) > 0;
+  }
+  // 已播侧（0..xEnd）有多少个「亮度明显高于未播段」的独立色块。
+  // 真进度条：1~3 个（滑块圆点 + 条上固定标记点）。图标/文字行：十几个。
+  static int BlockCount(Bitmap b, int y, Color off, int xEnd) {
+    int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
+    int thr = lumOff + 55;
+    int cnt = 0, runStart = -1;
+    for (int x = 0; x <= xEnd + 1; x++) {
+      bool bright = false;
+      if (x <= xEnd) {
+        Color c = b.GetPixel(x, y);
+        bright = ((c.R * 30 + c.G * 59 + c.B * 11) / 100) >= thr;
+      }
+      if (bright && runStart < 0) runStart = x;
+      else if (!bright && runStart >= 0) {
+        if (x - runStart >= 2) cnt++;
+        runStart = -1;
+      }
+    }
+    return cnt;
   }
   // 滑块中心 x（读不到返回 -1）。
   // 实测「颜色 / Gareth.T」橄榄绿主题 y=837 的一行：
@@ -880,13 +923,37 @@ public static class IslandBarClick {
     // 几乎同色，靠颜色扫出来的 playedEnd 只能到 5px，完全反映不了真实进度）。
     Color off = b.GetPixel(w - 1, y);
     int tx = ThumbX(b, y, off);
-    if (tx > 0) p = tx;
+    // 滑块必须**紧贴分界**才可信，和 Row 里的判据保持一致。
+    // 反例（实测，用户 m02806）：网易云的进度条上还画着一个**位置固定的白色小标记点**
+    // （实测 x≈334..343，纵向 ~10 行，长度 6~10px，正好落在 ThumbX 的 2~10px 窗口里），
+    // 它和真滑块一样「左右都是未播段色」，于是被当成滑块；p 被改写成 x≈338，
+    // pct 恒为 0.2566 / 0.5132 一动不动（用户说的「点下一首不从零开始」正是它）。
+    // 真滑块一定贴着自己那一侧的分界，所以只接受 |tx - p| <= 14。
+    if (tx > 0 && Math.Abs(tx - p) <= 14) p = tx;
     // 假目标的共同特征：**没有真正的分界**。实测底部控制条那几行（y=870/906/907/910）
     // 扫出来的 s=0（或很靠左），意味着从 x=0 到未播段之间全是渐变色，Row 一路都没
     // 遇到「回到未播段色」的点；真进度条则一定有干净的已播段起点（实测 s=58~64）。
     // 滑块分支是例外：它把 barStart 固定成 0 做全宽锚定，所以有滑块时不受这条限制。
-    if (tx <= 0 && s <= 0) return -1;    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
+    if (tx <= 0 && s <= 0) return -1;
+    // 真进度条**从窗口左缘附近开始**：已播段起点 s 落在最左边一小段距离内。
+    // 反例（实测，用户 m02806 现场）：网易云切到歌手页/歌单页时，底部那行有个红色
+    // 圆形播放按钮，它是个浮在背景中间的小块，左边到窗口左缘全是背景色，
+    // 逐行扫出来 s≈639~654、p≈667~682，算出的 pct 恒为 0.5132 一动不动 ——
+    // 界面上的进度条就永远卡在那个位置（用户说的「点下一首不从零开始」有一部分就是它）。
+    // 真进度条实测 s 分别为 0/58~64/86，都远小于窗宽的 15%。
+    if (tx <= 0 && s > w * 15 / 100) return -1;
+    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
     if (!(f > 0.002 && f < 0.995)) return -1;         // 排除整行同色（Row 已挡大部分）
+    // 真进度条**从窗口左缘开始**：第 0~2 列一定是「已播」色，不是未播段色。
+    // 反例（实测）：网易云切到歌手页/歌单页时，底部那行里有个红色圆形播放按钮；
+    // 它是个浮在背景上的小块，左边到窗口左缘仍是背景白（与未播段同色），
+    // 逐行扫出来 s≈645、p≈676，pct 恒定 0.5132 一动不动 —— 界面上的进度条就永远卡在
+    // 那个位置（用户 m02806「一点下一首进度条不从零开始，直接从 30s 左右」有一部分
+    // 就是它：读到的永远是同一个假值）。滑块分支走 tx>0，不受这条限制。
+    if (tx <= 0) {
+      Color left = b.GetPixel(Math.Min(2, w - 1), y);
+      if (Df(left, off) <= 8) return -1;
+    }
     // 已播段按「从窗口左缘到分界」算，不按 barStart 算：绿色主题已播段左端与背景
     // 同色，barStart 会落到分界左边几像素处，按它算 playedLen 恒为 4，整条作废。
     int playedLen = p + 1;
@@ -899,8 +966,24 @@ public static class IslandBarClick {
       + (bright ? 1200 : 0) + (y > hh * 55 / 100 ? 1500 : 0);
   }
   // "pct|yInWin|winW|winH|barStart|barEnd"，追加两个字段是为了让点击落在条带内而不是整窗宽
-  public static string Probe(IntPtr h) {
-    InitDpi();
+  // 上一次成功读到的进度条在哪一行，按窗口高度的比例存（窗口大小变了也跟得上）。
+  // 用途见 ClickPct 里的注释：字幕背景盖住进度条时像素判据全灭，但条的位置没变。
+  static double LastRowFrac = -1;
+  // 本轮会话里是否读到过进度条位置：读过就说明「点得中」，即便这一帧被盖住读不出。
+  // 渲染层靠它决定进度条能不能拖（barOk），否则字幕背景一盖，岛的进度条就变成死条。
+  public static bool RowKnown() { return LastRowFrac >= 0 && LastRowFrac <= 1; }
+  static bool FallbackRow(IntPtr h, out int y) {
+    y = -1;
+    if (LastRowFrac < 0 || LastRowFrac > 1) return false;
+    RECT r;
+    if (!GetWindowRect(h, out r)) return false;
+    int hh = r.B - r.T;
+    if (hh < 200) return false;
+    y = (int)Math.Round(hh * LastRowFrac);
+    if (y < 0 || y >= hh) return false;
+    return true;
+  }
+  public static string Probe(IntPtr h) {    InitDpi();
     RECT r;
     if (!GetWindowRect(h, out r)) return "";
     int w = r.R - r.L;
@@ -931,6 +1014,13 @@ public static class IslandBarClick {
         // 与背景回到同色」的位置，本身带抗锯齿噪声（实测真条四行 s=58/64/58/63、
         // 换帧后 166/184/168/186，抖动可达 18），拿它判连续会把真条切碎成单行段，
         // 于是 Probe 明明看到四行却因为「段高 < 2」返回空串（实测就是这样丢读数的）。
+        // 打分口径：**先看这一段有多高**，高度相同才比逐行分数。
+        // 实测（棕主题「回憶苦涩的吻痕」）：真进度条 y=833..842 共 10 行、行分 2758；
+        // 假目标分别是 y=869..874（6 行、1724）、y=877（1 行、2901）、y=904/909/910
+        // （各 1~2 行、2790~2868）。按行分取最大会选中那些**单行**的高分假目标，
+        // 读出来的 pct 恒定不动（0.0416），界面上的进度条就卡住。
+        // 按段高优先则稳定选中真条：真条是连续多行同一条带，图标/文字只有一两行。
+        int bestH = 0;
         for (int y = hh - 1; y >= yTop; y--) {
           int s, p, e;
           int sc = ScoreRow(bmp, y, hh, out s, out p, out e);
@@ -942,7 +1032,7 @@ public static class IslandBarClick {
               if (ch >= 2 && ch <= 12) {
                 int mid = cys - ch / 2; int s2, p2, e2;
                 int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
-                if (sc2 > best) { best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+                if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
               }
               cys = y; cs = s; cp = p; ce = e; ch = 1;
             }
@@ -951,7 +1041,7 @@ public static class IslandBarClick {
             if (ch >= 2 && ch <= 12) {
               int mid = cys - ch / 2; int s2, p2, e2;
               int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
-              if (sc2 > best) { best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+              if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
             }
             ch = 0; cs = -1; cp = -1; ce = -1;
           }
@@ -959,9 +1049,11 @@ public static class IslandBarClick {
         if (ch >= 2 && ch <= 12) {
           int mid = cys - ch / 2; int s2, p2, e2;
           int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
-          if (sc2 > best) { best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+          if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
         }
         if (best < 0 || by < 0) return "";
+        // 记下这次成功的位置（按窗口高度比例），供下次被字幕背景盖住时兜底点击
+        try { if (hh > 0) LastRowFrac = (double)by / (double)hh; } catch { }
         // 全宽锚定：网易云进度条从窗口最左铺到最右（实测四主题都是），所以比例直接用
         // playedEnd/w，点击也用整窗宽映射。用 (bp-bs+1)/(be-bs+1) 会让 bs 的抖动
         // （已播段左端与背景色差不定，实测扫出过 0/86/122 三种）直接变成几个百分点的偏差。
@@ -982,19 +1074,34 @@ public static class IslandBarClick {
     // 听歌时窗口会被每秒弹出来一次，比不显示进度更烦人。
     try { if (IsIconic(h)) { ShowWindow(h, 9); System.Threading.Thread.Sleep(320); } } catch { }
     string info = Probe(h);
-    if (info.Length == 0) return "";
-    string[] parts = info.Split('|');
-    if (parts.Length < 4) return "";
-    int y; int w;
-    if (!int.TryParse(parts[1], out y)) return "";
-    if (!int.TryParse(parts[2], out w)) return "";
+    int y;
+    if (info.Length == 0) {
+      // 读不出进度条时不要直接放弃：用户 m02806「把网易云的字幕背景拉下去之后，
+      // 岛的进度条就点不了」。字幕背景是一整块盖在窗口上的图层，盖住进度条那几行时
+      // 像素判据全灭，但**进度条本身还在那个位置**，窗口没动、条也没挪。
+      // 所以退回上一次成功读到的行位置（按窗口高度比例存），点击照样打得中。
+      if (!FallbackRow(h, out y)) return "";
+    } else {
+      string[] parts = info.Split('|');
+      if (parts.Length < 4) return "";
+      if (!int.TryParse(parts[1], out y)) return "";
+    }
+    int w;
+    {
+      RECT rr;
+      if (!GetWindowRect(h, out rr)) return "";
+      w = rr.R - rr.L;
+    }
     // 条带左右端以 Probe 回报为准（老格式没有这两个字段时退回整窗宽）
     int bs = 0, be = w - 1;
-    if (parts.Length >= 6) {
-      int.TryParse(parts[4], out bs);
-      int.TryParse(parts[5], out be);
+    if (info.Length > 0) {
+      string[] parts = info.Split('|');
+      if (parts.Length >= 6) {
+        int.TryParse(parts[4], out bs);
+        int.TryParse(parts[5], out be);
+      }
+      if (be <= bs) { bs = 0; be = w - 1; }
     }
-    if (be <= bs) { bs = 0; be = w - 1; }
     RECT r;
     if (!GetWindowRect(h, out r)) return "";
     // 必须先置前台：实测窗口不在前台时 SetCursorPos+mouse_event 点不动（点到遮挡物上）。
@@ -1063,10 +1170,27 @@ $script:barTitle = ""
 # 失败时在 10 秒内继续沿用它——进度条比例本来就是慢变量，10 秒内沿用不会看错。
 $script:barGood = -1.0
 $script:barGoodAt = [DateTimeOffset]::MinValue
+# 上一次成功值属于哪首歌。用户 m02806「我每次一点下一首，岛的播放器的进度条不会从零开始，
+# 直接从 30s 左右的位置直接开始」：原来只按时间沿用 10 秒、不管换没换歌，于是点下一首后
+# 新歌第一次 Probe 若失败（窗口被最小化/正重绘），就沿用了**上一首**的约 0.3，
+# 渲染层拿 0.3×总时长 一掰钟就跳到 30 秒左右。沿用必须限定在同一首歌内。
+$script:barGoodTitle = ""
+# 换歌时刻。网易云的窗口标题**立刻**变成新歌名，但画面还在上一首（实测标题改完
+# 2~4 秒才重绘完），这期间 Probe 读到的是上一首的进度（实测 0.8403），界面拿 0.84
+# 乘总时长一掰钟就直接跳到末尾（用户 m02806 第 3 条「进度条不会从零开始」）。
+# 新歌一律从 0 附近起，所以换歌后 6 秒内只接受小值，读到大的就当没读到、下一帧再试。
+$script:barSeenTitle = ""
+$script:barChangedAt = [DateTimeOffset]::MinValue
 
 function GetBarPct($title, $app) {
   if ([string]::IsNullOrEmpty($title) -or $title.Length -lt 2) { return -1.0 }
   $now = [DateTimeOffset]::Now
+  # 只在**运行期换歌**时记时刻；程序刚起来第一次见到歌名不算（否则冷启动头 6 秒
+  # 会把本来就正常的进度条判成无效，界面又变成一条点不动的死条）。
+  if ($title -ne $script:barSeenTitle) {
+    if (-not [string]::IsNullOrEmpty($script:barSeenTitle)) { $script:barChangedAt = $now }
+    $script:barSeenTitle = $title
+  }
   $age = ($now - $script:barAt).TotalSeconds
   if ($title -eq $script:barTitle -and $age -ge 0 -and $age -lt 2) { return $script:barPct }
   $pct = -1.0
@@ -1092,11 +1216,27 @@ function GetBarPct($title, $app) {
       }
     }
   } catch { $pct = -1.0 }
+  # 换歌后一小段时间内的读数要当心：窗口标题已经换成新歌名，画面可能还停在上一首。
+  # 但窗口长度不能大 —— 实测（.tmp\word\nextev.ps1，时间徽标 00:00→00:07 对照 Probe）
+  # 网易云换歌后约 1 秒就重画完，读到的是新歌真实的 0.25。之前写的 6 秒太长：
+  # 那 6 秒里读数全被丢掉，渲染层的钟继续按旧歌走，一恢复读数就触发
+  # 「偏差 >1.5 秒 → clockAnchor」一次性掰到 0.43×总时长 ——
+  # 这才是用户 m02806「点下一首后进度条不从零开始，直接从 30s 左右的位置开始」的真因。
+  # 现在只挡 2.5 秒，且只挡「明显偏大」的读数（新歌头 2.5 秒不可能超过 12%）。
+  if ($pct -ge 0) {
+    $sinceChange = ($now - $script:barChangedAt).TotalSeconds
+    if ($script:barChangedAt -ne [DateTimeOffset]::MinValue -and $sinceChange -ge 0 -and $sinceChange -lt 2.5 -and $pct -gt 0.12) {
+      $pct = -1.0
+    }
+  }
   if ($pct -ge 0) {
     $script:barGood = $pct
     $script:barGoodAt = $now
-  } elseif (($now - $script:barGoodAt).TotalSeconds -lt 10) {
-    # 这一帧没抓到，但 10 秒内有过成功值：沿用它，别让界面抖
+    $script:barGoodTitle = $title
+  } elseif (($now - $script:barGoodAt).TotalSeconds -lt 10 -and $title -eq $script:barGoodTitle) {
+    # 这一帧没抓到，但 10 秒内有过成功值：沿用它，别让界面抖。
+    # 只在**同一首歌**里沿用——换歌时沿用的是上一首的进度，界面会直接从 30 秒处开始
+    # （用户 m02806 实测就是这个现象）。
     $pct = $script:barGood
   }
   # 只缓存成功值。失败若也写进缓存，2 秒内每一帧都会直接命中那条 -1，
@@ -1224,7 +1364,12 @@ function GetFallback() {
   $script:fbPct = $pct
   $script:fbPlaying = $playing
   SaveFbExe $exe
-  return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct }
+  # barOk 用「位置已知」而不是「这一帧读到了」：字幕背景盖住进度条时读不到，但条还在原处，
+  # 点击照样打得中（ClickPct 会退回上次的行位置）。若直接用 pct>=0，
+  # 用户 m02806 说的「把字幕背景拉下去后进度条就点不了」就会每帧复发。
+  $known = $false
+  try { $known = [IslandBarClick]::RowKnown() } catch { $known = $false }
+  return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct; known = $known }
 }
 
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
@@ -1381,7 +1526,8 @@ while ($true) {
           canVolume = $fbCanVol
           cover = ""
           barPct = [math]::Round([double]$fb.pct, 4)
-          barOk = [bool]([double]$fb.pct -ge 0)
+          # 位置已知就允许拖（哪怕这一帧被字幕背景盖住读不出新值）
+          barOk = [bool]($fb.known -or ([double]$fb.pct -ge 0))
           fallback = $true
         })
         continue

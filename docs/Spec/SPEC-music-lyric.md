@@ -676,3 +676,87 @@ AFTER_KEY2 peak=0.01064
 2. **`BringKeyless` 每次点击会把播放器窗口顶到前台**：这是点击能落到进度条上的前提（否则点的是遮挡物）。用户如果正在岛上看歌词，点击后网易云会盖住岛——但岛已收起，且这是既有行为（第二十三轮起就如此），本轮未改。
 3. **冷启动首帧仍会闪一下空态**（13.7 / 14.6 已记，未修）。
 4. **`uiseek5` 的「暂停帧」判据依赖桥接 1 秒轮询**：若暂停恰好发生在两次采样之间且时长 < 1 秒，理论上采不到。本轮三次测试共 24 帧全为在播，未观察到该情况。
+
+---
+
+## 十六、第二十六轮修正：点进度条岛收起 / 字幕背景挡住 / 换歌进度乱跳
+
+### 16.1 用户反馈（m02806 原话）
+
+> 我一点进度条，岛就会缩起来；
+> 有时候我的鼠标会点不了进度条，原因是我只要把网易云的字幕背景拉下下去了，岛的播放器的进度就会点不了；
+> 还有就是如截图所示，我每次一点下一首，岛的播放器的进度条不会从零开始，直接从30s左右的位置直接开始；
+
+三条是三个独立缺陷，分别处理。
+
+### 16.2 第 1 条：点进度条岛就收起
+
+**真因**：第二十五轮把 `ClickPct` 里的 `Activate(h)` 换成了 `BringKeyless(h)`（免媒体键置前台），但它仍然会把播放器窗口顶到前台 → 主窗口 `blur` → `src/main/index.ts:255-259` 发 `island:window-blur` → `src/renderer/src/App.tsx` 的 `onWindowBlur` 回调立刻 `setExpanded(false)`。
+
+**修法**（`src/renderer/src/App.tsx`）：
+
+1. 模块级新增 `let blurSuppressUntil = 0`（不能写成组件内 `useRef`：`onSeekPointerUp` 在 `MusicPanel`、`onWindowBlur` 在 `App`，两个组件互相看不见，`typecheck:web` 会报 `TS2304`）。
+2. `onWindowBlur` 回调开头：`if (Date.now() < blurSuppressUntil) { window.island.logDiag('render blur ignored; bar seek in flight'); return }`。
+3. `onSeekPointerUp` 的 `if (wasBar)` 分支里、`ctl({ cmd: 'barseek', ... })` 之前：`blurSuppressUntil = Date.now() + 2500`。
+
+**实测**：`.tmp/word/uikeep.mjs 0.4` → `COLLAPSED_FRAMES=0/10`、`CLASSES=["island expanded"]`。
+
+### 16.3 第 2 条：字幕背景拉下去后点不了
+
+**真因**：字幕背景层盖住窗口底部进度条区域时，`Probe` 的像素判据全灭 → `barPct=-1` → `barOk=false` → 渲染层把进度条当死条，点击入口直接关闭。
+
+**修法**（`src/main/smtcScript.ts` 的 `$barSrc`）：
+
+1. `static double LastRowFrac = -1;` 记录上一次成功读到的进度条所在行（按窗口高度比例，窗口大小变了也跟得上）。`Probe` 成功时写 `LastRowFrac = (double)by / (double)hh`。
+2. `public static bool RowKnown()` → `LastRowFrac >= 0 && LastRowFrac <= 1`。
+3. `static bool FallbackRow(IntPtr h, out int y)`：用 `LastRowFrac × 当前窗口高` 算回行号（要求 `hh >= 200`）。
+4. `ClickPct`：`Probe` 返回空串时走 `FallbackRow`，否则照旧解析 `parts[1]`；`w` 单独从 `GetWindowRect` 取。
+5. `GetFallback` 返回值新增 `known`，`poll` 降级分支 `barOk = [bool]($fb.known -or ([double]$fb.pct -ge 0))` —— 读不出但位置知道，条仍可拖。
+
+**实测**：`.tmp/word/fallbacktest.ps1` 先把窗口缩到 150x400 让 `Probe` 返回空，再走 `ClickPct`：`PROBE_NORMAL=[0.1665|875|1321|940|0|1320]`、`ROW_KNOWN=True` → `PROBE_SHRUNK=[]`、`ROW_KNOWN_SHRUNK=True`、`CLICKPCT_FALLBACK=[351,413]` → `PROBE_RESTORED=[0.5132|908|...]`。最小化态下 `musicGet()` 返回 `barPct:-1, barOk:true`（不再是死条）。
+
+### 16.4 第 3 条：点下一首后进度不从 0 开始
+
+这条挖出来四个叠加的真因，逐个修：
+
+**(a) `GetBarPct` 的旧值跨歌沿用**：`$script:barGood` 只按时间（10 秒）沿用，不管换没换歌。新增 `$script:barGoodTitle`，沿用条件加上 `-and $title -eq $script:barGoodTitle`。
+
+**(b) `Probe` 抓到「红色圆形播放按钮」**：网易云切到歌手页/歌单页时，底部那行有个红色圆按钮浮在背景中间，逐行扫出 `s≈639~654 p≈667~682`，`pct` 恒为 0.5132 一动不动。`ScoreRow` 新增三条排除：
+
+- `if (tx <= 0 && s > w * 15 / 100) return -1;` —— 真进度条已播段起点必在窗宽 15% 内（实测 0/58~64/86）。
+- `if (tx <= 0) { Color left = b.GetPixel(Math.Min(2, w - 1), y); if (Df(left, off) <= 8) return -1; }` —— 真条从窗口左缘起，第 0~2 列不该是未播段色。
+- `if (tx <= 0 && s <= 0) return -1;` —— 没有干净分界的不是进度条。
+
+**(c) `Probe` 按行分取最大 → 选中 1~2 行的假目标**：实测棕主题真条 `y=833..842` 共 10 行、行分 2758；假目标 `y=869..874`（6 行、1724）、`y=877`（1 行、2901）、`y=904/909/910`（1~2 行、2790~2868）。改为**段高优先，段高相同才比行分**：新增 `int bestH = 0;`，三处选择点全部改成 `if (ch > bestH || (ch == bestH && sc2 > best))`。三处缺一处无效。
+
+**(d) 未播段上「位置固定的标记点」截停扫描（本轮最关键的一个）**：网易云深色主题的进度条本体只有 10 行（y=833..842），条上还画着一个**位置固定的小标记点**（实测 x≈729..738，宽 10px，纵向也只有 10 行）；真滑块是凸出到条外的圆点（x≈119..136，宽 18px，纵向 20 行）。`Row` 从右缘向左扫未播段同色时，标记点把扫描截停，于是 `offL` 落到 738、`pct` 恒为 0.5556。
+
+修法：扫描时跳过小色块——遇到非未播段色的色块，若宽度 `<= 12` 且左边又回到未播段色，就跳过继续扫；否则它就是分界。圆点（宽度 `<= 24`）用**中心**当分界，长渐变段用右端。
+
+**(e) 换歌过渡动画期间抓到「一排图标和文字」**：换歌瞬间整页做过渡动画，`Probe` 抓到 `y=879` 的假条带（`offL=1221`、`pct` 恒为 0.8857 不动）。那一行有十几个 3~5px 的小亮块，而真进度条那一行只有一两个亮块。新增 `BlockCount(b, y, off, xEnd)` 数已播侧亮块数，`> 4` 直接否掉。
+
+**(f) 换歌守卫窗口过宽**：原本换歌后 6 秒内丢弃「> 0.12」的读数。实测（`.tmp/word/nextev.ps1` 用时间徽标 `00:00 → 00:07` 对照）网易云约 1 秒就重画完，6 秒太长——那 6 秒里读数全被丢掉，渲染层的钟继续按旧歌走，一恢复读数就触发「偏差 >1.5 秒 → `clockAnchor`」一次性掰到 0.43×总时长。**这才是用户看到「直接从 30s 左右开始」的直接成因**。缩到 2.5 秒。
+
+### 16.5 实测
+
+| 项 | 结果 |
+|---|---|
+| 换歌后进度归零（`nexttrace3.mjs`） | `BEFORE b=0.2286` → `T1..T3 b=-1` → `T4..T7 b=0.0204` 单调上升，**不再跳 0.88** |
+| 进度随播放前进 | 连测 4 帧 `barPct` = `0.0575 → 0.0666 → 0.0666 → 0.0825` |
+| 点进度条不收起（`uikeep.mjs 0.4`） | `COLLAPSED_FRAMES=0/10` |
+| 点进度条落点（`uiseek5.mjs 0.3 0.7`） | `0.3 → 0.3301`（`times=["1:19","-2:40"]`）、`0.7 → 0.7282`（`times=["2:53","-1:05"]`），`pausedFrames=0/8` |
+
+### 16.6 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 131ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过** |
+
+### 16.7 未核验 / 已知限制
+
+1. **第 2 条（字幕背景）的兜底只用「缩窗让 `Probe` 返回空」模拟过**，没有真正把网易云的字幕背景拉下来复现原场景；`FallbackRow` 走的是「上次成功行号 × 当前窗口高」，若用户把窗口拉高/拉矮，行号会按比例缩放，理论上对，但**未实测窗口比例变化后的点击落点**。
+2. **`BlockCount` 的阈值 4 是经验值**：真条实测 1~3 个、假条带 16 个，中间没有采样到 4~15 的情况。
+3. **标记点判据（宽度 `<= 12` 跳过）依赖「标记点窄于滑块」**：实测标记点 10px、滑块 18px。若网易云某主题把标记点画得更宽，会退化成从标记点分界。
+4. 冷启动首帧仍会闪一下空态（13.7 / 14.6 / 15.6 已记，未修）。
