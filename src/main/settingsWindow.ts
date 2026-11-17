@@ -49,6 +49,9 @@ function createSettingsWindow(): BrowserWindow {
     skipTaskbar: false,
     show: false,
     title: '灵动岛设置',
+    // 任务栏图标：设置窗口是唯一 skipTaskbar:false 的窗口，不显式给 icon 时
+    // Windows 任务栏显示的是 Electron 默认原子图标。.ico 必须同时打进 build.files。
+    icon: join(__dirname, '../../build/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
