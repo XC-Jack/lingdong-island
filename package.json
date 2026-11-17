@@ -37,7 +37,8 @@
     },
     "files": [
       "out/**",
-      "build/icon.png"
+      "build/icon.png",
+      "build/icon.ico"
     ],
     "win": {
       "target": [

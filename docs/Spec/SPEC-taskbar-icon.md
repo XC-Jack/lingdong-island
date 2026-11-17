@@ -33,3 +33,18 @@
 - 不重新设计图标。
 - 不改安装包文件名、版本号、AppUserModelID。
 - 不处理「朋友下载旧 Release」的问题（版本号是否升到 0.1.1 由用户决定）。
+
+## 验收结果（2026-11-17）
+
+| 项 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0 |
+| `node scripts/e2e-settings-shell.mjs` | **PASS 51 过 / 0 败** |
+| 开发版设置窗口 `WM_GETICON` | 40×40，保存为 PNG 后肉眼确认是 App 图标（深色圆角方块 + 紫色胶囊两点），不是 Electron 原子 |
+| 安装包 asar | 含 `build/icon.ico` 与 `build/icon.png` |
+| 安装版设置窗口 `WM_GETICON` | 40×40，同样是 App 图标 |
+
+**真因（[已核验]）**：设置窗口是唯一 `skipTaskbar:false` 的窗口，之前没有给 `icon`；同时 `build.files` 只打了 `icon.png`，主进程引用的 `build/icon.ico` 在打包后不存在。两处一起补。
+
+**未验证**：Windows 11 实际任务栏的像素级观感（只验证了窗口持有的 HICON 内容）；固定到任务栏后的图标（应取 exe 图标，安装版 exe 已确认是 App 图标）。
