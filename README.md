@@ -104,3 +104,5 @@ Electron 45 + React 19 + TypeScript + electron-vite，打包用 electron-builder
 ## 许可证
 
 [PolyForm Noncommercial License 1.0.0](LICENSE.md)：个人、学习、研究等非商业用途可自由使用、修改和分发；**商业使用需要另行获得授权**。完整条款见 [`LICENSE.md`](LICENSE.md)。
+
+Required Notice: Copyright 2026 XC-Jack — <https://github.com/XC-Jack/lingdong-island>
