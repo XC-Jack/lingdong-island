@@ -17,7 +17,14 @@ import { BrowserWindow, ipcMain, screen } from 'electron'
  *      但 cloaked=2，用户在屏幕上根本看不到它）；
  *   2. 桌面本身 `Progman` / `WorkerW`（点桌面时它们会成为前台）。
  * 故判据 = 前台窗口 可见 ∧ 未最小化 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧
- * 不属于本进程 ∧ 矩形覆盖整个主屏。无 npm 新依赖。
+ * 不属于本进程 ∧ 矩形覆盖整个**工作区**。无 npm 新依赖。
+ *
+ * 基准是工作区（WorkingArea）而不是整屏（Bounds）——2026-11-17 用户报「最大化窗口时岛不缩」
+ * 的真因（[实测] 前台最大化 VS Code rect=-7,-7,1543,919，Bounds=1536×960、WorkingArea=1536×912，
+ * 旧判据要求 r.B>=960 永不成立）：最大化窗口只铺到工作区，任务栏显示时两者差 48px。
+ * 旧代码能用，是因为当时本机任务栏是「自动隐藏」（WorkArea==Bounds）；前提一变就失效。
+ * 换成工作区基准后，真全屏（覆盖整屏）必然也覆盖工作区 ⇒ 通过集合是旧判据的超集，无回归。
+ * 8px 容差（TOL）吃 Windows 最大化时外扩的不可见边框（最大化的 rect 比工作区大 7~8px）。
  *
  * 摸边唤回：隐藏期间在主屏顶部放一条 4px 高的隐形感应窗（不可聚焦、不进
  * 任务栏、鼠标穿透关不掉也无所谓——它只有 4px，盖在岛平时待的位置），
@@ -106,28 +113,30 @@ function watchScript(): string {
     '  if (c == ' + TICK + 'MultitaskingViewFrame' + TICK + ') return true;', // 任务视图
     '  return false;',
     '}',
-    'public static bool Covers(IntPtr h, int sw, int sh) {',
+    // 基准 = 主屏工作区四边（wl,wt,wr,wb），容差 TOL 见上方模块注释
+    'public const int TOL = 8;',
+    'public static bool Covers(IntPtr h, int wl, int wt, int wr, int wb) {',
     '  RECT r; if (!GetWindowRect(h, out r)) return false;',
-    '  return r.L <= 0 && r.T <= 0 && r.R >= sw && r.B >= sh;',
+    '  return r.L <= wl + TOL && r.T <= wt + TOL && r.R >= wr - TOL && r.B >= wb - TOL;',
     '}',
-    'public static bool IsFs(IntPtr h, int sw, int sh) {',
+    'public static bool IsFs(IntPtr h, int wl, int wt, int wr, int wb) {',
     '  if (h == IntPtr.Zero) return false;', // 没有前台窗口（桌面上什么都没选）
     '  if (!IsWindowVisible(h)) return false;',
     '  if (Cloak(h) != 0) return false;', // DWM 已隐藏：用户根本看不到它
     '  if (ShellClass(Cls(h))) return false;',
     '  uint p; GetWindowThreadProcessId(h, out p);',
     '  if (p == ' + ownPid + ') return false;', // 别把自己的窗口当全屏
-    '  return Covers(h, sw, sh);',
+    '  return Covers(h, wl, wt, wr, wb);',
     '}',
-    'public static string Probe(int sw, int sh) { return IsFs(GetForegroundWindow(), sw, sh) ? ' + TICK + 'fullscreen' + TICK + ' : ' + TICK + 'normal' + TICK + '; }',
+    'public static string Probe(int wl, int wt, int wr, int wb) { return IsFs(GetForegroundWindow(), wl, wt, wr, wb) ? ' + TICK + 'fullscreen' + TICK + ' : ' + TICK + 'normal' + TICK + '; }',
     '}'
   ].join(' ')
   return [
     'Add-Type "' + cs + '"',
     'Add-Type -AssemblyName System.Windows.Forms',
-    '$sw=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width',
-    '$sh=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height',
-    '[FS]::Probe($sw,$sh)'
+    // 用工作区（任务栏占位后的可见区域）而不是 Bounds：最大化窗口只铺到工作区
+    '$wa=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+    '[FS]::Probe($wa.Left,$wa.Top,$wa.Right,$wa.Bottom)'
   ].join('; ')
 }
 
