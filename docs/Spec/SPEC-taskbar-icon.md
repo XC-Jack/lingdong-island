@@ -48,3 +48,21 @@
 **真因（[已核验]）**：设置窗口是唯一 `skipTaskbar:false` 的窗口，之前没有给 `icon`；同时 `build.files` 只打了 `icon.png`，主进程引用的 `build/icon.ico` 在打包后不存在。两处一起补。
 
 **未验证**：Windows 11 实际任务栏的像素级观感（只验证了窗口持有的 HICON 内容）；固定到任务栏后的图标（应取 exe 图标，安装版 exe 已确认是 App 图标）。
+
+## 第二次修正（2026-11-17 17:50）：真因是 AUMID 被残留快捷方式占用
+
+上面那一轮改的两处（窗口 `icon` + `build.files`）**是正确且必须的，但不是任务栏显示原子图标的原因**。用户装机后任务栏仍是原子图标。
+
+**实测证据链**：
+
+1. 用 `EnumWindows` + `WM_GETICON` 导出安装版两个窗口（岛 `0x6807E6`、设置 `0x5065E`）的 HICON 存成 PNG：**两个窗口都是 App 图标**（40×40 / 20×20）。
+2. `ExtractAssociatedIcon('D:\软件\灵动岛\灵动岛.exe')` → **App 图标**；exe 的 `FileDescription`/`ProductName` 都是「灵动岛」。
+3. 重启 `explorer.exe` 后截图任务栏：**仍是原子图标** ⇒ 不是图标缓存。
+4. `Get-StartApps` 里 `AppID = com.xcjack.lingdong-island` 的 **Name 是「Electron」** ⇒ shell 把这个 AUMID 解析成了 Electron。
+5. 遍历开始菜单 `.lnk` 的 `System.AppUserModel.ID`：`Electron.lnk`（建于 2026-11-03，`TargetPath` 指向 `d:\...\node_modules\electron\dist\electron.exe`）和 `灵动岛.lnk`（指向安装版）**带同一个 AUMID**，Windows 用了前者。
+
+**处理**：把 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Electron.lnk` 改名为 `Electron.lnk.disabled`（未删除，可恢复）→ 重启 explorer → 重启安装版。
+
+**验证 [已核验]**：`Get-StartApps` 该 AUMID 的 Name 变为「灵动岛」；截取任务栏放大后是 App 图标（深色圆角方块 + 紫色胶囊两点）；随后换成无调试端口正常启动，4 个进程，CDP 端口已关闭。
+
+**代码没有新增改动**：本轮只改机器上的残留快捷方式与文档。设置窗口的 `icon` 仍然保留——Alt+Tab 缩略图和 AUMID 解析失败时要用它。
