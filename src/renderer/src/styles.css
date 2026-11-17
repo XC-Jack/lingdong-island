@@ -2762,8 +2762,9 @@ div.pm-row[draggable='true'] {
   color: #f2f3f5;
   background: rgba(255, 255, 255, 0.13);
 }
+/* busy 只是 300ms 的防连点锁，不是「不可用」。以前这里写 opacity:0.45，
+   用户点播放/上一首/下一首时会看到按钮自己淡一下（「隐形一下」）；保持原样，只用光标说明。 */
 .music-btn:disabled {
-  opacity: 0.45;
   cursor: default;
 }
 .music-btn-main {

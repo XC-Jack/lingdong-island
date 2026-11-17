@@ -75,6 +75,8 @@ let cdpTimer: ReturnType<typeof setInterval> | null = null
 let cdpPolling = false
 let cdpBusy = false
 let neteaseRunning = false
+/** 网易云进程自己的音频会话音量（0..1）；null=没读到（界面置灰） */
+let neteaseVol: number | null = null
 /** 最近一次收到任何回包的时间（毫秒），用于判断子进程是不是挂了 */
 let lastAliveAt = 0
 /** 子进程正在启动（避免重复 spawn） */
@@ -148,6 +150,16 @@ function handleLine(text: string): void {
   if (msg.type === 'error') {
     // 桥接脚本里的异常（读媒体属性失败等）：打到控制台留证，界面这一轮不发空态以外的变化
     console.warn('[music] 桥接报错：', String(msg.msg ?? '').slice(0, 300))
+    return
+  }
+  // 按进程读回来的音量（CDP 控制网易云时用；最小化后没有 SMTC 会话也能读）
+  if (msg.type === 'ack' && msg.cmd === 'appvol') {
+    const v = Number(msg.value)
+    const next = Number.isFinite(v) && v >= 0 ? Math.min(1, v) : null
+    if (next !== neteaseVol) {
+      neteaseVol = next
+      recompute()
+    }
     return
   }
   if (msg.type !== 'state') return
@@ -225,9 +237,11 @@ function recompute(): void {
       canSeek: c.dur > 0,
       canShuffle: false,
       canRepeat: false,
-      // 音量仍走桥接的按应用音频会话；网易云没被桥接认出来时不给（置灰，不碰系统音量）
-      volume: bridgeIsNetease ? bridgeState.volume : 0,
-      canVolume: bridgeIsNetease ? bridgeState.canVolume : false,
+      // 音量仍走按应用的音频会话。网易云最小化后没有主窗口标题，桥接的降级识别会跳过它，
+      // 但它自己的音频会话还在——所以 CDP 生效时另用「按进程读音量」那条路（appvol），
+      // 桥接能直接对上时优先用桥接的值。
+      volume: bridgeIsNetease && bridgeState.canVolume ? bridgeState.volume : (neteaseVol ?? 0),
+      canVolume: (bridgeIsNetease && bridgeState.canVolume) || neteaseVol !== null,
       cover: cdpCover || (sameSong ? bridgeState.cover : ''),
       // 有真实时间轴了，不再需要「读窗口像素 / 点窗口坐标」那套兜底
       barPct: -1,
@@ -245,11 +259,20 @@ function recompute(): void {
 }
 
 /**
+ * 主进程内部专用的桥接命令：额外带 `exe`，按进程名直接操作音频会话。
+ * 不放进 `MusicCommand`（渲染层不该能指定任意进程名）。
+ */
+type BridgeCommand =
+  | MusicCommand
+  | { cmd: 'volume'; value: number; exe: string }
+  | { cmd: 'appvol'; exe: string }
+
+/**
  * 写一行命令到桥接子进程。
  * 纯文本命令（poll / toggle / next / prev / resync）沿用原行协议；
  * 带参数的新命令序列化成一行 JSON（见 SPEC-music-controls「混合行协议」）。
  */
-function send(cmd: string | MusicCommand): void {
+function send(cmd: string | BridgeCommand): void {
   if (!child || !child.stdin.writable) return
   try {
     const line = typeof cmd === 'string' ? cmd : JSON.stringify(cmd)
@@ -294,6 +317,9 @@ async function pollCdp(): Promise<void> {
     neteaseRunning = await isNeteaseRunning()
     const s = await readNeteaseState()
     cdpState = s
+    // 最小化后网易云没有 SMTC 会话 / 主窗口标题，桥接的降级识别认不出它；
+    // 但它的音频会话还在，所以按进程名单独读一次音量（1 秒一次）。
+    if (neteaseRunning) send({ cmd: 'appvol', exe: 'cloudmusic.exe' })
     if (s) {
       neteaseRunning = true
       const key = `${s.title}|${s.artist}`
@@ -376,6 +402,13 @@ async function applyControl(cmd: MusicCommand): Promise<boolean> {
   }
   if (cmd.cmd === 'netease-enable') {
     void enableCdp()
+    return true
+  }
+  if (cmd.cmd === 'volume' && useCdp) {
+    // 直接按进程名找网易云的音频会话：不依赖桥接有没有把它认成当前播放器，
+    // 也不要求窗口可见（最小化后它的 SMTC 会话/窗口标题都会消失）。
+    send({ cmd: 'volume', value: cmd.value, exe: 'cloudmusic.exe' })
+    setTimeout(() => send({ cmd: 'appvol', exe: 'cloudmusic.exe' }), 200)
     return true
   }
   if (cmd.cmd === 'seek' && useCdp && cdpState) {
@@ -526,6 +559,7 @@ export function stopMusicStore(): void {
   }
   cdpState = null
   cdpBusy = false
+  neteaseVol = null
   bridgeState = { ...EMPTY_STATE }
   cache = { ...EMPTY_STATE }
 }

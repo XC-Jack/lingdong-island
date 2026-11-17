@@ -1385,11 +1385,16 @@ while ($true) {
   # 解析失败按未知命令处理，只回一条 ack，不让坏输入把循环带崩。
   $cmd = $line
   $val = $null
+  $exe = ""
   if ($line.StartsWith("{")) {
     try {
       $j = $line | ConvertFrom-Json
       $cmd = [string]$j.cmd
       $val = $j.value
+      # 可选：显式指定要操作的进程名（如 cloudmusic.exe）。
+      # 网易云最小化后没有主窗口标题，GetFallback 会跳过它，但它的音频会话还在；
+      # 用 CDP 控制时主进程知道当前播放器就是网易云，直接按进程名调音量即可。
+      $exe = [string]$j.exe
     } catch {
       $cmd = ""
     }
@@ -1412,6 +1417,20 @@ while ($true) {
   # 音量依赖当前播放应用：用正在播放（或当前选中）的会话的 SourceAppUserModelId
   # 去找它自己的音频会话。没有会话、或对不上号时只回 ack ok=false，不碰任何音量。
   if ($cmd -eq "volume") {
+    # 显式指定了进程名（CDP 控制网易云时主进程会带 cloudmusic.exe）：
+    # 不依赖 SMTC 会话和窗口标题，直接找这个进程的音频会话。
+    if ($exe -ne "") {
+      try {
+        $v = [double]$val
+        if ($v -lt 0) { $v = 0 }
+        if ($v -gt 1) { $v = 1 }
+        $ok = [IslandAppVol.AppVol]::Set($exe, [float]$v)
+        Emit @{ type = "ack"; cmd = "volume"; ok = [bool]$ok }
+      } catch {
+        Emit @{ type = "ack"; cmd = "volume"; ok = $false }
+      }
+      continue
+    }
     if ($idx -lt 0) {
       # 无 SMTC 会话时音量仍然可调：降级路径认得那个进程，直接按进程名找它的音频会话。
       $fb = GetFallback
@@ -1438,6 +1457,19 @@ while ($true) {
     } catch {
       Emit @{ type = "ack"; cmd = "volume"; ok = $false }
     }
+    continue
+  }
+
+  # 读某个进程自己的音频会话音量（目前用于 CDP 控制网易云时的按应用音量）。
+  # 不用 SMTC 会话、也不要求窗口可见：最小化后网易云没有主窗口标题，
+  # 但 ISimpleAudioVolume 按进程仍能对上。没找到会话时 value=-1（界面据此置灰）。
+  if ($cmd -eq "appvol") {
+    if ($exe -eq "") {
+      Emit @{ type = "ack"; cmd = "appvol"; ok = $false; value = -1 }
+      continue
+    }
+    $v = GetAppVolume $exe
+    Emit @{ type = "ack"; cmd = "appvol"; ok = [bool]($v -ge 0); value = [double]$v }
     continue
   }
 

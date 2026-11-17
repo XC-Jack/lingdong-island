@@ -856,3 +856,50 @@ Chromium 的调试端口只认启动参数，运行中打不开，也不能靠�
 
 1. 真实鼠标手感：探针用合成 `PointerEvent` 并把 `setPointerCapture` 置空，未用 OS 级鼠标点。
 2. 歌词行点击在「网易云未开 CDP、只能点它窗口进度条」的兜底路径下未单独验（走同一条 `ctl`，但需要窗口可见）。
+
+---
+
+## 十九、第二十九轮：切换键不再闪灰、网易云最小化后音量仍可用（2026-11-17）
+
+用户原话：「还有就是点击切换键也会隐形；还有就是音量键功能失效」
+
+### 19.1 「切换键隐形」
+
+与第十八轮的闪灰同源：`ctl()` 对上一首/下一首/播放暂停也 `setBusy`，三个按钮 `disabled` 后命中 `.music-btn:disabled { opacity: 0.45 }`。busy 只是 300ms 防连点锁，不代表不可用，所以删掉透明度变化，只保留 `cursor: default`。
+
+### 19.2 「音量键功能失效」真因
+
+实测（[已核验]）：
+
+- CDP 读到网易云在播（`playing=true`、`position` 前进），但**独立查询 SMTC 会话数 = 0**；
+- 网易云窗口最小化/收进托盘后，`Get-Process cloudmusic | MainWindowTitle` 全为空；
+- 桥接的降级识别 `GetFallback` 要求「音频会话对应的进程有窗口标题」，于是把网易云整条跳过 → `canVolume=false`；
+- CDP 合并分支又把 `canVolume` 绑在「桥接是否认出网易云」上 → 音量滑块置灰、数字显示 `--`。
+
+也就是说：切到 CDP 后，进度/播控不再需要窗口，但音量还悄悄依赖「窗口可见」，正好撞上用户测试最小化的场景。
+
+### 19.3 改法
+
+1. 桥接新增两条按进程名操作的命令（主进程内部使用，不开放给渲染层）：
+   - `{"cmd":"appvol","exe":"cloudmusic.exe"}` → 读该进程音频会话的 `ISimpleAudioVolume` 音量，找不到回 `value:-1`；
+   - `{"cmd":"volume","value":0..1,"exe":"cloudmusic.exe"}` → 直接设该进程音量。
+   两条都走现有的 `IslandAppVol.AppVol`（`IAudioSessionControl2.GetProcessId` 对号），**不需要 SMTC 会话、不需要窗口标题**。
+2. `musicStore` CDP 生效时每秒向桥接发一次 `appvol`，`recompute()` 用它的结果补 `volume/canVolume`；
+   `volume` 命令在 CDP 生效时改发带 `exe` 的版本。桥接自己能对上时仍优先用桥接的值。
+3. 仍然只读写**该应用自己的音频会话**，绝不碰系统主音量。
+
+### 19.4 实测
+
+| 断言 | 结果 |
+|---|---|
+| 网易云最小化、SMTC 会话数 0 时的 `musicGet()` | `volume=1`、`canVolume=true`、`neteaseCdp=true` |
+| 音量面板 | `input.disabled=false`，数字 `100%` |
+| IPC 设 0.25 → 读回 | `0.25`；恢复原值 `1` 成功 |
+| 点下一首后 900ms 内按钮最小 opacity | **1**（修前 0.45） |
+| `npm run typecheck` / `npm run build` | EXIT=0 |
+| `node scripts/e2e-music.mjs` | 连续两次 **PASS 48 过 / 0 败**（改动后首次跑出现 44/4，未保留失败项，随后两次全绿） |
+
+### 19.5 未核验
+
+1. 真实鼠标拖音量条的手感（探针走 IPC 设值，未拖 DOM 滑块）。
+2. 改动后首次 e2e 的 4 条失败未抓到具体断言；两次重跑全绿，暂判为探针刚杀进程、网易云在切歌过渡态导致的环境抖动。
