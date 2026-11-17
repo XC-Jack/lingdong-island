@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import type { SettingsSection } from '../../../shared/types'
+import type { AvoidMode, SettingsSection } from '../../../shared/types'
+import { AVOID_MODES } from '../../../shared/types'
 import PageManagerSection, {
   defaultPagesCustom,
   normalizePagesCustom,
@@ -100,6 +101,26 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   )
 }
 
+/**
+ * 全屏避让三档（SPEC-avoid-mode-and-latency，用户 2026-11-17 要求）：
+ * 三个选项互斥，点一下立刻写 prefs.json 并广播（岛主进程 150ms 内跟上）。
+ * 文案刻意写明「最大化算不算」，因为这两档的差别只有这一点。
+ */
+const AVOID_META: Record<AvoidMode, { label: string; desc: string }> = {
+  fullscreen: {
+    label: '只在真全屏时隐藏',
+    desc: 'F11、全屏视频、全屏游戏这类才把岛收起来；平时把窗口最大化，岛照常待着。'
+  },
+  maximized: {
+    label: '窗口最大化时也隐藏',
+    desc: '只要前台窗口铺满屏幕（含最大化）就把岛收起来，默认。鼠标移到屏幕最顶边 4px 可以临时叫出来。'
+  },
+  off: {
+    label: '不隐藏',
+    desc: '任何时候都留着岛。看视频/玩游戏时它会挡在画面上，需要自己点「暂时隐藏」。'
+  }
+}
+
 export default function SettingsApp(): ReactElement {
   // 首帧就落在菜单要求的分区（模块级订阅可能在 render 之前已经收到一条）
   const [section, setSection] = useState<SettingsSection>(pendingSection ?? 'general')
@@ -109,6 +130,10 @@ export default function SettingsApp(): ReactElement {
   const pagesCustomDirty = useRef(false)
   // 开机自启（null = 还没取到，开关先不显示假状态）
   const [autoStart, setAutoStart] = useState<boolean | null>(null)
+  // 全屏避让策略（SPEC-avoid-mode-and-latency）：默认与主进程一致 = maximized
+  const [avoidMode, setAvoidMode] = useState<AvoidMode>('maximized')
+  // 用户点过就不再接受启动回填（与桌宠分区同一个防覆盖思路）
+  const avoidDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
@@ -121,7 +146,9 @@ export default function SettingsApp(): ReactElement {
     window.island
       .prefsGet()
       .then((prefs) => {
-        if (!alive || pagesCustomDirty.current) return
+        if (!alive) return
+        if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
+        if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
       })
@@ -134,6 +161,7 @@ export default function SettingsApp(): ReactElement {
     const offPrefs = window.island.onPrefsChanged((prefs) => {
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (v) setPagesCustom(v)
+      if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
     })
     return () => {
       alive = false
@@ -180,6 +208,15 @@ export default function SettingsApp(): ReactElement {
 
   // 自启状态被另一处改了（岛头部那枚胶囊）也要跟上（SPEC-settings-shell 阻断项 B2）
   useEffect(() => window.island.onAutostartChanged((on) => setAutoStart(on)), [])
+
+  /** 避让策略：立即生效 + 写主进程，不等「保存」（与桌宠/页面管理同一套模式） */
+  const pickAvoidMode = (m: AvoidMode): void => {
+    avoidDirty.current = true
+    setAvoidMode(m)
+    window.island.prefsSet({ avoidMode: m }).catch(() => {
+      /* 写失败下次还是旧值，不打扰用户 */
+    })
+  }
 
   /** 页面管理改动：立即生效 + 写主进程，不等「保存」 */
   const changePages = (v: PagesCustom): void => {
@@ -294,6 +331,25 @@ export default function SettingsApp(): ReactElement {
                     {exporting ? '导出中…' : '导出…'}
                   </button>
                 </Row>
+              </div>
+              <div className="set-card">
+                <div className="pet-set-head">全屏时怎么办</div>
+                {AVOID_MODES.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`pet-set-mode ${avoidMode === m ? 'on' : ''}`}
+                    data-avoid-mode={m}
+                    aria-pressed={avoidMode === m}
+                    onClick={() => pickAvoidMode(m)}
+                  >
+                    <span className="pet-set-mode-text">
+                      <span className="pet-set-mode-name">{AVOID_META[m].label}</span>
+                      <span className="pet-set-mode-desc">{AVOID_META[m].desc}</span>
+                    </span>
+                    <span className="pet-set-radio" aria-hidden="true" />
+                  </button>
+                ))}
               </div>
               {exportNote ? <div className="set-note">{exportNote}</div> : null}
             </section>

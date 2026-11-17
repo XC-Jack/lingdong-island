@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { PET_MODES, PET_SKIN_IDS } from '../shared/types'
-import type { PetMode, PetSkinId, PetWindowPos } from '../shared/types'
+import { AVOID_MODES, PET_MODES, PET_SKIN_IDS } from '../shared/types'
+import type { AvoidMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -40,6 +40,11 @@ interface PrefsShape {
    * 只记坐标不记显示器，越界时由 `clampPetPos` 拉回工作区。
    */
   petWindowPos?: PetWindowPos
+  /**
+   * 全屏避让策略（SPEC-avoid-mode-and-latency）。缺失 = `maximized`
+   * （最大化与真全屏都避让，等于引入本字段之前的既有行为）。
+   */
+  avoidMode?: AvoidMode
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -122,6 +127,11 @@ function normalizePetMode(v: unknown): PetMode | undefined {
   return typeof v === 'string' && (PET_MODES as readonly string[]).includes(v)
     ? (v as PetMode)
     : undefined
+}
+
+/** 校验避让策略；非法/缺失一律返回 undefined（调用方回落默认 maximized） */
+function normalizeAvoidMode(v: unknown): AvoidMode | undefined {
+  return typeof v === 'string' && (AVOID_MODES as readonly string[]).includes(v) ? (v as AvoidMode) : undefined
 }
 
 /**
@@ -214,6 +224,8 @@ function load(): PrefsShape {
     if (pm) out.petMode = pm
     const pw = normalizePetWindowPos(parsed.petWindowPos)
     if (pw) out.petWindowPos = pw
+    const am = normalizeAvoidMode(parsed.avoidMode)
+    if (am) out.avoidMode = am
     return out
   } catch {
     return { ...EMPTY }
@@ -301,13 +313,14 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos } = (payload ?? {}) as {
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode } = (payload ?? {}) as {
     pagesCustom?: unknown
     shelfView?: unknown
     musicIntro?: unknown
     petSkin?: unknown
     petMode?: unknown
     petWindowPos?: unknown
+    avoidMode?: unknown
   }
   const pc = normalizePagesCustom(pagesCustom)
   if (pc) data.pagesCustom = pc
@@ -328,6 +341,9 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const pw = normalizePetWindowPos(petWindowPos)
   if (pw) data.petWindowPos = pw
   else if (petWindowPos !== undefined) delete data.petWindowPos
+  const am = normalizeAvoidMode(avoidMode)
+  if (am) data.avoidMode = am
+  else if (avoidMode !== undefined) delete data.avoidMode
   save(data)
   return JSON.stringify(before) !== JSON.stringify(data) ? data : null
 }

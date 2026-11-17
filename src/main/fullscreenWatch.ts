@@ -1,30 +1,45 @@
-import { BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { spawn } from 'node:child_process'
+import { readFileSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
+import type { AvoidMode } from '../shared/types'
 
 /**
  * US-041 全屏自动避让。
  *
  * 三种状态：
  *  - normal    岛照常常驻（默认）
- *  - avoided   前台窗口全屏/最大化占满屏幕 → 岛 hide()，摸顶边临时唤回
+ *  - avoided   前台窗口按当前策略该避让 → 岛 hide()，摸顶边临时唤回
  *  - manual    用户从菜单选了「暂时隐藏」→ 岛 hide()，摸边无效；托盘点击恢复
  *
- * 全屏判定：自适应间隔 spawn 一个短命 PowerShell 子进程，输出一行 fullscreen|normal
- * （SPEC-perf-poll-throttle：常态 1s、全屏避让 2s、手动隐藏暂停，避免小工具在游戏/办公时反复空转）。
- * 判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来
- * （2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
+ * 三档策略（SPEC-avoid-mode-and-latency，2026-11-17 用户要求，存 prefs.json 的 `avoidMode`）：
+ *  - maximized（默认）  前台窗口盖住工作区就避让 ⇒ 最大化与真全屏都避让
+ *  - fullscreen        只有真全屏避让，最大化窗口保留岛
+ *  - off               一律不避让
+ * 判断顺序：先看「盖住工作区」，再看「盖住整屏且不是 Windows 最大化（IsZoomed）」。
+ * 这样任务栏显示/自动隐藏两种情况下都能区分「最大化」和「真全屏」（[实测] 本机任务栏
+ * 显示时 bounds 比 workarea 高 48px；自动隐藏时两者相等，只能靠 IsZoomed 区分）。
+ *
+ * 判定精度（判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来，
+ * 2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
  *   1. DWM 已 cloak（不可见）的 Shell 窗口，典型是 TextInputHost 的
  *      `Windows.UI.Core.CoreWindow`（标题「Windows 输入体验」，rect=0,0,1536,960，
  *      但 cloaked=2，用户在屏幕上根本看不到它）；
  *   2. 桌面本身 `Progman` / `WorkerW`（点桌面时它们会成为前台）。
- * 故判据 = 前台窗口 可见 ∧ 未最小化 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧
- * 不属于本进程 ∧ 矩形覆盖整个**工作区**。无 npm 新依赖。
+ * 故判据 = 前台窗口 可见 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧ 不属于本进程 ∧
+ * 矩形覆盖整个**工作区**（四边 8px 容差，吃最大化时外扩的不可见边框）。
+ * 基准用工作区而不是整屏：2026-11-17 用户报「最大化窗口时岛不缩」，真因是旧判据要求
+ * 盖住整屏（Bounds 1536×960），而最大化窗口只铺到工作区（1536×912，任务栏 48px），
+ * `r.B>=960` 永不成立；旧代码能用只是因为当时本机任务栏恰好「自动隐藏」。
  *
- * 基准是工作区（WorkingArea）而不是整屏（Bounds）——2026-11-17 用户报「最大化窗口时岛不缩」
- * 的真因（[实测] 前台最大化 VS Code rect=-7,-7,1543,919，Bounds=1536×960、WorkingArea=1536×912，
- * 旧判据要求 r.B>=960 永不成立）：最大化窗口只铺到工作区，任务栏显示时两者差 48px。
- * 旧代码能用，是因为当时本机任务栏是「自动隐藏」（WorkArea==Bounds）；前提一变就失效。
- * 换成工作区基准后，真全屏（覆盖整屏）必然也覆盖工作区 ⇒ 通过集合是旧判据的超集，无回归。
- * 8px 容差（TOL）吃 Windows 最大化时外扩的不可见边框（最大化的 rect 比工作区大 7~8px）。
+ * 判定怎么跑（SPEC-avoid-mode-and-latency）：**常驻短小 PowerShell 辅助进程 + 心跳文件**。
+ *  辅助进程每 120ms 判一次，把「F/Z/N|毫秒时间戳」写进 `<userData>/avoid-mode-beat.txt`
+ *  （状态变了立刻写，否则每约 1 秒写一次心跳）；主进程每 150ms 读一次这个文件（不做管道）。
+ *  延迟从「约 1.5 秒」降到 0.3~0.6 秒，同时把常态 CPU 从「约 40% 一个核」降到接近 0。
+ *  ⚠ 为什么之前是「每次 spawn 一个短命 PowerShell」：旧事故是**用管道 stdio 读一个不退出的
+ *  子进程**，pipe 缓冲写满把主进程/DevTools HTTP 服务拖死（SPEC-perf-poll-throttle 记录）。
+ *  这里改成 stdio 全 ignore、零管道、只走一个文件，并且带心跳超时回退：辅助进程 3 秒没有
+ *  心跳就自动切回「单发短命 PowerShell」的旧路径（1 秒一次），绝不因为辅助进程挂了而失效。
  *
  * 摸边唤回：隐藏期间在主屏顶部放一条 4px 高的隐形感应窗（不可聚焦、不进
  * 任务栏、鼠标穿透关不掉也无所谓——它只有 4px，盖在岛平时待的位置），
@@ -36,22 +51,32 @@ import { BrowserWindow, ipcMain, screen } from 'electron'
 
 /** 感应窗高度（px）：太薄摸不到、太厚挡内容，4px 是任务栏类产品的通行值 */
 const EDGE_HEIGHT = 4
-/** 全屏判定的去抖延迟：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁 */
-const DEBOUNCE_MS = 300
-/** 检测脚本轮询周期（SPEC-perf-poll-throttle）：
- * 常态保持 1s（进全屏响应不变）；已进入全屏避让后前台长时间不会变，降到 2s；
- * 手动隐藏时完全停掉 spawn（commit 里 manual 本来就 return，判定无意义）。 */
-const WATCH_INTERVAL_NORMAL_MS = 1000
-const WATCH_INTERVAL_AVOIDED_MS = 2000
+/** 判定的去抖延迟：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁。
+ * SPEC-avoid-mode-and-latency：300→150ms（用户要求 0.75 秒内隐藏，去抖不能吃掉太多预算） */
+const DEBOUNCE_MS = 150
+/** 辅助进程内部判定间隔（ms）：决定隐藏延迟的下限 */
+const HELPER_TICK_MS = 120
+/** 主进程读心跳文件的间隔（ms）：纯本地小文件读，成本可忽略 */
+const BEAT_READ_MS = 150
+/** 心跳超过这个时间没更新（且连续多轮都是这样）→ 认为辅助进程死了，回退单发轮询。
+ * 阈值不能太小：e2e/系统负载高时 PowerShell 循环会被饿住 1~2 秒，误判会导致来回重启。 */
+const HEARTBEAT_STALE_MS = 5000
+/** 回退路径：单发短命 PowerShell 的轮询周期（旧行为） */
+const FALLBACK_POLL_MS = 1000
+/** 回退期间多久尝试重启一次辅助进程 */
+const HELPER_RETRY_MS = 15000
 /** 现身期间光标轮询回隐的周期 */
 const CURSOR_WATCH_INTERVAL_MS = 400
 /** 感应窗实际高度：Windows 对顶层窗口有最小尺寸约束（SM_CXMINTRACK/SM_CYMINTRACK），
  * 请求 4px 会被强制放大到 ~40px（[实测] .tmp/mini-edge2.cjs：height:4 → getBounds 40）。
  * 解决：窗口整体上移、主体悬在屏幕外，屏内只露 EDGE_HEIGHT 像素——命中带仅 4px，
- * 不遮挡全屏应用顶部交互。
- * [实测] .tmp/mini-edge7.cjs：窗口 rect=0,-36,1536,4；WindowFromPoint y=2 命中感应窗、
- * y=20 穿透到下层窗口。 */
+ * 不遮挡全屏应用顶部交互。 */
 const EDGE_WIN_HEIGHT = 40
+/** 心跳文件名（放在 userData 下，可随时删除，不是用户数据） */
+const BEAT_FILE = 'avoid-mode-beat.txt'
+
+/** 判定码：F=真全屏 / Z=最大化（盖住工作区） / N=都不算 */
+type JudgeCode = 'F' | 'Z' | 'N'
 
 type AvoidState = 'normal' | 'avoided' | 'manual'
 
@@ -60,32 +85,43 @@ let state: AvoidState = 'normal'
 let tempVisible = false
 /** 横幅临时现身中（渲染层 requestTempShow） */
 let bannerHold = false
-/** 隐藏前的展开态（恢复时不还原，展开即收起，SPEC 明确不做展开记忆） */
-let watcherChild: ReturnType<typeof import('node:child_process').spawn> | null = null
-let debounceTimer: NodeJS.Timeout | null = null
 let edgeWindow: BrowserWindow | null = null
-let lastFullscreen = false
+/** 当前「按策略应该避让」的期望值；-1 表示还没算过 */
+let wantHidden: boolean | null = null
+/** 最近一次判定码 */
+let judge: JudgeCode = 'N'
+/** 期望值去抖用的定时器 */
+let debounceTimer: NodeJS.Timeout | null = null
 /** 摸边探测 interval 集合（退出时统一清） */
 const probeTimers = new Set<NodeJS.Timeout>()
-/** 自适应轮询的递归定时器（SPEC-perf-poll-throttle）：不用固定 setInterval，
- * 每轮结束后按当前状态决定下一轮延迟（normal 1s / avoided 2s / manual 不排）。 */
-let pollTimer: ReturnType<typeof setTimeout> | null = null
-/** 退出标志：防止在途子进程的 finish() 在 stop 之后又排下一轮 */
-let pollStopped = false
 
-/** 检测脚本文本（内嵌，不落盘）。单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（实测）。
- * C# 双引号在 PS 双引号字符串里用 `" 转义（实测 got=True 验证过）。
- * 单发版：去 while 循环，输出一次结果就退出。
- * 实测踩坑（US-041 排障）：不能用「长驻 PowerShell + 逐行读 stdout」模式——
- * electron 主进程 spawn 不退出的 pipe 子进程会让 DevTools HTTP 服务整体 hang
- * （端口 LISTENING 但 /json/list 0 字节无响应，node fetch / .NET / curl 全部超时，
- * 主进程与窗口却正常）。单发短命 PS 实测 ONESHOT-OK 无此问题。 */
-function watchScript(): string {
+/** 辅助进程与心跳 */
+let helper: ReturnType<typeof spawn> | null = null
+let helperStartedAt = 0
+let beatTimer: NodeJS.Timeout | null = null
+let beatFile = ''
+let lastBeatTs = 0
+/** 连续读到心跳不新鲜的次数（回退判据，防误判） */
+let staleReads = 0
+/** 回退路径（辅助进程不可用时的单发轮询） */
+let fallbackTimer: NodeJS.Timeout | null = null
+let fallbackChild: ReturnType<typeof spawn> | null = null
+let fallbackProbing = false
+let helperRetryTimer: NodeJS.Timeout | null = null
+let stopped = false
+/** 策略读取（由 index.ts 注入；每 150ms 读一次内存变量，prefs 变更由主进程刷新） */
+let getMode: () => AvoidMode = () => 'maximized'
+
+/**
+ * 判定用的 C# 探针（内嵌，不落盘）。
+ * 单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（[实测]）：
+ * C# 双引号在 PS 双引号字符串里用 `" 转义（[实测] got=True 验证过）。
+ */
+function probeCs(): string {
   const TICK = '`"'
-  // C# 里字符串字面量统一用 TICK 包裹（在 PS 双引号字符串中表示一个双引号）。
-  // 本进程 pid 直接内插成数字常量，用来排除灵动岛自己的窗口。
+  // 本进程 pid 内插成数字常量：别把灵动岛自己的窗口当成全屏应用
   const ownPid = String(process.pid)
-  const cs = [
+  return [
     'using System;',
     'using System.Runtime.InteropServices;',
     'using System.Text;',
@@ -93,10 +129,12 @@ function watchScript(): string {
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern IntPtr GetForegroundWindow();',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsWindowVisible(IntPtr h);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsZoomed(IntPtr h);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
     '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
     'public struct RECT { public int L, T, R, B; }',
+    'public const int TOL = 8;',
     // DWMWA_CLOAKED = 14：返回 0 表示窗口没被 DWM 隐藏
     'public static int Cloak(IntPtr h) { int v; int r = DwmGetWindowAttribute(h, 14, out v, 4); return r == 0 ? v : -1; }',
     'public static string Cls(IntPtr h) { StringBuilder s = new StringBuilder(256); GetClassNameW(h, s, 256); return s.ToString(); }',
@@ -113,36 +151,86 @@ function watchScript(): string {
     '  if (c == ' + TICK + 'MultitaskingViewFrame' + TICK + ') return true;', // 任务视图
     '  return false;',
     '}',
-    // 基准 = 主屏工作区四边（wl,wt,wr,wb），容差 TOL 见上方模块注释
-    'public const int TOL = 8;',
     'public static bool Covers(IntPtr h, int wl, int wt, int wr, int wb) {',
     '  RECT r; if (!GetWindowRect(h, out r)) return false;',
     '  return r.L <= wl + TOL && r.T <= wt + TOL && r.R >= wr - TOL && r.B >= wb - TOL;',
     '}',
-    'public static bool IsFs(IntPtr h, int wl, int wt, int wr, int wb) {',
-    '  if (h == IntPtr.Zero) return false;', // 没有前台窗口（桌面上什么都没选）
-    '  if (!IsWindowVisible(h)) return false;',
-    '  if (Cloak(h) != 0) return false;', // DWM 已隐藏：用户根本看不到它
-    '  if (ShellClass(Cls(h))) return false;',
+    // 返回单字符判定码：F=真全屏 / Z=最大化（盖住工作区但不算真全屏） / N=都不算
+    'public static string Probe(int wl, int wt, int wr, int wb, int bl, int bt, int br, int bb) {',
+    '  IntPtr h = GetForegroundWindow();',
+    '  if (h == IntPtr.Zero) return ' + TICK + 'N' + TICK + ';', // 没有前台窗口（桌面上什么都没选）
+    '  if (!IsWindowVisible(h)) return ' + TICK + 'N' + TICK + ';',
+    '  if (Cloak(h) != 0) return ' + TICK + 'N' + TICK + ';', // DWM 已隐藏：用户根本看不到它
+    '  if (ShellClass(Cls(h))) return ' + TICK + 'N' + TICK + ';',
     '  uint p; GetWindowThreadProcessId(h, out p);',
-    '  if (p == ' + ownPid + ') return false;', // 别把自己的窗口当全屏
-    '  return Covers(h, wl, wt, wr, wb);',
+    '  if (p == ' + ownPid + ') return ' + TICK + 'N' + TICK + ';', // 别把自己的窗口当全屏
+    '  if (!Covers(h, wl, wt, wr, wb)) return ' + TICK + 'N' + TICK + ';',
+    // 盖住整屏且不是 Windows 意义上的最大化 ⇒ 真全屏（F11 / 独占全屏 / 无边框铺屏）
+    '  if (Covers(h, bl, bt, br, bb) && !IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',
+    '  return ' + TICK + 'Z' + TICK + ';',
     '}',
-    'public static string Probe(int wl, int wt, int wr, int wb) { return IsFs(GetForegroundWindow(), wl, wt, wr, wb) ? ' + TICK + 'fullscreen' + TICK + ' : ' + TICK + 'normal' + TICK + '; }',
     '}'
   ].join(' ')
+}
+
+/** 常驻辅助进程的脚本：编译一次 C#，然后 120ms 一轮把判定码写进心跳文件。
+ * 用 -EncodedCommand 传（多行脚本压平成 -Command 会被转义炸，[实测]）。
+ * 输出走文件、stdio 全 ignore：绝不使用管道（管道 + 不退出的子进程会拖死 DevTools HTTP）。 */
+function helperScript(): string {
+  const beat = beatFile.replace(/'/g, "''")
+  // 父进程（本应用主进程）pid：辅助进程是长驻循环，必须自己盯着父进程是否还活着——
+  // 应用被强杀（任务管理器/taskkill 不带 -T）时子进程不会跟着死，会永久留一个
+  // 80MB 的 powershell.exe 在后台（[实测] 2026-11-17 验过会残留）。
+  const parentPid = String(process.pid)
   return [
-    'Add-Type "' + cs + '"',
+    'Add-Type "' + probeCs() + '"',
     'Add-Type -AssemblyName System.Windows.Forms',
-    // 用工作区（任务栏占位后的可见区域）而不是 Bounds：最大化窗口只铺到工作区
-    '$wa=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
-    '[FS]::Probe($wa.Left,$wa.Top,$wa.Right,$wa.Bottom)'
+    '$beat = ' + "'" + beat + "'",
+    '$last = ' + "'" + "'",
+    '$i = 0',
+    'while ($true) {',
+    '  if ($i -eq 0) { try { [void][System.Diagnostics.Process]::GetProcessById(' + parentPid + ') } catch { break } }',
+    '  $w = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+    '  $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+    '  $code = [FS]::Probe($w.Left, $w.Top, $w.Right, $w.Bottom, $b.Left, $b.Top, $b.Right, $b.Bottom)',
+    '  $i++',
+    '  if ($code -ne $last -or $i -ge 4) {',
+    '    try { [System.IO.File]::WriteAllText($beat, $code + ' + "'|'" + ' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch { }',
+    '    $last = $code',
+    '    $i = 0',
+    '  }',
+    '  Start-Sleep -Milliseconds ' + HELPER_TICK_MS,
+    '}'
   ].join('; ')
 }
 
-export function initFullscreenWatch(getMain: () => BrowserWindow | null, onStateChange: (hidden: boolean) => void): void {
-  const { spawn } = require('node:child_process') as typeof import('node:child_process')
-  pollStopped = false // 上次 stop 可能置过 true，重新初始化要复位（SPEC-perf-poll-throttle）
+/** 回退路径用的单发脚本：判一次就退出，把判定码打到 stdout。 */
+function oneShotScript(): string {
+  return [
+    'Add-Type "' + probeCs() + '"',
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$w = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
+    '$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
+    '[FS]::Probe($w.Left, $w.Top, $w.Right, $w.Bottom, $b.Left, $b.Top, $b.Right, $b.Bottom)'
+  ].join('; ')
+}
+
+export function initFullscreenWatch(
+  getMain: () => BrowserWindow | null,
+  onStateChange: (hidden: boolean) => void,
+  readMode?: () => AvoidMode
+): void {
+  stopped = false
+  state = 'normal'
+  wantHidden = null
+  judge = 'N'
+  tempVisible = false
+  bannerHold = false
+  lastBeatTs = 0
+  staleReads = 0
+  fallbackProbing = false
+  if (readMode) getMode = readMode
+  beatFile = join(app.getPath('userData'), BEAT_FILE)
 
   /** 摸边/避让恢复共用的现身动作。
    * 实测踩坑（US-041）：hide 过的窗口 showInactive 单独调用不保证回到最高层——
@@ -171,17 +259,24 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
         onStateChange(hidden)
       }
       // 先现身再销毁感应窗：岛 showInactive 重绘会盖住感应条并触发其 mouseleave，
-      // 若先 destroy 再现身，迟到的 leave 事件仍会进入 IPC 队列误触发回隐（实测竞态）。
+      // 若先 destroy 再现身，迟到的 leave 事件仍会进入 IPC 队列误触发回隐（[实测] 竞态）。
       destroyEdgeWindow()
       tempVisible = false
       stopCursorWatch()
     }
   }
 
-  /** 判定结果落地（带 300ms 去抖）。
-   * 按**状态**推进而不是只看「判定值翻没翻」：旧实现 `if (fullscreen === lastFullscreen) return`
-   * 一旦被误判成 avoided、而判定值又没翻回 false（例如误判源一直挂在前台），
-   * 岛就会永久藏着不回来（2026-11-08 用户报「岛消失后一直没恢复」）。
+  /** 按当前策略决定「该不该避让」。 */
+  const decision = (code: JudgeCode): boolean => {
+    const mode = getMode()
+    if (mode === 'off') return false
+    if (mode === 'fullscreen') return code === 'F'
+    return code === 'F' || code === 'Z'
+  }
+
+  /** 期望值落地（带去抖）。按**状态**推进而不是只看「值翻没翻」：
+   * 旧实现 `if (fullscreen === lastFullscreen) return` 一旦被误判成 avoided、而判定值又没翻回
+   * false（例如误判源一直挂在前台），岛就会永久藏着不回来（2026-11-08 用户报「岛消失后一直没恢复」）。
    * 改成每次判定都对齐一次状态机，重复判定为同值时是幂等的（visible 已对就什么都不做）。 */
   const commit = (fullscreen: boolean): void => {
     if (debounceTimer) {
@@ -190,78 +285,96 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     }
     debounceTimer = setTimeout(() => {
       debounceTimer = null
-      lastFullscreen = fullscreen
-      if (state === 'manual') return // 手动隐藏不受全屏变化影响
+      if (state === 'manual') return // 手动隐藏不受策略/判定变化影响
       if (fullscreen) {
         if (state === 'normal') {
           state = 'avoided'
           apply(true)
-          scheduleNextPoll() // 切到避让态：立刻按 2s 档重排，不等当前那轮 1s 定时器
         }
       } else if (state === 'avoided' && !tempVisible && !bannerHold) {
         state = 'normal'
         apply(false)
-        scheduleNextPoll() // 回到常态：立刻按 1s 档重排
       }
     }, DEBOUNCE_MS)
   }
 
-  /** 自适应轮询调度（SPEC-perf-poll-throttle）：
-   * 每轮单发 PS 结束后按当前状态排下一轮——normal 1s（进全屏响应不变）、
-   * avoided 2s（全屏时前台长时间不变，别反复空转）、manual 不排（commit 里 manual 本来就 return）。
-   * 不用固定 setInterval：状态一变，下一轮就用新节奏；也避免在 avoided/manual 下按 1s 反复 spawn。 */
-  const scheduleNextPoll = (): void => {
-    if (pollTimer) {
-      clearTimeout(pollTimer)
-      pollTimer = null
-    }
-    if (pollStopped || state === 'manual') return
-    const delay = state === 'avoided' ? WATCH_INTERVAL_AVOIDED_MS : WATCH_INTERVAL_NORMAL_MS
-    pollTimer = setTimeout(pollOnce, delay)
+  /** 重新按当前判定 + 当前策略算一次期望值；变了才进去抖。 */
+  const evaluate = (): void => {
+    if (stopped) return
+    const want = decision(judge)
+    if (want === wantHidden) return
+    wantHidden = want
+    commit(want)
   }
 
-  /** 单发轮询：spawn 一个短命 PS 查一次前台窗口，读完整输出退出。
-   * 不用长驻进程（见 watchScript 注释的 DevTools hang 踩坑）。PS 冷启动 150~300ms 全程异步，不阻塞主进程。
-   * 防重入：上一发未结束时跳过本轮。结束后由 finish() 调 scheduleNextPoll() 排下一轮。 */
-  let probing = false
-  const pollOnce = (): void => {
-    if (pollStopped || state === 'manual' || probing) return
-    probing = true
-    let child: import('node:child_process').ChildProcess | null = null
+  /** 读心跳文件：内容 `F|1731830000123`。只有时间戳变化才算「辅助进程还活着」。 */
+  const readBeat = (): void => {
+    if (stopped) return
+    let raw = ''
     try {
-      child = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', watchScript()],
-        { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
-      )
+      raw = readFileSync(beatFile, 'utf8').trim()
     } catch {
-      probing = false
-      scheduleNextPoll()
+      raw = ''
+    }
+    const sep = raw.indexOf('|')
+    const code = sep > 0 ? raw.slice(0, sep).trim() : ''
+    const ts = sep > 0 ? Number(raw.slice(sep + 1)) : 0
+    const fresh = Number.isFinite(ts) && ts > 0 && Date.now() - ts < 5000
+    if (fresh && ts !== lastBeatTs && (code === 'F' || code === 'Z' || code === 'N')) {
+      lastBeatTs = ts
+      judge = code
+      if (fallbackTimer) stopFallback() // 辅助进程活了，关掉回退轮询
+    }
+    // 每轮都评估一次：策略（avoidMode）改了不会产生新的心跳，靠这里在 150ms 内跟上
+    evaluate()
+    if (fresh) {
+      staleReads = 0
       return
     }
-    watcherChild = child
+    // 心跳不新鲜：辅助进程还没起来（启动头几秒）或已经死了。连续 3 次才回退，
+    // 避免一次系统卡顿就来回切换（切换本身要 spawn/杀进程，代价更大）。
+    staleReads++
+    if (staleReads >= 3 && Date.now() - helperStartedAt > HEARTBEAT_STALE_MS) startFallback()
+  }
+
+  // ---------------- 回退路径：单发短命 PowerShell（SPEC-perf-poll-throttle 的旧行为） ----------------
+  const pollOnce = (): void => {
+    if (stopped || fallbackProbing) return
+    fallbackProbing = true
+    let child: ReturnType<typeof spawn> | null = null
+    try {
+      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', oneShotScript()], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    } catch {
+      fallbackProbing = false
+      return
+    }
+    fallbackChild = child
     let buf = ''
     let done = false
     const finish = (): void => {
       if (done) return
       done = true
-      probing = false
-      watcherChild = null
-      scheduleNextPoll()
+      fallbackProbing = false
+      fallbackChild = null
     }
     child.stdout?.on('data', (chunk: Buffer) => {
       buf += chunk.toString('utf8')
-      let idx: number
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trim()
-        buf = buf.slice(idx + 1)
-        if (line === 'fullscreen') commit(true)
-        else if (line === 'normal') commit(false)
+      const line = buf.trim()
+      const code = line.slice(-1)
+      if (line && (code === 'F' || code === 'Z' || code === 'N')) {
+        judge = code as JudgeCode
+        evaluate()
       }
     })
-    // PS 冷启动 + Add-Type 可能到 3s；兜底 8s 强制结束本轮
     const guard = setTimeout(() => {
-      try { child?.kill() } catch { /* noop */ }
+      try {
+        child?.kill()
+      } catch {
+        /* noop */
+      }
       finish()
     }, 8000)
     child.on('exit', () => {
@@ -273,6 +386,87 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       finish()
     })
   }
+
+  const startFallback = (): void => {
+    if (stopped) return
+    if (!fallbackTimer) {
+      console.log('[fullscreen] 辅助进程无心跳，回退单发轮询（' + FALLBACK_POLL_MS + 'ms）')
+      fallbackTimer = setInterval(pollOnce, FALLBACK_POLL_MS)
+      probeTimers.add(fallbackTimer)
+      pollOnce()
+    }
+    // 顺手定期尝试重启辅助进程：起来了（有心跳）readBeat 会自动关掉回退
+    if (!helperRetryTimer) {
+      helperRetryTimer = setInterval(() => {
+        if (stopped) return
+        startHelper(true)
+      }, HELPER_RETRY_MS)
+      probeTimers.add(helperRetryTimer)
+    }
+  }
+
+  const stopFallback = (): void => {
+    if (fallbackTimer) {
+      clearInterval(fallbackTimer)
+      probeTimers.delete(fallbackTimer)
+      fallbackTimer = null
+    }
+    if (fallbackChild) {
+      try {
+        fallbackChild.kill()
+      } catch {
+        /* noop */
+      }
+      fallbackChild = null
+    }
+    fallbackProbing = false
+    if (helperRetryTimer) {
+      clearInterval(helperRetryTimer)
+      probeTimers.delete(helperRetryTimer)
+      helperRetryTimer = null
+    }
+  }
+
+  /** 起（或重启）常驻辅助进程。stdio 全 ignore —— 不使用管道（见文件头注释）。 */
+  const startHelper = (restart = false): void => {
+    if (stopped) return
+    if (helper && !restart) return
+    if (helper) {
+      try {
+        helper.kill()
+      } catch {
+        /* noop */
+      }
+      helper = null
+    }
+    const enc = Buffer.from(helperScript(), 'utf16le').toString('base64')
+    try {
+      helper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', enc], {
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore']
+      })
+    } catch {
+      helper = null
+      startFallback()
+      return
+    }
+    helperStartedAt = Date.now()
+    lastBeatTs = 0
+    staleReads = 0
+    helper.on('exit', () => {
+      helper = null
+      if (!stopped) startFallback()
+    })
+    helper.on('error', () => {
+      helper = null
+      if (!stopped) startFallback()
+    })
+  }
+
+  startHelper()
+  beatTimer = setInterval(readBeat, BEAT_READ_MS)
+  probeTimers.add(beatTimer)
+  readBeat()
 
   /** 现身期间的光标轮询回隐（A5 修复）。
    * 实测踩坑（US-041）：岛 showInactive 现身后 Chromium 不认为光标在窗口内（未注册
@@ -289,6 +483,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
   const stopCursorWatch = (): void => {
     if (cursorTimer) {
       clearInterval(cursorTimer)
+      probeTimers.delete(cursorTimer)
       cursorTimer = null
     }
     cursorWatching = false
@@ -303,7 +498,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       done = true
       cursorWatching = false
     }
-    let child: import('node:child_process').ChildProcess
+    let child: ReturnType<typeof spawn>
     try {
       child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cursorScript()], {
         windowsHide: true,
@@ -314,7 +509,11 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       return
     }
     const guard = setTimeout(() => {
-      try { child.kill() } catch { /* noop */ }
+      try {
+        child.kill()
+      } catch {
+        /* noop */
+      }
       finish()
     }, 3000)
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -325,7 +524,11 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       if (!win || win.isDestroyed()) return
       const b = win.getBounds()
       const MARGIN = 8
-      const inside = Number(m[1]) >= b.x - MARGIN && Number(m[1]) <= b.x + b.width + MARGIN && Number(m[2]) >= b.y - MARGIN && Number(m[2]) <= b.y + b.height + MARGIN
+      const inside =
+        Number(m[1]) >= b.x - MARGIN &&
+        Number(m[1]) <= b.x + b.width + MARGIN &&
+        Number(m[2]) >= b.y - MARGIN &&
+        Number(m[2]) <= b.y + b.height + MARGIN
       if (inside) {
         cursorOutsideStreak = 0
         return
@@ -336,7 +539,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       stopCursorWatch()
       if (state !== 'avoided' || bannerHold) return
       tempVisible = false
-      if (lastFullscreen) apply(true)
+      if (decision(judge)) apply(true)
     })
     child.on('exit', () => {
       clearTimeout(guard)
@@ -353,7 +556,6 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     cursorTimer = setInterval(cursorPollOnce, CURSOR_WATCH_INTERVAL_MS)
     probeTimers.add(cursorTimer)
   }
-  pollOnce()
 
   // 摸边唤回：感应窗 mouseenter 上报。岛现身会盖住感应条（岛就在顶部），
   // 所以现身即销毁感应窗，把「离开检测」移交给岛自身的 mouseleave（App.tsx）。
@@ -363,7 +565,7 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     if (state === 'avoided' && !tempVisible) {
       apply(false) // apply(false) 内部已 destroyEdgeWindow + revealWindow
       // apply(false) 会把 tempVisible 重置为 false（恢复/现身共用入口），
-      // 摸边现身必须在 apply 之后再置 true，否则「临时现身中」标志被吞（实测 A5 踩坑）。
+      // 摸边现身必须在 apply 之后再置 true，否则「临时现身中」标志被吞（[实测] A5 踩坑）。
       tempVisible = true
       startCursorWatch()
     }
@@ -383,15 +585,13 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
       const inIsland = p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y - EDGE_HEIGHT && p.y <= b.y + b.height
       if (inIsland) return // 误报（岛现身遮挡感应窗的迟到 leave）
       tempVisible = false
-      if (lastFullscreen) apply(true)
+      if (decision(judge)) apply(true)
     }, 400)
   })
 
   // 手动隐藏（右键/托盘菜单）
   ipcMain.on('island:manual-hide', () => {
     state = 'manual'
-    // manual 下 commit 本来就 return，全屏判定无意义 → 直接停掉轮询（SPEC-perf-poll-throttle）
-    scheduleNextPoll()
     apply(true)
   })
   // 托盘左键唤回（清手动标志）
@@ -399,15 +599,18 @@ export function initFullscreenWatch(getMain: () => BrowserWindow | null, onState
     if (state !== 'manual') return
     state = 'normal'
     apply(false)
-    // 手动隐藏期间轮询已停，恢复时立即重新起一轮（pollOnce 结束会自动 scheduleNextPoll 排后续）
-    void pollOnce()
+    // 手动隐藏期间期望值可能已经翻成 true 但没落地（commit 里 manual 直接 return），
+    // 这里清掉缓存让它按当前判定重新算一次，否则岛会「恢复了却再也不自动避让」
+    // （[实测] 2026-11-17：A7 横幅结束不回隐就是这么挂的）。
+    wantHidden = null
+    evaluate()
   })
 
   // 横幅临时现身（渲染层横幅/验证码弹出时调用，结束回传 false）
   ipcMain.on('island:temp-show', (_e, on: unknown) => {
     bannerHold = on === true
     if (bannerHold && !getMain()?.isVisible()) apply(false)
-    if (!bannerHold && state === 'avoided' && !tempVisible && lastFullscreen) apply(true)
+    if (!bannerHold && state === 'avoided' && !tempVisible && decision(judge)) apply(true)
     if (!bannerHold && state === 'manual' && getMain()?.isVisible()) apply(true)
   })
 }
@@ -462,28 +665,53 @@ function destroyEdgeWindow(): void {
   edgeWindow = null
 }
 
-/** 退出时停掉检测子进程与感应窗 */
+/** 退出时停掉辅助进程/回退轮询与感应窗 */
 export function stopFullscreenWatch(): void {
-  // 先置停止标志：在途子进程的 finish() 会调 scheduleNextPoll()，它会因 pollStopped 直接 return，
-  // 否则退出后还会被重新排一轮（SPEC-perf-poll-throttle 自适应调度引入的新竞态）。
-  pollStopped = true
-  if (pollTimer) {
-    clearTimeout(pollTimer)
-    pollTimer = null
+  stopped = true
+  if (beatTimer) {
+    clearInterval(beatTimer)
+    probeTimers.delete(beatTimer)
+    beatTimer = null
   }
-  watcherChild?.kill()
-  watcherChild = null
-  destroyEdgeWindow()
-  for (const t of probeTimers) clearInterval(t)
-  probeTimers.clear()
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
   }
+  for (const t of probeTimers) clearInterval(t)
+  probeTimers.clear()
+  if (helper) {
+    try {
+      helper.kill()
+    } catch {
+      /* noop */
+    }
+    helper = null
+  }
+  if (fallbackChild) {
+    try {
+      fallbackChild.kill()
+    } catch {
+      /* noop */
+    }
+    fallbackChild = null
+  }
+  if (fallbackTimer) {
+    clearInterval(fallbackTimer)
+    fallbackTimer = null
+  }
+  if (helperRetryTimer) {
+    clearInterval(helperRetryTimer)
+    helperRetryTimer = null
+  }
+  destroyEdgeWindow()
+  try {
+    unlinkSync(beatFile)
+  } catch {
+    /* 可能不存在/已被删，忽略 */
+  }
   state = 'normal'
+  wantHidden = null
+  judge = 'N'
   tempVisible = false
   bannerHold = false
 }
-
-
-

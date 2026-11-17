@@ -8,7 +8,7 @@
  * 踩坑：①ps() 只收 stdout——stderr 的 CLIXML 进度流会污染输出；②Add-Type 单行双引号版最稳
  * （多行 here-string 嵌套必炸）；③透明无边框窗口有 MainWindowHandle（非 0）。
  */
-import { spawn } from './isolate-userdata.mjs'
+import { spawn, execSync } from './isolate-userdata.mjs'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -117,7 +117,12 @@ async function cdpConnect() {
     try {
       const res = await fetch(`http://127.0.0.1:${PORT}/json/list`, { signal: AbortSignal.timeout(3000) })
       const targets = await res.json()
-      const page = targets.find((t) => t.type === 'page' && !/devtools/i.test(t.url))
+      // ⚠ 不能「取第一个 page」：岛一进避让态就会多出一个 4px 感应窗的 page 目标
+      // （data:text/html，nodeIntegration 直连 ipc，没有 preload → window.island 不存在），
+      // 它常常排在岛前面，取错了后面 window.island.manualHide() 直接不是同一个页面
+      // （[实测] 2026-11-17：表现为 CDP eval 永不返回、脚本卡死）。按 URL 精确挑岛。
+      const pages = targets.filter((t) => t.type === 'page' && !/devtools/i.test(t.url))
+      const page = pages.find((t) => /index\.html/.test(t.url)) ?? pages.find((t) => !/^data:/.test(t.url))
       if (!page) throw new Error('no page target')
       const ws = new WebSocket(page.webSocketDebuggerUrl)
       await new Promise((r, j) => { ws.onopen = r; ws.onerror = j })
@@ -144,9 +149,26 @@ async function cdpConnect() {
   throw new Error('cdpConnect: 15 次重试仍失败')
 }
 
-async function cdpEval(cdp, expr) {
-  const r = await cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true })
+async function cdpEval(cdp, expr, timeoutMs = 8000) {
+  // 带超时：历史上偶发过「Runtime.evaluate 永不返回」把整轮 e2e 卡死（根因见 cdpConnect 的注释）。
+  // 超时就直接报错，让 finally 清场，别让孤儿进程拖累后面的轮次。
+  const r = await Promise.race([
+    cdp.send('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }),
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`cdpEval 超时 ${timeoutMs}ms: ${expr}`)), timeoutMs))
+  ])
   return r.result?.result?.value
+}
+
+// 预检（必须放在 spawn 之前）：清掉残留 electron。所有 e2e 共用同一个隔离 userData 与
+// 同一个心跳文件，残留实例的岛窗口会被 islandVisible() 一起数进去，两个实例还会互相覆盖
+// 心跳（[实测] 2026-11-17：上一轮手动起的实例没关，A1/A4/A3 全假失败）。
+if (process.platform === 'win32') {
+  try {
+    execSync('taskkill /IM electron.exe /T /F', { stdio: 'ignore' })
+  } catch {
+    /* 没有残留 */
+  }
+  await sleep(700)
 }
 
 // ---- start dev electron ----
@@ -291,16 +313,16 @@ try {
   ok('A7 全屏横幅临时现身+结束回隐', v7a === true && v7b === false,
     `show=${v7a} backHide=${v7b}`)
 
-  // A8 后台轮询降频（SPEC-perf-poll-throttle）：源码断言自适应调度确实落地。
-  // 只看源码，不依赖时序；运行时 spawn 频率下降由预览版实测单独覆盖。
+  // A8 判定机制（SPEC-avoid-mode-and-latency，2026-11-17 起替代 SPEC-perf-poll-throttle 的自适应轮询）：
+  // 常驻辅助进程 + 心跳文件；且必须保留「心跳超时回退单发轮询」这条安全带。
+  // 只看源码，不依赖时序（运行时行为由 e2e-avoid-mode.mjs 覆盖）。
   const watchSrc = readFileSync(join(ROOT, 'src', 'main', 'fullscreenWatch.ts'), 'utf8')
-  ok('A8 全屏轮询已改为自适应（常态 1s / 避让 2s / 手动隐藏停，不再固定 setInterval 1s）',
-    /WATCH_INTERVAL_NORMAL_MS\s*=\s*1000/.test(watchSrc) &&
-    /WATCH_INTERVAL_AVOIDED_MS\s*=\s*2000/.test(watchSrc) &&
-    /function scheduleNextPoll|const scheduleNextPoll/.test(watchSrc) &&
-    /setTimeout\(pollOnce,\s*delay\)/.test(watchSrc) &&
-    /pollStopped/.test(watchSrc) &&
-    !/setInterval\(pollOnce,\s*WATCH_INTERVAL_MS\)/.test(watchSrc),
+  ok('A8 判定已改为常驻辅助进程+心跳(留回退)',
+    /avoid-mode-beat/.test(watchSrc) &&
+      /HELPER_TICK_MS\s*=\s*120/.test(watchSrc) &&
+      /HEARTBEAT_STALE_MS\s*=\s*5000/.test(watchSrc) &&
+      /function startFallback|const startFallback/.test(watchSrc) &&
+      /stdio: \['ignore', 'ignore', 'ignore'\]/.test(watchSrc),
     '源码 src/main/fullscreenWatch.ts')
 } catch (err) {
   console.error('e2e error:', err)
