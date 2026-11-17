@@ -311,14 +311,16 @@ app.whenReady().then(() => {
   // 按当前 petMode 决定要不要把桌宠放出去（偏好缺失时是 island，这里什么都不做）
   syncPetWindow()
   createTray()
-  // US-041 全屏自动避让：检测子进程 + 状态机 + 感应窗
+  // US-041 全屏自动避让：判定辅助进程 + 状态机 + 感应窗
+  // 策略（三档，SPEC-avoid-mode-and-latency）每次评估现读一份，改设置后 150ms 内生效
   initFullscreenWatch(
     () => mainWindow,
     (hidden) => {
       // 状态落地时同步菜单用的标志（自动避让不改 manualHide；仅渲染层菜单发起的手动隐藏改）
       if (!hidden) manualHide = false
       mainWindow?.webContents.send('island:avoid-changed', hidden)
-    }
+    },
+    () => getPrefs().avoidMode ?? 'maximized'
   )
   // 渲染层菜单发起的手动隐藏：置标志再走状态机（真正 hide 在 fullscreenWatch）
   ipcMain.on('island:manual-hide', () => {

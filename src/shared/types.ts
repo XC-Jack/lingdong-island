@@ -70,6 +70,20 @@ export const PET_MODES = ['island', 'window', 'free'] as const
 export type PetMode = (typeof PET_MODES)[number]
 
 /**
+ * 全屏避让策略（SPEC-avoid-mode-and-latency）。
+ *
+ * maximized=前台窗口最大化或真全屏都隐藏岛（默认，等于历史行为）；
+ * fullscreen=只有真全屏才隐藏，最大化窗口保留岛；
+ * off=一律不隐藏。
+ *
+ * 为什么放在 shared：主进程 prefsStore 落盘前要校验这个值（`prefs:set` 的 payload
+ * 是渲染层传来的任意值），设置窗口也要按同一份清单渲染三档。
+ * ⚠️ 已落盘的值不能改名，否则用户的选择会静默丢失。
+ */
+export const AVOID_MODES = ['maximized', 'fullscreen', 'off'] as const
+export type AvoidMode = (typeof AVOID_MODES)[number]
+
+/**
  * 桌宠独立小窗口的位置（SPEC-deskpet-out）。
  *
  * 为什么记 x/y 而不是「右下角 + 偏移」：用户把它拖到哪就该回到哪，
