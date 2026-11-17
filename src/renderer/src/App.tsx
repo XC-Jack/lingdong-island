@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Todo, ShelfItem, MusicState, MusicCommand } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult } from '../../shared/types'
 import Pet from './pet/Pet'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -1795,6 +1795,126 @@ function fmtDuration(sec: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : mmss
 }
 
+/**
+ * 播放进度钟（放在模块级，不在组件里）。
+ *
+ * 用户 m06607「音乐已经播了一半了，然后我每次点到歌曲页面，进度条都会重新开始，字幕也是」：
+ * 进度原来存在 MusicPanel 的 state 里，而切走页面时 MusicPanel 会被整块卸载
+ * （App 里是 `page === 4 ? <MusicPanel /> : <别的页>`），state 跟着没了，
+ * 再切回来就从 0 重新数——进度条归零、歌词也跟着回到第一句。
+ *
+ * 现在把「这首歌从哪一刻、从第几秒开始算」放在模块级：页面切来切去都不丢，
+ * 用墙钟（Date.now）算当前位置，离开音乐页那段时间的流逝也照样算进去。
+ * 订阅也常驻在这里，所以人不在音乐页时暂停/继续也能记准。
+ */
+interface ProgressClock {
+  /** 这首歌的身份（歌名|歌手），变了就是要重新从头算 */
+  key: string
+  /** 这一段「开始算」的墙钟时刻 */
+  startAt: number
+  /** 这一段开始时的位置（秒） */
+  startPos: number
+  /** 当前是不是在放 */
+  playing: boolean
+}
+const progressClock: ProgressClock = { key: '', startAt: 0, startPos: 0, playing: false }
+let clockWatcherInstalled = false
+
+/**
+ * 「点进度条」期间抑制 blur 收起的时间戳（用户 m02806「我一点进度条，岛就会缩起来」）。
+ *
+ * 为什么会有 blur：播放器不报进度时，跳转靠点它自己窗口里的进度条，而真实鼠标事件
+ * 只对前台窗口有效，所以桥接必须先把它顶到前台（`BringKeyless`）。前台一换，岛就
+ * 失焦 → 主进程发 `island:window-blur` → 渲染层立刻 `setExpanded(false)`。
+ * 用户看到的就是「点一下进度条，岛自己缩起来」——他根本没想收起岛。
+ *
+ * 放模块级而不是 `useRef`：点进度条的 `MusicPanel` 和收岛逻辑的 `App` 是两个组件，
+ * 各自 `useRef` 互不可见；这不是渲染状态，放进 state 还会白刷一帧。
+ * 只在这段时间内忽略 blur，不做全局豁免：超时后点桌面照样正常收起。
+ */
+let blurSuppressUntil = 0
+
+function clockKeyOf(m: MusicState): string {
+  return `${m.title}|${m.artist}`
+}
+
+/** 此刻这首歌放到第几秒（暂停就停在冻结值） */
+function clockNow(): number {
+  if (!progressClock.playing) return progressClock.startPos
+  return progressClock.startPos + (Date.now() - progressClock.startAt) / 1000
+}
+
+/**
+ * 把进度钟强行拨到某一秒（用户 m07228）。
+ *
+ * 什么时候用：播放器不报时长、但我们能从它自己窗口的进度条里读到「已播比例」时。
+ * 那个比例乘上总时长就是它的**真实位置**，比墙钟自己数准得多（用户手动在播放器里
+ * 拖一下进度条，墙钟就会一直偏着）。读到就掰回来，之后继续按墙钟平滑往前走，
+ * 不至于让进度条每 2 秒一格一格地跳。
+ *
+ * 以前这里被用来「假装 seek 成功了」（点岛上进度条 → 界面跳、音乐不动），那是错的，
+ * 用户 m06991 抓到过；现在只在**真的读到播放器位置**时掰，点完也真的会去点它的进度条。
+ */
+function clockAnchor(pos: number, playing: boolean): void {
+  progressClock.startPos = Math.max(0, pos)
+  progressClock.startAt = Date.now()
+  progressClock.playing = playing
+}
+
+/**
+ * 用一份播放器快照校准/推进进度钟。
+ *
+ * 两种播放器分开对待：
+ * - 会报时间轴的（汽水音乐等 duration>0）：直接拿它给的 position 当基准，最可信；
+ * - 不报时间轴的（网易云 duration=0）：只能按墙钟自己数，歌变了归零，
+ *   暂停时把当前值冻结（stopPos），继续播放时从冻结值往后数。
+ */
+function clockSync(m: MusicState): void {
+  if (!m.active) {
+    progressClock.key = ''
+    progressClock.startAt = Date.now()
+    progressClock.startPos = 0
+    progressClock.playing = false
+    return
+  }
+  const key = clockKeyOf(m)
+  if (m.duration > 0) {
+    // 播放器自己报位置：以它为准，顺手让钟跟着对齐（切页回来能立刻接上）
+    progressClock.key = key
+    progressClock.startAt = Date.now()
+    progressClock.startPos = Math.max(0, m.position)
+    progressClock.playing = m.playing
+    return
+  }
+  if (progressClock.key !== key) {
+    // 换歌（或第一次见到这首）：从头开始
+    progressClock.key = key
+    progressClock.startAt = Date.now()
+    progressClock.startPos = 0
+    progressClock.playing = m.playing
+    return
+  }
+  if (progressClock.playing === m.playing) return
+  // 播放状态变了：先把「此刻到第几秒」固化下来，再从这一秒继续/停住
+  const frozen = clockNow()
+  progressClock.startAt = Date.now()
+  progressClock.startPos = frozen
+  progressClock.playing = m.playing
+}
+
+/** 常驻订阅：不管当前在哪一页，进度钟都跟着播放器走 */
+function ensureClockWatcher(): void {
+  if (clockWatcherInstalled) return
+  clockWatcherInstalled = true
+  const api = window.island
+  if (!api) return
+  const apply = (m: MusicState): void => {
+    clockSync(m)
+  }
+  void api.musicGet().then(apply)
+  api.onMusicState(apply)
+}
+
 function MusicPanel(): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
@@ -1827,6 +1947,23 @@ function MusicPanel(): React.JSX.Element {
   // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
   // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
   const [lyricOpen, setLyricOpen] = useState(false)
+  // 歌词（SPEC-music-lyric，用户 m04986「我们现在来开发歌词吧」+ m05013「可以按你的来」）：
+  // null＝还没问；{ok:false,reason}＝问了但没拿到（照实显示原因，绝不编造）；{ok:true,lines}＝拿到带时间轴的行
+  const [lyric, setLyric] = useState<LyricResult | null>(null)
+  const [lyricLoading, setLyricLoading] = useState(false)
+  // 记下这份歌词是给哪首歌的，避免换歌间隙把上一首的歌词闪到新歌上
+  const lyricForRef = useRef('')
+  const lyricScrollRef = useRef<HTMLDivElement | null>(null)
+  const lyricActiveRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 播放位置的插值基准：这次快照给的 position + 收到它的高精度时刻。
+   *
+   * 用户 m05562「喝唱的对不齐」的根因就在这里：原来靠 `setInterval(1000)` 每秒给 live 加 1，
+   * 可主进程 poll 回来的 position 并不是每秒准时更新（实测假会话 6.6 秒才跳一次），
+   * 按整秒累加会让歌词相对人声越走越偏。改成「基准位置 + 真实流逝时间」外推，
+   * 每次收到新快照就把基准重设一次，误差不会累积。
+   */
+  const liveBaseRef = useRef<{ pos: number; at: number } | null>(null)
 
   const sendVolume = useCallback((v: number) => {
     volPending.current = v
@@ -1928,6 +2065,8 @@ function MusicPanel(): React.JSX.Element {
       }
     }
     setLive(music.position)
+    // 记下「这个位置是什么时候知道的」，供下面的平滑外推用（用户 m05562）
+    liveBaseRef.current = { pos: music.position, at: performance.now() }
   }, [music?.position, music?.title, music?.playing])
 
   // 主进程采样回来后清掉音量本地值，让滑块对齐当前应用音频会话的真实音量
@@ -1935,17 +2074,256 @@ function MusicPanel(): React.JSX.Element {
     if (music) setVolLocal(null)
   }, [music?.volume])
 
-  // 播放中本地每秒推进一格；到总时长就停在末尾（不越界），暂停/空态不动。
-  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂
+  /**
+   * 换歌就要换歌词（SPEC-music-lyric）。
+   *
+   * 用户 m06116「你用这个我怎么看播放时间」之后改成**一直查**，不再等歌词栏打开：
+   * 网易云不报总时长，进度条要靠歌词库里那条记录的时长来算；只有歌词栏打开才查的话，
+   * 关着歌词栏就永远是 `--:--`。每首歌只查一次（主进程有本地缓存，第二次直接命中文件），
+   * 并把结果顺手用在歌词栏上，一举两得。
+   * 查询键用「歌名+歌手+专辑+时长取整」，同一首歌反复开关歌词栏不会重复请求。
+   */
+  const lyricKey =
+    music?.active && music.title
+      ? `${music.title}|${music.artist}|${music.album}|${Math.round(music.duration)}`
+      : ''
+  useEffect(() => {
+    if (!lyricKey) return
+    if (lyricForRef.current === lyricKey && lyric) return
+    lyricForRef.current = lyricKey
+    let alive = true
+    setLyricLoading(true)
+    void window.island
+      .lyricGet({
+        title: music?.title ?? '',
+        artist: music?.artist ?? '',
+        album: music?.album ?? '',
+        duration: music?.duration ?? 0
+      })
+      .then((r) => {
+        if (!alive) return
+        setLyric(r)
+      })
+      .catch(() => {
+        if (!alive) return
+        setLyric({
+          ok: false,
+          title: music?.title ?? '',
+          artist: music?.artist ?? '',
+          source: 'none',
+          lines: [],
+          reason: '查歌词时出错了，稍后再试'
+        })
+      })
+      .finally(() => {
+        if (alive) setLyricLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [lyricKey, lyric, music?.title, music?.artist, music?.album, music?.duration])
+
+  /**
+   * 播放器报的进度可不可信。
+   *
+   * 用户 m05794「我换了一个软件网易云，歌词进度条封面都直接卡住了」：
+   * 实测网易云（cloudmusic.exe）只往系统媒体接口写 歌名/歌手/封面，时间轴永远是
+   * `pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false`（连采 30 次不变）。
+   *
+   * 用户 m06116「--:-- 你用这个我怎么看播放时间」：上一版在这里直接显示两个横杠，
+   * 那是逃避。改成自己算：歌词库那条记录带着这首歌的准确总时长（`lyric.duration`），
+   * 拿它当分母，位置从「开始播放那一刻」起按真实时间累加，暂停就不动、换歌就归零。
+   * 算不出来（连总时长都没有）才退回横杠。
+   */
+  const playerNoTimeline = music?.active === true && music.duration <= 0
+  /** 歌词库给的总时长，用来补播放器不报的那一份 */
+  const lyricDuration = lyric?.duration && lyric.duration > 0 ? lyric.duration : 0
+  /**
+   * 实际用来算进度的总时长：优先用播放器自己报的（最可信），
+   * 播放器不报就用歌词库那条的时长（网易云场景）。
+   */
+  const totalDur = music && music.duration > 0 ? music.duration : lyricDuration
+  /**
+   * 播放位置的心跳。
+   *
+   * 用户 m06607「我每次点到歌曲页面，进度条都会重新开始，字幕也是」：
+   * 走的是模块级的 progressClock（见文件上部），本组件只负责每 250ms 读一次、触发重渲染。
+   * 组件卸载不丢时钟，切走再切回来能接上原来那一秒，歌词也停在同一句。
+   */
+  const [, setClockTick] = useState(0)
+  useEffect(() => {
+    ensureClockWatcher()
+    const id = window.setInterval(() => setClockTick((n) => (n + 1) % 1000000), 250)
+    return () => window.clearInterval(id)
+  }, [])
+  /** 真正显示在进度条/时间上的位置：播放器报就用它的（live），不报就用墙上时钟自己数 */
+  const shownPos = playerNoTimeline ? clockNow() : live
+  /** 连总时长都算不出来时，才诚实显示横杠（此时确实无法给出任何时间） */
+  const noTimeline = playerNoTimeline && totalDur <= 0
+  /**
+   * 播放器压根不报进度、但我们能从它自己窗口的进度条里读到已播比例（`barOk`）。
+   *
+   * 用户 m07228「做不到也要做」：网易云实现了 SMTC 的歌名/歌手/封面，却把进度藏起来
+   * （`IsPlaybackPositionEnabled=False`、`Position/EndTime` 恒 0），SMTC 的 seek 也只会
+   * 返回 true 而什么都不做。但它自己的窗口底部有一条进度条，已播段有颜色、未播段是灰的，
+   * 用 `PrintWindow` 离屏读像素就能算出真实比例，**点它也真的会让网易云跳**
+   * （实测目标 0.70→0.694、0.20→0.194、0.45→0.444，误差 <0.01）。
+   * 所以这类播放器照样允许拖进度条，只是走 `barseek`（点它窗口里的条）而不是 SMTC seek。
+   */
+  const barClickable = playerNoTimeline && music?.barOk === true && totalDur > 0
+
+  /**
+   * 用播放器窗口进度条读回的真实位置校准自算的墙钟。
+   *
+   * 为什么需要：墙钟从「开始播放那一刻」自己数，用户要是在网易云里手动拖一下进度条，
+   * 墙钟就会一直偏着（差的秒数不会自己回来）。桥接每 2 秒读一次真实比例，
+   * 乘上总时长就是真实位置；**只在偏差超过 1.5 秒时才掰**，否则每 2 秒硬掰一次会让
+   * 进度条一格格地跳，反而难看（桥接那边有 2 秒缓存，读到的值本来就滞后）。
+   */
+  useEffect(() => {
+    if (!playerNoTimeline || !music?.barOk) return
+    if (totalDur <= 0) return
+    const b = Number(music.barPct)
+    if (!Number.isFinite(b) || b < 0) return
+    const target = Math.min(totalDur, Math.max(0, b * totalDur))
+    if (Math.abs(clockNow() - target) > 1.5) clockAnchor(target, music.playing === true)
+  }, [playerNoTimeline, music?.barOk, music?.barPct, music?.playing, totalDur])
+
+  // 当前该高亮第几句：取「开始时间 ≤ 当前播放位置」的最后一行。没拿到歌词就是 -1
+  const lyricLines = lyric?.ok && lyric.lines.length > 0 ? lyric.lines : []
+  /**
+   * 用户 m06418「歌词依旧没反应」：实测《戒烟》第一句在 20.97 秒，前 21 秒全是前奏——
+   * 本来就一句都不该亮。但「一片灰、没一个亮」在用户眼里就是坏了。
+   * 所以前奏期给两个明确信号：①第一句单独提亮一档（.music-lyric-row.next）；
+   * ②歌词栏底部一行「前奏中 · 还有 N 秒开唱」。
+   * preludeLeft 只在「有歌词、还没到第一句」时有值，其余为 0。
+   */
+  const lyricActive = useMemo(() => {
+    if (lyricLines.length === 0) return -1
+    let idx = -1
+    for (let i = 0; i < lyricLines.length; i += 1) {
+      if (lyricLines[i].time <= shownPos + 0.15) idx = i
+      else break
+    }
+    return idx
+  }, [lyricLines, shownPos])
+  const preludeLeft =
+    lyricLines.length > 0 && lyricActive === -1 ? Math.max(0, lyricLines[0].time - shownPos) : 0
+
+  /**
+   * 让当前那句始终停在歌词栏正中：每句平均约 20~30 布局 px 高，
+   * 用 scrollTop = 行顶 − 容器一半 + 行高一半 让它居中，行为 smooth。
+   * 不用 scrollIntoView —— 那会把外层岛一起滚。
+   *
+   * 用户 m05419「一条一条出来，不是 txt 这样揉成一团」之后歌词区变高了，
+   * 靠 scrollTop 计算在容器尺寸刚变（开合歌词栏 / 岛展开收起）时用的是旧 clientHeight，
+   * 结果当前行跑到框外。改成「先量容器和行的实际矩形，按差值补一次」，
+   * 并且首帧/尺寸变化时用 auto（立即到位），之后切句仍走 smooth。
+   */
+  useEffect(() => {
+    const box = lyricScrollRef.current
+    const row = lyricActiveRef.current
+    if (!box) return
+    /**
+     * 用户 m05562「歌词播放没有中心感，在上面播放，完全看不到」：
+     * 歌开头的几句没有足够的上方内容可滚，scrollTop 顶到 0 就停住，当前行只能贴框顶
+     * （实测 offset 只有 −34.3，还被上方 14px 渐隐吃掉）。给滚动区上下各垫「半框高 − 半行高」，
+     * 第一句和最后一句也能滚到正中。行高用 ×1.35 兜住当前行放大到 15px 后的占位。
+     */
+    const shortH = box.clientHeight
+    const rowH = (row ?? box.querySelector('.music-lyric-row'))?.getBoundingClientRect().height ?? 0
+    if (shortH > 0 && rowH > 0) {
+      const pad = Math.max(0, Math.round((shortH - rowH) / 2))
+      box.style.setProperty('--lyric-pad', `${pad}px`)
+    }
+    if (!row) return
+    /**
+     * 按实际矩形把当前行推到正中。做两遍：第一遍滚过去之后，
+     * 当前行字号变化（12→15）会让各行高度重新排布，位置会偏半行，
+     * 第二遍按实测差值补正。差值 <2px 就不动了，避免抖动。
+     */
+    const align = (smooth: boolean): void => {
+      for (let pass = 0; pass < 2; pass += 1) {
+        const boxRect = box.getBoundingClientRect()
+        const rowRect = row.getBoundingClientRect()
+        if (boxRect.height <= 0 || rowRect.height <= 0) return
+        const delta = rowRect.top + rowRect.height / 2 - (boxRect.top + boxRect.height / 2)
+        if (Math.abs(delta) < 2) return
+        box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: smooth ? 'smooth' : 'auto' })
+        smooth = false
+      }
+    }
+    align(false)
+    const raf = requestAnimationFrame(() => align(false))
+    return () => cancelAnimationFrame(raf)
+  }, [lyricActive, lyricLines.length])
+
+  // 歌词栏开合 / 尺寸变化时重新把当前句摆到中间（此时刚 display:flex，高度是新的）
+  useEffect(() => {
+    if (!lyricOpen) return
+    const box = lyricScrollRef.current
+    if (!box) return
+    const align = (): void => {
+      const row = lyricActiveRef.current
+      if (!row) return
+      const boxRect = box.getBoundingClientRect()
+      const rowRect = row.getBoundingClientRect()
+      if (boxRect.height <= 0 || rowRect.height <= 0) return
+      const delta = rowRect.top + rowRect.height / 2 - (boxRect.top + boxRect.height / 2)
+      if (Math.abs(delta) < 2) return
+      box.scrollTo({ top: Math.max(0, box.scrollTop + delta), behavior: 'auto' })
+    }
+    const pad = (): void => {
+      const row = lyricActiveRef.current
+      const h = box.clientHeight
+      const rowH = (row ?? box.querySelector('.music-lyric-row'))?.getBoundingClientRect().height ?? 0
+      if (h > 0 && rowH > 0) box.style.setProperty('--lyric-pad', `${Math.max(0, Math.round((h - rowH) / 2))}px`)
+    }
+    pad()
+    const raf = requestAnimationFrame(() => {
+      pad()
+      align()
+    })
+    const timer = setTimeout(() => {
+      pad()
+      align()
+    }, 260)
+    const timer2 = setTimeout(() => {
+      pad()
+      align()
+    }, 700)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+      clearTimeout(timer2)
+    }
+  }, [lyricOpen])
+
+  // 播放中把本地位置平滑往前推。到总时长就停在末尾（不越界），暂停/空态不动。
+  // seek 生效前的保护窗口内不推进，避免本地值在「拖动目标」和「旧位置」之间来回漂。
+  //
+  // 用户 m05562「唱的对不齐」：原来按整秒 +1 累加，可主进程快照并不准时（实测假会话 6.6 秒
+  // 才跳一次），按整秒推就会与真实播放越走越远。改成「基准位置 + 真实流逝时间」外推，
+  // 每次新快照都会重设基准，所以误差不累积；250ms 一帧让高亮切行更准。
   useEffect(() => {
     if (!music || !music.active || !music.playing || seeking) return
+    // 用户 m05794：网易云（cloudmusic.exe）通过系统媒体接口根本不报时间轴
+    // （实测连采 30 次 pos=0 / end=0 / lastUpd=1601-01-01 / canSeek=false）。
+    // 总时长 0 时没有可信基准，硬外推只会让数字自己往上跑，干脆不推。
+    if (music.duration <= 0) return
     const id = setInterval(() => {
       if (seekGuardRef.current) return
+      const base = liveBaseRef.current
+      // 外推最多超前最近一次快照 0.9 秒：主进程已经从桥接层按 LastUpdatedTime 补过位置，
+      // 这里再夹一层是为了两次快照之间平滑，不是用来追延迟的（用户要的是对齐，不是抢跑）
+      const next = base ? base.pos + Math.min((performance.now() - base.at) / 1000, 0.9) : null
+      if (next === null) return
       setLive((v) => {
-        const next = v + 1
-        return music.duration > 0 ? Math.min(next, music.duration) : next
+        // 外推值比本地值落后超过 1.5 秒就当基准过期，保住本地值往前（防倒退跳帧）
+        const target = next > v - 1.5 ? next : v
+        return music.duration > 0 ? Math.min(target, music.duration) : target
       })
-    }, 1000)
+    }, 250)
     return () => clearInterval(id)
   }, [music?.active, music?.playing, music?.duration, music, seeking])
 
@@ -1953,6 +2331,13 @@ function MusicPanel(): React.JSX.Element {
     (cmd: MusicCommand) => {
       if (busy) return
       const key = typeof cmd === 'string' ? cmd : cmd.cmd
+      // 拖/点进度条不锁整页控件。busy 的用途是「防连点把播放器按懵」，
+      // 而 seek 本身幂等（后一次覆盖前一次）；以前这里一并 setBusy，导致每次点进度条
+      // 三个按钮都会 disabled 300ms、透明度掉到 0.45，看起来像「闪一下消失」。
+      if (key === 'seek' || key === 'barseek') {
+        void window.island.musicControl(cmd).catch(() => false)
+        return
+      }
       setBusy(key)
       void window.island
         .musicControl(cmd)
@@ -1966,22 +2351,83 @@ function MusicPanel(): React.JSX.Element {
   )
 
   const active = music?.active === true
-  const pct = music && music.duration > 0 ? Math.min(1, Math.max(0, live / music.duration)) : 0
-  // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03；总时长未知时诚实显示 -0:00
-  const remain = Math.max(0, (music?.duration ?? 0) - live)
+  const pct =
+    totalDur > 0 ? Math.min(1, Math.max(0, (noTimeline ? 0 : shownPos) / totalDur)) : 0
+  // 参考图（用户 m02652）进度行右端是「负数剩余时间」，如 -04:03
+  const remain = Math.max(0, totalDur - (noTimeline ? 0 : shownPos))
 
   /** 把鼠标横坐标换算成秒数（点在进度条热区任意位置都成立） */
   const secAt = (clientX: number): number => {
     const el = barRef.current
-    if (!el || !music || music.duration <= 0) return 0
+    if (!el || totalDur <= 0) return 0
     const r = el.getBoundingClientRect()
     if (r.width <= 0) return 0
     const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-    return ratio * music.duration
+    return ratio * totalDur
+  }
+
+  /** 同一个横坐标的「比例」形式：窗口点击通道要的是比例不是秒（见 barseek 的注释） */
+  const ratioAt = (clientX: number): number => {
+    const el = barRef.current
+    if (!el) return 0
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0) return 0
+    return Math.min(1, Math.max(0, (clientX - r.left) / r.width))
+  }
+
+  /**
+   * 能不能点进度条。
+   *
+   * 用户 m06607「进度条我也点不了」时的第一版修法是「只要算得出总时长就允许点，
+   * 点完先把我们自己的钟挪过去，界面立刻有反应」——这是错的，用户 m06991
+   * 「我点击音乐条音乐不会跟着音乐条同步，现在只是字幕同步了而已」抓到要害：
+   * 网易云根本不接受跳转（实测见下），把钟挪过去只会让界面和音乐彻底脱节。
+   *
+   * 网易云为什么不能跳（2026-11-16 实测，`.tmp/word/ne-seek-proof.ps1`）：
+   *   - 它的 SMTC 会话 `IsPlaybackPositionEnabled = False`，`Position/EndTime` 恒为 0，
+   *     `LastUpdatedTime` 是 1601-01-01（DateTimeOffset 默认值）；
+   *   - `TryChangePlaybackPositionAsync` 返回 True（谎报成功），但位置一点不动；
+   *     用 9999 秒（远超曲末）试探，若真被接受必然夹到结尾并播完，实测连播放状态都不变。
+   *   对照组汽水音乐：`IsPlaybackPositionEnabled = True`，seek 到 102.5 秒后位置真的变成 102.5。
+   *
+   * 所以门槛回到「播放器自己报时间轴才允许跳」：能跳就跳真的，不能跳就不给点，
+   * 并且用 title 说清原因，而不是演一个假的跳转。
+   *
+   * 用户 m07228「从第一性原理出发，做不到也要做」之后补上的例外：
+   * 播放器不报时间轴、但**能从它窗口里读到并在它的进度条上点**的（`barClickable`），
+   * 照样允许拖——点击会真的发到它自己的进度条上，网易云会真的跳。这不是变通，
+   * 这是另一条真实的通道（Now Playing 等同类工具也是这么处理这类播放器的）。
+   */
+  const canSeekNow = ((!playerNoTimeline && totalDur > 0) || barClickable) && !busy
+
+  /**
+   * 跳到某一秒。拖进度条松手与「点歌词行」共用这一条通道。
+   *
+   * ratio 可选：拖进度条时用鼠标落点算出的比例（比秒更贴近播放器的真实长度），
+   * 点歌词行时只有时间戳，就按 totalDur 换算。
+   */
+  const jumpToSec = (sec: number, ratio?: number): void => {
+    if (!canSeekNow || totalDur <= 0) return
+    const target = Math.min(totalDur, Math.max(0, sec))
+    const r = ratio ?? Math.min(1, Math.max(0, target / totalDur))
+    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
+    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
+    seekGuardRef.current = { target, at: Date.now(), title: music?.title ?? '' }
+    if (barClickable) {
+      // 播放器不报进度：把钟先拨到目标秒，让进度条/歌词立刻跟手；
+      // 紧接着真的去点它窗口里的进度条（点完它是真的会跳的，`music:state` 回来还会再校准）
+      clockAnchor(target, music?.playing === true)
+      // 这一下会让桥接把播放器顶到前台，岛紧接着就会失焦。先挂个抑制窗口，
+      // 否则用户「点一下进度条」的观感就是「岛自己缩起来了」（用户 m02806）。
+      blurSuppressUntil = Date.now() + 2500
+      ctl({ cmd: 'barseek', value: Math.round(r * 1000) / 1000 })
+    } else {
+      ctl({ cmd: 'seek', value: Math.round(target * 10) / 10 })
+    }
   }
 
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (!music?.canSeek || music.duration <= 0 || busy) return
+    if (!canSeekNow) return
     e.currentTarget.setPointerCapture(e.pointerId)
     seekingRef.current = true
     seekGuardRef.current = null
@@ -1995,13 +2441,11 @@ function MusicPanel(): React.JSX.Element {
   const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!seekingRef.current) return
     const sec = secAt(e.clientX)
+    const ratio = ratioAt(e.clientX)
     seekingRef.current = false
     setSeeking(false)
     setLive(sec)
-    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
-    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
-    seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
-    ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
+    jumpToSec(sec, ratio)
   }
 
   const volume = volLocal ?? music?.volume ?? 0
@@ -2033,6 +2477,22 @@ function MusicPanel(): React.JSX.Element {
 
   return (
     <div className={`todo-panel music-panel ${lyricOpen ? 'lyric-open' : ''}`}>
+      {/* 网易云后台精确控制（用户 m0xxxx「必须把网易云显示出来才能控进度，那还不如不要」）：
+          调试端口只能在网易云启动时打开，所以这里给一键重启入口。开启后进度/seek 直接
+          操作它的页面，窗口最小化也有效，不再依赖抓像素和把窗口顶到前台。 */}
+      {music?.neteaseRunning === true && !music.neteaseCdp && (
+        <button
+          type="button"
+          className={`music-cdp-tip ${music.neteaseCdpBusy ? 'busy' : ''}`}
+          disabled={music.neteaseCdpBusy || busy === 'netease-enable'}
+          onClick={() => ctl({ cmd: 'netease-enable' })}
+          title="网易云的调试端口只能在启动时开启；会重启网易云一次，之后最小化、被遮挡都能拖动进度"
+        >
+          {music.neteaseCdpBusy
+            ? '正在重启网易云开启后台控制…几秒后自动恢复播放'
+            : '网易云：点此开启后台精确控制（重启一次，之后最小化也能拖进度）'}
+        </button>
+      )}
       {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」，
           2026-11-16 用户 m03368 指出进度条不该横穿整页）：
           上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
@@ -2065,11 +2525,22 @@ function MusicPanel(): React.JSX.Element {
           </div>
 
           {/* 进度条只占左栏宽度，不横穿整页（用户 m03368） */}
-          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(music?.duration ?? 0)} aria-valuenow={Math.round(live)}>
-            {/* 热区比 3px 的条子高，手指/鼠标才点得到；不支持 seek 或总时长未知时不响应 */}
+          <div className="music-progress" role="progressbar" aria-valuemin={0} aria-valuemax={Math.round(totalDur)} aria-valuenow={Math.round(shownPos)}>
+            {/* 热区比 3px 的条子高，手指/鼠标才点得到。
+                只有播放器真的报了时间轴（能跳）才给 seekable，否则点不动、悬停也不变手型，
+                并用 title 说明是哪一种情况（用户 m06991：不许演假的跳转） */}
             <div
-              className={`music-seek ${music?.canSeek && (music?.duration ?? 0) > 0 ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
+              className={`music-seek ${canSeekNow ? 'seekable' : ''} ${seeking ? 'dragging' : ''}`}
               ref={barRef}
+              title={
+                canSeekNow
+                  ? barClickable
+                    ? '点任意位置跳到那里（点它自己的进度条）'
+                    : '点任意位置跳到那里'
+                  : playerNoTimeline
+                    ? '这个播放器不接受系统的跳转指令，也没法从它的窗口里读到进度条'
+                    : '总时长未知，暂时不能跳'
+              }
               onPointerDown={onSeekPointerDown}
               onPointerMove={onSeekPointerMove}
               onPointerUp={onSeekPointerUp}
@@ -2079,16 +2550,83 @@ function MusicPanel(): React.JSX.Element {
               </div>
             </div>
             <div className="music-times">
-              <span className="music-time">{fmtDuration(live)}</span>
-              <span className="music-time">-{fmtDuration(remain)}</span>
+              {/* 只有在「播放器不报时长 + 歌词库也没给出时长」时才显示 --:--（此时确实算不出来）。
+                  网易云那种情况用歌词库的总时长 + 自己累加位置，能正常显示时间（用户 m06116）。
+                  e2e 的 U5 断言「右端是 -mm:ss」，正常播放器与补齐后的网易云都走下面那支，不受影响 */}
+              {noTimeline ? (
+                <>
+                  <span className="music-time" title="这个播放器没向系统报告播放进度">
+                    --:--
+                  </span>
+                  <span className="music-time" title="这个播放器没向系统报告播放进度">
+                    --:--
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="music-time">{fmtDuration(shownPos)}</span>
+                  <span className="music-time">-{fmtDuration(remain)}</span>
+                </>
+              )}
             </div>
           </div>
         </div>
         <span className="music-divider" aria-hidden="true" />
-        {/* 右栏歌词位：只留诚实占位，不编造、不拉取任何歌词文本。
-            类名刻意不用 .music-lyric-line —— 那个选择器在 e2e-music 的 U4 里用来
-            探测「有没有偷偷接联网歌词」，占位不能撞上它 */}
-        <div className="music-lyric-slot" title="暂无歌词">暂无歌词</div>
+        {/* 右栏歌词位（SPEC-music-lyric）：主进程去 lrclib 查带时间轴的歌词，本地有缓存就秒出。
+            三种状态都能照实说明：加载中 / 拿到歌词（跟着播放位置滚动高亮）/ 没拿到（显示具体原因）。
+            **没有歌词就显示「暂无歌词」+ 原因，绝不编造文本**——这是 SPEC 里写死的红线。 */}
+        <div
+          className="music-lyric-slot"
+          title={
+            lyricLoading
+              ? '正在查歌词…'
+              : lyric?.ok
+                ? lyric.source === 'cache'
+                  ? '歌词（来自本地缓存）'
+                  : lyric.source === 'netease'
+                    ? '歌词（来自网易云）'
+                    : '歌词（来自 lrclib.net）'
+                : (lyric?.reason ?? '暂无歌词')
+          }
+        >
+          {lyricLoading ? (
+            <span className="music-lyric-tip">正在查歌词…</span>
+          ) : lyricLines.length > 0 ? (
+            <>
+              <div className="music-lyric-scroll" ref={lyricScrollRef}>
+                {lyricLines.map((ln, i) => (
+                  <div
+                    key={`${ln.time}-${i}`}
+                    ref={i === lyricActive ? lyricActiveRef : null}
+                    className={`music-lyric-row ${canSeekNow ? 'seekable' : ''} ${
+                      i === lyricActive ? 'active' : ''
+                    }${preludeLeft > 0 && i === 0 ? ' next' : ''}`}
+                    data-time={ln.time}
+                    // 点某句直接跳到那句（用户反馈「鼠标放在歌词上样式没变」）：
+                    // 只有真能跳（canSeekNow）才给手型和点击，跳不动的播放器不装样子。
+                    title={canSeekNow ? `点这句跳到 ${fmtDuration(ln.time)}` : undefined}
+                    onClick={canSeekNow ? () => jumpToSec(ln.time) : undefined}
+                  >
+                    {ln.text}
+                  </div>
+                ))}
+              </div>
+              {/* 前奏期（还没到第一句）给一行明确倒计时，免得一片灰看着像坏了——用户 m06418 */}
+              {preludeLeft > 0 ? (
+                <span className="music-lyric-tip music-lyric-prelude">
+                  前奏中 · 还有 {Math.ceil(preludeLeft)} 秒开唱
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <span className="music-lyric-tip">暂无歌词</span>
+              {lyric && !lyric.ok && lyric.reason ? (
+                <span className="music-lyric-why">{lyric.reason}</span>
+              ) : null}
+            </>
+          )}
+        </div>
       </div>
 
       {/* 参考图（用户 m02652）：控制行＝播放按钮一排。
@@ -2482,6 +3020,13 @@ export default function App(): React.JSX.Element {
   // 要等一会才开始缩」）。输入法的保护由收起定时器路径的 typing 判据负责（US-036 已修）。
   useEffect(() => {
     window.island.onWindowBlur(() => {
+      // 「点进度条」这一下不算「用户想收起」：桥接为了点击把播放器顶到前台，岛必然失焦。
+      // 窗口给到 2.5 秒（点击动作本身含 120ms 置前台 + 160ms + 100ms + 480ms 收尾，
+      // 再加 IPC 往返余量），只在按下过进度条时生效，过完这段时间点桌面仍然正常收起。
+      if (Date.now() < blurSuppressUntil) {
+        window.island.logDiag('render blur ignored; bar seek in flight')
+        return
+      }
       hoverRef.current = false
       window.island.logDiag('render blur -> collapse now')
       setExpanded(false)

@@ -70,18 +70,56 @@ function Emit($obj) {
 #   i=1  $sessions[1] = NULL           |  @($sessions)[1] = obj  callOK
 # 裸索引拿到 $null 后调 TryGetMediaPropertiesAsync() 会抛「不能对 Null 值表达式调用方法」，
 # 界面就恒为空态。单会话时 idx 恒为 0，恰好命中，本地很难发现。
+# 该应用此刻是否有「用户能看见的窗口」。
+# 用户 m06991 的截图里：网易云在前台播《天使的翅膀》，岛上却显示《Take Me Hand》。
+# 原因是 PickIndex 只看「谁在 Playing」，而当时后台的汽水音乐也在放，先被扫到了。
+# 两个都在放时，用户想控制的显然是摆在眼前的那个 ⇒ 用「有没有可见顶层窗口」当判据。
+# 缓存 3 秒：poll 每秒一次，扫进程不算免费，但也不该把窗口切换拖到几分钟才生效。
+$script:visKey = ""
+$script:visAt = [DateTime]::MinValue
+$script:visSet = @{}
+function VisibleApps() {
+  $now = [DateTime]::UtcNow
+  if (($now - $script:visAt).TotalSeconds -lt 3) { return $script:visSet }
+  $set = @{}
+  try {
+    foreach ($p in [System.Diagnostics.Process]::GetProcesses()) {
+      try {
+        if ($p.MainWindowHandle -eq 0) { continue }
+        $n = $p.ProcessName
+        if ($n) { $set[$n] = $true }
+      } catch { }
+    }
+  } catch { }
+  $script:visSet = $set
+  $script:visAt = $now
+  return $set
+}
+
 function PickIndex($sessions) {
   $arr = @($sessions)
   if ($arr.Count -eq 0) { return -1 }
-  # 优先正在播放的那个：同时开着多个播放器时，用户想看的显然是出声的那个
+  # 优先正在播放的：同时开着多个播放器时，用户想看的显然是出声的那个。
+  # 多个同时在放时，再优先「有可见窗口」的那个（就是摆在用户眼前的那个）。
+  $playing = @()
   for ($i = 0; $i -lt $arr.Count; $i++) {
     try {
-      if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { return [int]$i }
+      if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { $playing += [int]$i }
     } catch {
       # 单个会话取播放信息失败就跳过它，继续看下一个；不能因为一个坏会话让整体判失败
     }
   }
-  return 0
+  if ($playing.Count -eq 1) { return [int]$playing[0] }
+  if ($playing.Count -eq 0) { return 0 }
+  $vis = VisibleApps
+  foreach ($i in $playing) {
+    try {
+      $app = [string]$arr[$i].SourceAppUserModelId
+      $exe = ($app -replace '^.*[\\/]', '') -replace '\.exe$', ''
+      if ($exe -and $vis.ContainsKey($exe)) { return [int]$i }
+    } catch { }
+  }
+  return [int]$playing[0]
 }
 
 # 按应用音量（Core Audio 音频会话 / ISimpleAudioVolume）。
@@ -163,6 +201,14 @@ namespace IslandAppVol {
     [PreserveSig] int GetMasterVolume(out float pfLevel);
     [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool bMute, ref Guid ctx);
     [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool pbMute);
+  }
+
+  [Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  public interface IAudioMeterInformation {
+    [PreserveSig] int GetPeakValue(out float pfPeak);
+    [PreserveSig] int GetMeteringChannelCount(out int pnChannelCount);
+    [PreserveSig] int GetChannelsPeakValues(int u32ChannelCount, float[] afPeakValues);
+    [PreserveSig] int QueryHardwareSupport(out int pdwHardwareSupportMask);
   }
 
   public static class AppVol {
@@ -361,8 +407,7 @@ namespace IslandAppVol {
     }
 
     // -1 means no matching audio session: caller must disable the slider and never touch system volume.
-    public static float Get(string smtc) {
-      try {
+    public static float Get(string smtc) {      try {
         var sv = Find(smtc);
         if (sv == null) return -1f;
         float v;
@@ -381,6 +426,87 @@ namespace IslandAppVol {
         Marshal.ThrowExceptionForHR(hr);
         return true;
       } catch { return false; }
+    }
+
+    // 现在到底哪个进程在出声。SMTC 会话为空（网易云 3.1.41 实测就是不注册）时，
+    // 桥接不能因此判定「没有播放器」，得靠音频会话自己看：state==1 且 pid>0 的就在出声。
+    // 返回 "exe1,pid1;exe2,pid2"，无则 ""。实测峰值表能分辨出声/静音约 60 倍（0.006 vs 0.375）。
+    public static string ActiveList() {
+      try {
+        var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        IMMDevice device;
+        int hr = en.GetDefaultAudioEndpoint(0, 1, out device);
+        if (hr != 0 || device == null) return "";
+        Guid iid = typeof(IAudioSessionManager2).GUID;
+        object o;
+        hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+        if (hr != 0 || o == null) return "";
+        var mgr = (IAudioSessionManager2)o;
+        IAudioSessionEnumerator e;
+        hr = mgr.GetSessionEnumerator(out e);
+        if (hr != 0 || e == null) return "";
+        int count;
+        hr = e.GetCount(out count);
+        if (hr != 0) return "";
+        var sb = new StringBuilder();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < count; i++) {
+          IAudioSessionControl ctl;
+          hr = e.GetSession(i, out ctl);
+          if (hr != 0 || ctl == null) continue;
+          int pid = -1, state = -1;
+          try { var c2 = (IAudioSessionControl2)ctl; c2.GetProcessId(out pid); c2.GetState(out state); } catch { continue; }
+          // state: 0=Inactive 1=Active 2=Expired。Expired 的会话已经没用，其余都保留——
+          // 暂停时 state 会掉到 0，但进程和窗口都还在，界面不能因此清空。
+          if (state == 2 || pid <= 0) continue;
+          string pn = Pname(pid);
+          if (pn.Length == 0) continue;
+          string key = pn + "|" + pid.ToString();
+          if (!seen.Add(key)) continue;
+          if (sb.Length > 0) sb.Append(";");
+          sb.Append(pn).Append(".exe,").Append(pid.ToString()).Append(",").Append(state.ToString());
+        }
+        return sb.ToString();
+      } catch { return ""; }
+    }
+
+    // 该应用当前音频会话的峰值（0..1）。用来判「它是不是真在出声」。
+    // 找不到会话返回 -1；找到了但没声音返回 0 附近的极小值。
+    public static float Peak(string smtc) {
+      try {
+        var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        IMMDevice device;
+        int hr = en.GetDefaultAudioEndpoint(0, 1, out device);
+        if (hr != 0 || device == null) return -1f;
+        Guid iid = typeof(IAudioSessionManager2).GUID;
+        object o;
+        hr = device.Activate(ref iid, 23, IntPtr.Zero, out o);
+        if (hr != 0 || o == null) return -1f;
+        var mgr = (IAudioSessionManager2)o;
+        IAudioSessionEnumerator e;
+        hr = mgr.GetSessionEnumerator(out e);
+        if (hr != 0 || e == null) return -1f;
+        int count;
+        hr = e.GetCount(out count);
+        if (hr != 0) return -1f;
+        var names = Candidates(smtc, false);
+        float best = -1f;
+        for (int i = 0; i < count; i++) {
+          IAudioSessionControl ctl;
+          hr = e.GetSession(i, out ctl);
+          if (hr != 0 || ctl == null) continue;
+          int pid = -1;
+          try { var c2 = (IAudioSessionControl2)ctl; c2.GetProcessId(out pid); } catch { continue; }
+          if (pid <= 0) continue;
+          if (!AppMatches(smtc, pid, names)) continue;
+          var mi = ctl as IAudioMeterInformation;
+          if (mi == null) continue;
+          float v;
+          if (mi.GetPeakValue(out v) != 0) continue;
+          if (v > best) best = v;
+        }
+        return best;
+      } catch { return -1f; }
     }
   }
 }
@@ -431,6 +557,581 @@ public static class IslandCoverGrab {
 '@
 Add-Type -TypeDefinition $coverSrc
 
+# 点击播放器自己的进度条（2026-11-16 用户 m07228 要求「做不到也要做」后找到的路子）。
+# 背景：网易云（cloudmusic）实现了 SMTC 的「歌名/歌手/封面」，但 IsPlaybackPositionEnabled=False、
+# Position/EndTime 恒 0、LastUpdatedTime 是 1601-01-01，TryChangePlaybackPositionAsync 会
+# 返回 true 却什么都不做（实测 seekers 目标 9999 秒、连采 5 次 pos 仍 0）。所以走 SMTC 永远跳不动。
+# 但它的窗口里有一条自己的进度条：已播段是红色、未播段是灰色。点它，网易云会真的跳
+# （实测 目标 0.70→实际 0.694、0.20→0.194、0.45→0.444）。
+# 三个关键前提，缺一不可：
+#   1) 进程必须先 SetProcessDPIAware()。不加时本机 125% 缩放下 GetWindowRect 给的是
+#      「虚拟化坐标」（窗口 240,80,1057x752），真实是 300,100,1321x940，按错的坐标点必偏，
+#      这就是最初「点不动」的真因。
+#   2) 读进度要用 PrintWindow 离屏渲染，不能用 CopyFromScreen——后者要求窗口可见且在前台，
+#      实测窗口被别的窗口盖住时读到的是遮挡物。PrintWindow 全程 94ms，且不用抢前台。
+#   3) 找窗口按「窗口标题包含当前歌名」而不是进程名：网易云 SMTC 标识是 cloudmusic.exe 还行，
+#      但汽水音乐的 SMTC 标识是中文「汽水音乐」、进程却叫 SodaMusic，按名字匹配会漏。
+#      标题匹配对任何播放器都成立（网易云主窗标题形如「歌名 - 歌手」）。
+# PowerShell 5.1 的 Add-Type 只支持 C# 5：不用 ?.、不用 nameof、不用字符串内插。
+$barSrc = @'
+using System;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+public static class IslandBarClick {
+  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f, int dx, int dy, uint data, IntPtr extra);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int n);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L; public int T; public int R; public int B; }
+  static bool dpiReady = false;
+  public static void InitDpi() {
+    if (dpiReady) return;
+    try { SetProcessDPIAware(); } catch { }
+    dpiReady = true;
+  }
+  // 取某进程「面积最大的可见顶层窗口」。
+  // 为什么要这条而不是直接用 Process.MainWindowHandle：实测网易云被最小化到托盘后，
+  // MainWindowHandle 仍指着一个 159x27 的残壳（iconic=True），PrintWindow 抓到的就是
+  // 那张空图，Probe 因为 w<200 直接拒收——barPct 恒 -1 的真因就在这里。
+  // EnumWindows 能拿到同一 pid 下所有顶层窗口，按面积挑最大的那个才是真主窗。
+  public static IntPtr Biggest(uint pid) {
+    IntPtr best = IntPtr.Zero;
+    long bestArea = 0;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      if (p != pid) return true;
+      if (!IsWindowVisible(h)) return true;
+      RECT r;
+      if (!GetWindowRect(h, out r)) return true;
+      long a = (long)(r.R - r.L) * (long)(r.B - r.T);
+      if (a > bestArea) { bestArea = a; best = h; }
+      return true;
+    }, IntPtr.Zero);
+    return best;
+  }
+  public static IntPtr FindByTitle(string title) {
+    if (title == null || title.Length < 2) return IntPtr.Zero;
+    foreach (Process p in Process.GetProcesses()) {
+      try {
+        string t = p.MainWindowTitle;
+        if (t == null || t.Length == 0) continue;
+        if (t.IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) continue;
+        IntPtr h = Biggest((uint)p.Id);
+        if (h == IntPtr.Zero) h = p.MainWindowHandle;
+        if (h != IntPtr.Zero) return h;
+      } catch { }
+    }
+    return IntPtr.Zero;
+  }
+  // 按进程名找主窗口（传 "cloudmusic.exe" 或 "cloudmusic" 都行）。
+  // 为什么要这条兜底：用户切到歌单页/首页时，网易云主窗标题会从「歌名 - 歌手」变成
+  // 「网易云音乐」，按标题就再也找不到窗口了（实测 FindByTitle 返回 0、进度条读不到）。
+  // 但它的底部控制栏一直在，按进程名能稳定找到。
+  public static IntPtr FindByExe(string exeName) {
+    if (exeName == null) return IntPtr.Zero;
+    string want = exeName.Trim();
+    if (want.Length < 3) return IntPtr.Zero;
+    if (!want.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) want = want + ".exe";
+    foreach (Process p in Process.GetProcesses()) {
+      try {
+        string pn = p.ProcessName + ".exe";
+        if (!string.Equals(pn, want, StringComparison.OrdinalIgnoreCase)) continue;
+        IntPtr h = Biggest((uint)p.Id);
+        if (h == IntPtr.Zero) h = p.MainWindowHandle;
+        if (h != IntPtr.Zero) return h;
+      } catch { }
+    }
+    return IntPtr.Zero;
+  }
+  // 取该进程主窗口的标题。SMTC 会话为空时（网易云不注册），标题里的「歌名 - 歌手」
+  // 是唯一还能拿到的曲目信息——它把歌名放在自己窗口标题上（实测「梦哑 - 任然」）。
+  // 不能再用 Process.MainWindowTitle：实测网易云会把 MainWindowHandle 指到一个
+  // 109x26 的 Chrome_WidgetWin_0（标题为空），于是标题、进度条一起失效。
+  // 改成「面积最大的可见窗口 + GetWindowText」才稳定。
+  public static string TitleOf(string exeName) {
+    if (exeName == null) return "";
+    string want = exeName.Trim();
+    if (want.Length < 3) return "";
+    if (!want.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) want = want + ".exe";
+    string fallback = "";
+    foreach (Process p in Process.GetProcesses()) {
+      try {
+        if (!string.Equals(p.ProcessName + ".exe", want, StringComparison.OrdinalIgnoreCase)) continue;
+        // 网易云一次开三个进程，只有其中一个有真窗口。不能遇到第一个同名进程就返回：
+        // 先碰到的往往是无窗口的辅助进程，直接返回空串会让标题、进度条一起失效。
+        IntPtr h = Biggest((uint)p.Id);
+        if (h != IntPtr.Zero) {
+          StringBuilder sb = new StringBuilder(1024);
+          if (GetWindowText(h, sb, sb.Capacity) > 0) return sb.ToString();
+        }
+        if (fallback.Length == 0) {
+          string t = p.MainWindowTitle;
+          if (t != null && t.Length > 0) fallback = t;
+        }
+      } catch { }
+    }
+    return fallback;
+  }
+  // 点进度条之前必须把窗口置前台（实测 2026-11-17）。
+  // SetCursorPos + mouse_event 是「真实鼠标」事件，落在屏幕坐标上；窗口被别的窗口盖住时
+  // 点到的就是遮挡物，进度条纹丝不动（实测 BEFORE 0.8494 / AFTER 0.8554 = 没跳）。
+  // 置前台后同一段代码一次成功（BEFORE 0.9205 / AFTER 0.2619）。
+  // 注意：抓图（PrintWindow）不需要前台，只有点击需要，所以只在 ClickPct 里调。
+  public static bool Activate(IntPtr h) { return Activate(h, true); }
+  // 只置前台，绝不发送任何用户输入事件。
+  //
+  // 历史（2026-11-17，用户 m02535）：这里原本在 SetForegroundWindow 失败后用
+  // 「发一次试探性 0xB3」来绕开前台锁。实测 MediaKey(0xB3) 是真的会把网易云
+  // 暂停的（.tmp/word/keydiag.ps1：BEFORE peak=0.01135 → AFTER_KEY1 peak=0.00000
+  // → AFTER_KEY2 peak=0.01064）。于是「点进度条」变成「先暂停、再点才播」，
+  // 正是用户报的现象。绕前台锁改用 AttachThreadInput：把自己的线程输入附加到
+  // 当前前台窗口所属线程上，之后 SetForegroundWindow 就不再被系统拒绝，
+  // 全程不发键、不改变播放状态（.tmp/word/fgtest2.ps1 实测 BRING_OK=True、
+  // 峰值 0.01315 → 0.01210 保持不变）。
+  public static bool BringKeyless(IntPtr h) {
+    if (h == IntPtr.Zero) return false;
+    try { if (GetForegroundWindow() == h) return true; } catch { }
+    try { if (IsIconic(h)) ShowWindow(h, 9); } catch { }
+    IntPtr fg = IntPtr.Zero;
+    uint fgPid = 0;
+    uint fgTid = 0;
+    uint myTid = 0;
+    bool attached = false;
+    try {
+      fg = GetForegroundWindow();
+      if (fg != IntPtr.Zero) fgTid = GetWindowThreadProcessId(fg, out fgPid);
+      myTid = GetCurrentThreadId();
+      if (fgTid != 0 && fgTid != myTid) attached = AttachThreadInput(myTid, fgTid, true);
+      bool ok = false;
+      try { ok = SetForegroundWindow(h); } catch { }
+      if (!ok) { try { ok = BringWindowToTop(h); } catch { } }
+      System.Threading.Thread.Sleep(120);
+      return GetForegroundWindow() == h;
+    } catch {
+      return false;
+    } finally {
+      if (attached) {
+        try { AttachThreadInput(myTid, fgTid, false); } catch { }
+      }
+    }
+  }
+  // useKey=false 时连「媒体键兜底」都不用（点击进度条这条路径就必须如此）。
+  // 降级路径的 toggle/next/prev 仍保留 useKey=true 的老行为，但它们自己随后会发
+  // 媒体键，所以调用方传 false（见 PowerShell 侧注释）。
+  public static bool Activate(IntPtr h, bool useKey) {
+    if (h == IntPtr.Zero) return false;
+    if (BringKeyless(h)) return true;
+    if (!useKey) return false;
+    // 最后手段：媒体键会让系统把目标当「用户刚交互过的进程」放行。
+    // 代价是切换一次播放状态，只能给「本来就要切播放状态」的命令用。
+    try { MediaKey(0xB3); } catch { }
+    try { System.Threading.Thread.Sleep(120); return BringKeyless(h); } catch { return false; }
+  }
+  // 发一个媒体键（0xB3 = 播放/暂停，0xB0 = 下一首，0xB1 = 上一首）。
+  // SMTC 会话不存在时（网易云这版就不注册），媒体键是唯一还能控制它的途径。
+  public static void MediaKey(int vk) {
+    keybd_event((byte)vk, 0, 0, IntPtr.Zero);
+    System.Threading.Thread.Sleep(40);
+    keybd_event((byte)vk, 0, 2, IntPtr.Zero);
+  }
+  static bool IsRed(Color c) { return c.R > 150 && (c.R - c.G) > 55 && (c.R - c.B) > 35; }
+  static int Df(Color a, Color b) {
+    int dr = Math.Abs(a.R - b.R), dg = Math.Abs(a.G - b.G), db = Math.Abs(a.B - b.B);
+    int m = dr > dg ? dr : dg;
+    return m > db ? m : db;
+  }
+  // 饱和度（max-min）。深色主题下「未播段」仍是中性浅灰，靠饱和度就能和粉红已播段分开；
+  // 不再靠 IsRed（粉红 R-G=123 其实满足旧的 IsRed，真正让旧判据崩的是「单分界」这个假设）。
+  static int Sat(Color c) {
+    int mx = c.R > c.G ? (c.R > c.B ? c.R : c.B) : (c.G > c.B ? c.G : c.B);
+    int mn = c.R < c.G ? (c.R < c.B ? c.R : c.B) : (c.G < c.B ? c.G : c.B);
+    return mx - mn;
+  }
+  // 一行的进度条模型（实测 2026-11-17，网易云 3.1.41 正在播放页）：
+  //   已播段 x=0..playedEnd（内部是渐变，右端最亮），未播段 playedEnd+1..w-1（一整段同色）。
+  // 判据演进史（别再走回头路）：
+  //   ① 最早要求「整行铺满 + 单分界 + 至少一侧红」——只在浅色主题成立，深色主题全灭；
+  //   ② 改要求「未播段必须是中性灰」——绿色/暗棕主题未播段饱和度 19~33，又全灭；
+  //   ③ 现版：未播段「一整段均匀」（主题无关，实测四主题差 ≤3，而背景是渐变的）；
+  //   ④ 已播段「有色相」或「明显更亮」二者取一（点击后窗口进入 hover 会把整条渐变灰化）。
+  // 试过但**失败**的两条路，别再试：
+  //   · 全宽锚定（barStart 固定 0、pct=playedEnd/w）：已播段左端与背景色差不足时会把
+  //     背景渐变带认成进度条，barPct 卡在假值 0.8615 不动；
+  //   · 双帧差分（隔 650ms 抓两帧认分界右移）：唱片机唱臂的亮色圆弧也在移动，
+  //     被当成进度条，读数乱跳。
+  static bool Row(Bitmap b, int y, out int barStart, out int playedEnd, out int barEnd) {
+    barStart = -1; playedEnd = -1; barEnd = -1;
+    int w = b.Width;
+    Color off = b.GetPixel(w - 1, y);
+    // 从右缘向左扫未播段同色（容差 18），但**跳过未播段上的小色块**。
+    // 为什么必须跳：实测（用户 m02806 现场，网易云深色主题）进度条本体只有 10 行
+    // （y=833..842），条上还画着一个**位置固定的小标记点**（x≈729..738，宽 10px，
+    // 纵向也只有 10 行）。它会截停扫描，于是 offL 落到 738、pct 恒为 0.5556 ——
+    // 界面上的进度条就永远卡住，用户看到的就是「点下一首不从零开始」。
+    // 真滑块是凸出到条外的圆点（x≈119..136，宽 18px，纵向 20 行），宽度明显更大。
+    // 所以规则：遇到非未播段色的色块，宽度 <= 12 且左边又回到未播段色 ⇒ 是标记点，
+    // 跳过去继续扫；否则它就是分界。
+    int x = w - 1;
+    int offL = -1;
+    while (x >= 0) {
+      if (Df(b.GetPixel(x, y), off) <= 18) { x--; continue; }
+      int runR = x, runL = x;
+      while (runL >= 0 && Df(b.GetPixel(runL, y), off) > 18) runL--;
+      int runLen = runR - runL;
+      if (runLen <= 12 && runL >= 0) { x = runL; continue; }
+      // 圆点用中心当分界（右缘会多算半个圆点的宽度）；长渐变段用右端。
+      offL = (runLen <= 24) ? (runL + runR + 1) / 2 : runR;
+      break;
+    }
+    if (offL < 0 || (w - 1 - offL) < 4) return false; // 未播段太短，不是进度条（或已播到尽头）
+    int offLen = w - 1 - offL;
+    for (int k = 1; k <= 3; k++) {
+      int sx = offL + 1 + (offLen * k) / 4;
+      if (sx > w - 1) sx = w - 1;
+      if (Df(b.GetPixel(sx, y), off) > 8) return false;
+    }
+    playedEnd = offL;
+    int p = offL;
+    while (p >= 0 && Df(b.GetPixel(p, y), off) > 18) p--;
+    barStart = p + 1;
+    barEnd = w - 1;
+    // 已播侧必须是**干净的条**：真进度条那一行只有一两个亮块（滑块圆点 +
+    // 位置固定的标记点），中间是连续渐变。反例（实测，用户 m02806 换歌瞬间）：
+    // 网易云换歌时整页做过渡动画，y=879 那行扫出 offL=1221、pct 恒为 0.8857，
+    // 它其实是**一排图标和文字**——那一行有十几个 3~5px 的小亮块。
+    // 所以数一下已播侧的亮块，超过 4 个就不认。
+    if (BlockCount(b, y, off, playedEnd) > 4) return false;
+    int playedLen = playedEnd - barStart + 1;
+    // ⑤ 滑块确认：绿色/橄榄色主题（如「颜色 / Gareth.T」）里已播段与背景只差
+    //    20 级，向左扫同色会把 barStart 落到分界左边几像素（实测 s=763,p=766），
+    //    于是 playedLen=4 过不了下面的门槛。但**分界位置本身是准的**（offL=766
+    //    → 766/1321=0.58，与真实进度一致），只要确认分界上确实贴着那个白色小滑块
+    //    （实测 x=764..766、色 (235,236,232)、亮度比未播段高 180），就说明这是
+    //    真进度条，把 barStart 固定为 0（全宽锚定）。
+    int thumb = ThumbX(b, y, off);
+    if (thumb > 0 && Math.Abs(thumb - offL) <= 14) {
+      playedEnd = thumb;
+      barStart = 0;
+      return true;
+    }
+    if (playedLen < 6) return false;                  // 已播段为空（刚开播）不认
+    // 取样点必须紧贴分界左侧：已播段内部是渐变，从左边取会和背景混在一起
+    // （实测绿色主题左端 (41,53,33) 与未播段 (37,49,30) 只差 4）。
+    Color on = b.GetPixel(playedEnd - Math.Min(12, Math.Max(1, playedLen / 2)), y);
+    if (Df(on, off) < 40) return false;               // 两段色差太小
+    if (Sat(on) >= 40) return true;                   // 有色相 ⇒ 真进度条
+    // 无饱和度（hover 灰度态）时退化判据：已播段明显亮于未播段
+    int lumOn = (on.R * 30 + on.G * 59 + on.B * 11) / 100;
+    int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
+    if (lumOn - lumOff >= 25) return true;
+    return ThumbRow(b, y, w, off);
+  }
+  // 滑块法（第四种定位方式，专治「已播段与背景同色」的主题）：
+  // 绿色/橄榄色主题下已播段是 (145,159,48) 而背景 (53,56,22)，只有极小一段，
+  // 真正的定位靠贴着分界的**白色小滑块**（实测宽 4px、颜色 (235,236,232)、
+  // 亮度比未播段高 180+）。判据：在未播段里找到一段 2~8px 宽、亮度远超未播段的
+  // 窄亮块，且它左右两侧都是未播段同色——那就是滑块，滑块中心即当前进度。
+  static bool ThumbRow(Bitmap b, int y, int w, Color off) {
+    return ThumbX(b, y, off) > 0;
+  }
+  // 已播侧（0..xEnd）有多少个「亮度明显高于未播段」的独立色块。
+  // 真进度条：1~3 个（滑块圆点 + 条上固定标记点）。图标/文字行：十几个。
+  static int BlockCount(Bitmap b, int y, Color off, int xEnd) {
+    int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
+    int thr = lumOff + 55;
+    int cnt = 0, runStart = -1;
+    for (int x = 0; x <= xEnd + 1; x++) {
+      bool bright = false;
+      if (x <= xEnd) {
+        Color c = b.GetPixel(x, y);
+        bright = ((c.R * 30 + c.G * 59 + c.B * 11) / 100) >= thr;
+      }
+      if (bright && runStart < 0) runStart = x;
+      else if (!bright && runStart >= 0) {
+        if (x - runStart >= 2) cnt++;
+        runStart = -1;
+      }
+    }
+    return cnt;
+  }
+  // 滑块中心 x（读不到返回 -1）。
+  // 实测「颜色 / Gareth.T」橄榄绿主题 y=837 的一行：
+  //   762=(53,56,23) 763=(204,205,196) 764..766=(235,236,232) 767=(70,73,41) 768=(53,56,22)
+  // 滑块本体 3~4px、亮度比未播段高 180+，但它左右各有 1~2px 抗锯齿过渡
+  // （763 和 767 都不是纯未播段色），所以左右两侧都要允许跳过 1~3px 再比对，
+  // 否则每行都会因为过渡色被判失败（实测就是这样：runLen=4 但右侧 767 差 52 被拒）。
+  static int ThumbX(Bitmap b, int y, Color off) {
+    int w = b.Width;
+    int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
+    int x = 0, runStart = -1, bestX = -1, bestLen = 0;
+    while (x < w) {
+      Color c = b.GetPixel(x, y);
+      int lum = (c.R * 30 + c.G * 59 + c.B * 11) / 100;
+      if ((lum - lumOff) >= 90) {
+        if (runStart < 0) runStart = x;
+      } else if (runStart >= 0) {
+        int runLen = x - runStart;                    // 亮度块 [runStart, x-1]
+        if (runLen >= 2 && runLen <= 10 && runStart > 0 && NearOff(b, y, runStart - 1, -1, off)
+            && NearOff(b, y, x, 1, off)) {
+          if (runLen > bestLen) { bestLen = runLen; bestX = (runStart + x - 1) / 2; }
+        }
+        runStart = -1;
+      }
+      x++;
+    }
+    return bestX;
+  }
+  // 从 x0 起沿 dir 方向最多看 3px，只要有一格回到未播段色就认为这一侧是「干净边界」。
+  // 为的是跨过滑块自己的抗锯齿过渡像素，而不是把它们当成别的图形。
+  static bool NearOff(Bitmap b, int y, int x0, int dir, Color off) {
+    int w = b.Width;
+    for (int k = 0; k < 3; k++) {
+      int x = x0 + dir * k;
+      if (x < 0 || x >= w) return false;
+      if (Df(b.GetPixel(x, y), off) <= 12) return true;
+    }
+    return false;
+  }
+  // 给候选行打分。判据必须避开「底部控制条上的图标/文字行」：实测那些行也能通过
+  // Row（off=(27,27,27)、offL≈84、playedLen 只有 11~17px），而且因为它们的 barStart
+  // 比真进度条的 barStart 更靠左（真条已播段左端与背景同色，实测扫出 x=95），
+  // 若按「条带宽度占比」打分反而会让假行胜出（12160 > 11980，抓到 y=903）。
+  // 真正的区分点是**已播段长度**：真条 423px≈32% 窗宽，假行只有 1%。
+  static int ScoreRow(Bitmap b, int y, int hh, out int s, out int p, out int e) {
+    s = -1; p = -1; e = -1;
+    if (!Row(b, y, out s, out p, out e)) return -1;
+    int w = b.Width;
+    // 滑块优先：见到贴着分界的白色小滑块就用它当分界（实测绿色主题已播段与背景
+    // 几乎同色，靠颜色扫出来的 playedEnd 只能到 5px，完全反映不了真实进度）。
+    Color off = b.GetPixel(w - 1, y);
+    int tx = ThumbX(b, y, off);
+    // 滑块必须**紧贴分界**才可信，和 Row 里的判据保持一致。
+    // 反例（实测，用户 m02806）：网易云的进度条上还画着一个**位置固定的白色小标记点**
+    // （实测 x≈334..343，纵向 ~10 行，长度 6~10px，正好落在 ThumbX 的 2~10px 窗口里），
+    // 它和真滑块一样「左右都是未播段色」，于是被当成滑块；p 被改写成 x≈338，
+    // pct 恒为 0.2566 / 0.5132 一动不动（用户说的「点下一首不从零开始」正是它）。
+    // 真滑块一定贴着自己那一侧的分界，所以只接受 |tx - p| <= 14。
+    if (tx > 0 && Math.Abs(tx - p) <= 14) p = tx;
+    // 假目标的共同特征：**没有真正的分界**。实测底部控制条那几行（y=870/906/907/910）
+    // 扫出来的 s=0（或很靠左），意味着从 x=0 到未播段之间全是渐变色，Row 一路都没
+    // 遇到「回到未播段色」的点；真进度条则一定有干净的已播段起点（实测 s=58~64）。
+    // 滑块分支是例外：它把 barStart 固定成 0 做全宽锚定，所以有滑块时不受这条限制。
+    if (tx <= 0 && s <= 0) return -1;
+    // 真进度条**从窗口左缘附近开始**：已播段起点 s 落在最左边一小段距离内。
+    // 反例（实测，用户 m02806 现场）：网易云切到歌手页/歌单页时，底部那行有个红色
+    // 圆形播放按钮，它是个浮在背景中间的小块，左边到窗口左缘全是背景色，
+    // 逐行扫出来 s≈639~654、p≈667~682，算出的 pct 恒为 0.5132 一动不动 ——
+    // 界面上的进度条就永远卡在那个位置（用户说的「点下一首不从零开始」有一部分就是它）。
+    // 真进度条实测 s 分别为 0/58~64/86，都远小于窗宽的 15%。
+    if (tx <= 0 && s > w * 15 / 100) return -1;
+    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
+    if (!(f > 0.002 && f < 0.995)) return -1;         // 排除整行同色（Row 已挡大部分）
+    // 真进度条**从窗口左缘开始**：第 0~2 列一定是「已播」色，不是未播段色。
+    // 反例（实测）：网易云切到歌手页/歌单页时，底部那行里有个红色圆形播放按钮；
+    // 它是个浮在背景上的小块，左边到窗口左缘仍是背景白（与未播段同色），
+    // 逐行扫出来 s≈645、p≈676，pct 恒定 0.5132 一动不动 —— 界面上的进度条就永远卡在
+    // 那个位置（用户 m02806「一点下一首进度条不从零开始，直接从 30s 左右」有一部分
+    // 就是它：读到的永远是同一个假值）。滑块分支走 tx>0，不受这条限制。
+    if (tx <= 0) {
+      Color left = b.GetPixel(Math.Min(2, w - 1), y);
+      if (Df(left, off) <= 8) return -1;
+    }
+    // 已播段按「从窗口左缘到分界」算，不按 barStart 算：绿色主题已播段左端与背景
+    // 同色，barStart 会落到分界左边几像素处，按它算 playedLen 恒为 4，整条作废。
+    int playedLen = p + 1;
+    if (playedLen * 50 < w) return -1;                // 已播段不足窗宽 2%：是图标/文字，不是进度条
+    Color on = b.GetPixel(Math.Max(1, p - Math.Min(12, Math.Max(1, playedLen / 2))), y);
+    bool warm = on.R > 110 && (on.R - on.B) > 20;
+    bool bright = (on.R + on.G + on.B) > (off.R + off.G + off.B);
+    // 已播段越长越可能是真进度条（占比 0..100 分），其余项只做小幅加权。
+    return (int)(playedLen * 100.0 / (double)w) + Sat(on) * 20 + (warm ? 2500 : 0)
+      + (bright ? 1200 : 0) + (y > hh * 55 / 100 ? 1500 : 0);
+  }
+  // "pct|yInWin|winW|winH|barStart|barEnd"，追加两个字段是为了让点击落在条带内而不是整窗宽
+  // 上一次成功读到的进度条在哪一行，按窗口高度的比例存（窗口大小变了也跟得上）。
+  // 用途见 ClickPct 里的注释：字幕背景盖住进度条时像素判据全灭，但条的位置没变。
+  static double LastRowFrac = -1;
+  // 本轮会话里是否读到过进度条位置：读过就说明「点得中」，即便这一帧被盖住读不出。
+  // 渲染层靠它决定进度条能不能拖（barOk），否则字幕背景一盖，岛的进度条就变成死条。
+  public static bool RowKnown() { return LastRowFrac >= 0 && LastRowFrac <= 1; }
+  static bool FallbackRow(IntPtr h, out int y) {
+    y = -1;
+    if (LastRowFrac < 0 || LastRowFrac > 1) return false;
+    RECT r;
+    if (!GetWindowRect(h, out r)) return false;
+    int hh = r.B - r.T;
+    if (hh < 200) return false;
+    y = (int)Math.Round(hh * LastRowFrac);
+    if (y < 0 || y >= hh) return false;
+    return true;
+  }
+  public static string Probe(IntPtr h) {    InitDpi();
+    RECT r;
+    if (!GetWindowRect(h, out r)) return "";
+    int w = r.R - r.L;
+    int hh = r.B - r.T;
+    if (w < 200 || hh < 200 || w > 8000 || hh > 5000) return "";
+    string res = "";
+    Bitmap bmp;
+    try { bmp = new Bitmap(w, hh); } catch { return ""; }
+    try {
+      using (bmp) {
+        bool shot = false;
+        using (Graphics g = Graphics.FromImage(bmp)) {
+          IntPtr hdc = g.GetHdc();
+          try { shot = PrintWindow(h, hdc, 2); } finally { g.ReleaseHdc(hdc); }
+        }
+        if (!shot) return "";
+        int best = -1, bs = -1, bp = -1, be = -1, by = -1;
+        int ch = 0, cs = -1, cp = -1, ce = -1, cys = -1;
+        // 只在窗口下部 1/4 找：进度条贴着底部控制条，往上就是歌词/封面区，
+        // 那里有成片的渐变和文字边缘，放进来只会制造假目标。
+        int yTop = hh * 3 / 4;
+        // 从下往上扫；进度条高度 2~12 行（含抗锯齿），超出的连续段一定是别的东西。
+        // 注意：超过 12 行时**不能**把 ch 归零再继续——底部控制条的图标/按钮有几十行
+        // 都满足 Row，归零会在这一大段中间重新起一个 2~12 行的假段，于是抓到控制条上的
+        // 某个 mid 行（实测回报 y=903、pct=0.0643，而真进度条在 y=836）。改成「毒化」：
+        // 一旦超长就置 -1，直到这一大段结束（出现 Row 不通过的行）才允许重新起段。
+        // 相邻行的连续性只比**分界位置** p 和右端 e，不比 barStart s：s 是「已播段左端
+        // 与背景回到同色」的位置，本身带抗锯齿噪声（实测真条四行 s=58/64/58/63、
+        // 换帧后 166/184/168/186，抖动可达 18），拿它判连续会把真条切碎成单行段，
+        // 于是 Probe 明明看到四行却因为「段高 < 2」返回空串（实测就是这样丢读数的）。
+        // 打分口径：**先看这一段有多高**，高度相同才比逐行分数。
+        // 实测（棕主题「回憶苦涩的吻痕」）：真进度条 y=833..842 共 10 行、行分 2758；
+        // 假目标分别是 y=869..874（6 行、1724）、y=877（1 行、2901）、y=904/909/910
+        // （各 1~2 行、2790~2868）。按行分取最大会选中那些**单行**的高分假目标，
+        // 读出来的 pct 恒定不动（0.0416），界面上的进度条就卡住。
+        // 按段高优先则稳定选中真条：真条是连续多行同一条带，图标/文字只有一两行。
+        int bestH = 0;
+        for (int y = hh - 1; y >= yTop; y--) {
+          int s, p, e;
+          int sc = ScoreRow(bmp, y, hh, out s, out p, out e);
+          if (sc > 0) {
+            if (ch == 0) { cys = y; cs = s; cp = p; ce = e; ch = 1; }
+            else if (ch < 0) { /* 已在超长段内，继续吞掉 */ }
+            else if (Math.Abs(e - ce) <= 4 && Math.Abs(p - cp) <= 6) { ch++; }
+            else {
+              if (ch >= 2 && ch <= 12) {
+                int mid = cys - ch / 2; int s2, p2, e2;
+                int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
+                if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+              }
+              cys = y; cs = s; cp = p; ce = e; ch = 1;
+            }
+            if (ch > 12) ch = -1;
+          } else {
+            if (ch >= 2 && ch <= 12) {
+              int mid = cys - ch / 2; int s2, p2, e2;
+              int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
+              if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+            }
+            ch = 0; cs = -1; cp = -1; ce = -1;
+          }
+        }
+        if (ch >= 2 && ch <= 12) {
+          int mid = cys - ch / 2; int s2, p2, e2;
+          int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
+          if (ch > bestH || (ch == bestH && sc2 > best)) { bestH = ch; best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
+        }
+        if (best < 0 || by < 0) return "";
+        // 记下这次成功的位置（按窗口高度比例），供下次被字幕背景盖住时兜底点击
+        try { if (hh > 0) LastRowFrac = (double)by / (double)hh; } catch { }
+        // 全宽锚定：网易云进度条从窗口最左铺到最右（实测四主题都是），所以比例直接用
+        // playedEnd/w，点击也用整窗宽映射。用 (bp-bs+1)/(be-bs+1) 会让 bs 的抖动
+        // （已播段左端与背景色差不定，实测扫出过 0/86/122 三种）直接变成几个百分点的偏差。
+        double pct = (double)(bp + 1) / (double)w;
+        if (pct < 0) pct = 0;
+        if (pct > 1) pct = 1;
+        res = Math.Round(pct, 4).ToString(CultureInfo.InvariantCulture) + "|" + by + "|" + w + "|" + hh
+          + "|" + 0 + "|" + (w - 1);
+      }
+    } catch { return ""; }
+    return res;
+  }
+  // 点进度条 pct 处，返回 "x,y"；读不到进度条返回空串
+  public static string ClickPct(IntPtr h, double pct) {
+    // 最小化时 GetWindowRect 只回一个 159x27 的图标位，Probe 必然失败。
+    // 点击本来就需要窗口可见（鼠标事件落在屏幕坐标上），所以这里先还原。
+    // 只在这一条路径上还原：poll 每秒都调 Probe，若也在那里还原，用户把网易云收起来
+    // 听歌时窗口会被每秒弹出来一次，比不显示进度更烦人。
+    try { if (IsIconic(h)) { ShowWindow(h, 9); System.Threading.Thread.Sleep(320); } } catch { }
+    string info = Probe(h);
+    int y;
+    if (info.Length == 0) {
+      // 读不出进度条时不要直接放弃：用户 m02806「把网易云的字幕背景拉下去之后，
+      // 岛的进度条就点不了」。字幕背景是一整块盖在窗口上的图层，盖住进度条那几行时
+      // 像素判据全灭，但**进度条本身还在那个位置**，窗口没动、条也没挪。
+      // 所以退回上一次成功读到的行位置（按窗口高度比例存），点击照样打得中。
+      if (!FallbackRow(h, out y)) return "";
+    } else {
+      string[] parts = info.Split('|');
+      if (parts.Length < 4) return "";
+      if (!int.TryParse(parts[1], out y)) return "";
+    }
+    int w;
+    {
+      RECT rr;
+      if (!GetWindowRect(h, out rr)) return "";
+      w = rr.R - rr.L;
+    }
+    // 条带左右端以 Probe 回报为准（老格式没有这两个字段时退回整窗宽）
+    int bs = 0, be = w - 1;
+    if (info.Length > 0) {
+      string[] parts = info.Split('|');
+      if (parts.Length >= 6) {
+        int.TryParse(parts[4], out bs);
+        int.TryParse(parts[5], out be);
+      }
+      if (be <= bs) { bs = 0; be = w - 1; }
+    }
+    RECT r;
+    if (!GetWindowRect(h, out r)) return "";
+    // 必须先置前台：实测窗口不在前台时 SetCursorPos+mouse_event 点不动（点到遮挡物上）。
+    // 但**只能**用不发键的 BringKeyless：老的 Activate(h) 在前台锁挡住时会发一次
+    // MediaKey(0xB3)，那一下会先把网易云暂停掉，用户看到的就是「点一下先暂停、
+    // 再点一次才播」（用户 m02535 原话）。点击进度条不该改变播放状态。
+    BringKeyless(h);
+    System.Threading.Thread.Sleep(120);
+    if (!GetWindowRect(h, out r)) return "";
+    int tx = r.L + bs + (int)Math.Round((be - bs) * pct);
+    if (tx < r.L + bs + 4) tx = r.L + bs + 4;
+    if (tx > r.L + be - 2) tx = r.L + be - 2;
+    int ty = r.T + y;
+    SetCursorPos(tx, ty);
+    System.Threading.Thread.Sleep(160);
+    mouse_event(0x02, 0, 0, 0, IntPtr.Zero);
+    System.Threading.Thread.Sleep(100);
+    mouse_event(0x04, 0, 0, 0, IntPtr.Zero);
+    System.Threading.Thread.Sleep(480);
+    return tx.ToString(CultureInfo.InvariantCulture) + "," + ty.ToString(CultureInfo.InvariantCulture);
+  }
+}
+'@
+try {
+  Add-Type -AssemblyName System.Drawing
+  Add-Type -TypeDefinition $barSrc -ReferencedAssemblies System.Drawing
+} catch {
+  Emit @{ type = "error"; msg = ("进度条点击能力不可用：" + [string]$_.Exception.Message) }
+}
+
 $repeatEnumT = [Windows.Media.MediaPlaybackAutoRepeatMode, Windows.Media, ContentType=WindowsRuntime]
 
 # 封面缓存：同一首歌只在换歌时重新读一次缩略图，避免每秒 poll 都去拉 WinRT 流。
@@ -456,10 +1157,219 @@ function GetCover($props, $key) {
   return $data
 }
 
+# 「窗口进度条」读取缓存。PrintWindow 一次 94ms，poll 是 1 秒一次，
+# 每帧都抓会让桥接进程白烧 CPU，所以最多每 2 秒重抓一次，其余帧复用上次结果。
+# 只在「播放器根本不报时长」（duration<=0，网易云就是这种）时才去抓——能报时长的
+# 播放器（汽水音乐等）走 SMTC 就够准了，没必要多此一举。
+$script:barPct = -1.0
+$script:barAt = [DateTimeOffset]::MinValue
+$script:barTitle = ""
+# PrintWindow 不是百分百可靠：窗口被别的窗口盖住、正在重绘的那一瞬都可能抓到空图。
+# 抓到空图时如果如实返回 -1，界面上的进度条和「能不能拖」会每秒来回抖一次
+# （实测 poll 序列 0.2447 / -1 / 0.2447 / -1 / -1 / 0.2447）。所以记住上一次成功值，
+# 失败时在 10 秒内继续沿用它——进度条比例本来就是慢变量，10 秒内沿用不会看错。
+$script:barGood = -1.0
+$script:barGoodAt = [DateTimeOffset]::MinValue
+# 上一次成功值属于哪首歌。用户 m02806「我每次一点下一首，岛的播放器的进度条不会从零开始，
+# 直接从 30s 左右的位置直接开始」：原来只按时间沿用 10 秒、不管换没换歌，于是点下一首后
+# 新歌第一次 Probe 若失败（窗口被最小化/正重绘），就沿用了**上一首**的约 0.3，
+# 渲染层拿 0.3×总时长 一掰钟就跳到 30 秒左右。沿用必须限定在同一首歌内。
+$script:barGoodTitle = ""
+# 换歌时刻。网易云的窗口标题**立刻**变成新歌名，但画面还在上一首（实测标题改完
+# 2~4 秒才重绘完），这期间 Probe 读到的是上一首的进度（实测 0.8403），界面拿 0.84
+# 乘总时长一掰钟就直接跳到末尾（用户 m02806 第 3 条「进度条不会从零开始」）。
+# 新歌一律从 0 附近起，所以换歌后 6 秒内只接受小值，读到大的就当没读到、下一帧再试。
+$script:barSeenTitle = ""
+$script:barChangedAt = [DateTimeOffset]::MinValue
+
+function GetBarPct($title, $app) {
+  if ([string]::IsNullOrEmpty($title) -or $title.Length -lt 2) { return -1.0 }
+  $now = [DateTimeOffset]::Now
+  # 只在**运行期换歌**时记时刻；程序刚起来第一次见到歌名不算（否则冷启动头 6 秒
+  # 会把本来就正常的进度条判成无效，界面又变成一条点不动的死条）。
+  if ($title -ne $script:barSeenTitle) {
+    if (-not [string]::IsNullOrEmpty($script:barSeenTitle)) { $script:barChangedAt = $now }
+    $script:barSeenTitle = $title
+  }
+  $age = ($now - $script:barAt).TotalSeconds
+  if ($title -eq $script:barTitle -and $age -ge 0 -and $age -lt 2) { return $script:barPct }
+  $pct = -1.0
+  try {
+    # 先按窗口标题（「歌名 - 歌手」）找，找不到再按进程名兜底——
+    # 用户切到歌单页时标题会变成「网易云音乐」，按标题就找不到窗口了。
+    $h = [IslandBarClick]::FindByTitle($title)
+    if ($h -eq [IntPtr]::Zero -and -not [string]::IsNullOrEmpty($app)) {
+      $h = [IslandBarClick]::FindByExe($app)
+    }
+    if ($h -ne [IntPtr]::Zero) {
+      # 抓一次抓不到就再试，最多 3 次。PrintWindow 在窗口正重绘（进度条在走）的那一瞬
+      # 会抓到空图，实测单独跑脚本 8 次全成功、但放进每秒一次的 poll 里就一半失败。
+      for ($try = 0; $try -lt 3; $try++) {
+        $info = [IslandBarClick]::Probe($h)
+        if (-not [string]::IsNullOrEmpty($info)) {
+          $pct = [double]($info.Split('|')[0])
+          if ($pct -lt 0) { $pct = 0 }
+          if ($pct -gt 1) { $pct = 1 }
+          break
+        }
+        Start-Sleep -Milliseconds 60
+      }
+    }
+  } catch { $pct = -1.0 }
+  # 换歌后一小段时间内的读数要当心：窗口标题已经换成新歌名，画面可能还停在上一首。
+  # 但窗口长度不能大 —— 实测（.tmp\word\nextev.ps1，时间徽标 00:00→00:07 对照 Probe）
+  # 网易云换歌后约 1 秒就重画完，读到的是新歌真实的 0.25。之前写的 6 秒太长：
+  # 那 6 秒里读数全被丢掉，渲染层的钟继续按旧歌走，一恢复读数就触发
+  # 「偏差 >1.5 秒 → clockAnchor」一次性掰到 0.43×总时长 ——
+  # 这才是用户 m02806「点下一首后进度条不从零开始，直接从 30s 左右的位置开始」的真因。
+  # 现在只挡 2.5 秒，且只挡「明显偏大」的读数（新歌头 2.5 秒不可能超过 12%）。
+  if ($pct -ge 0) {
+    $sinceChange = ($now - $script:barChangedAt).TotalSeconds
+    if ($script:barChangedAt -ne [DateTimeOffset]::MinValue -and $sinceChange -ge 0 -and $sinceChange -lt 2.5 -and $pct -gt 0.12) {
+      $pct = -1.0
+    }
+  }
+  if ($pct -ge 0) {
+    $script:barGood = $pct
+    $script:barGoodAt = $now
+    $script:barGoodTitle = $title
+  } elseif (($now - $script:barGoodAt).TotalSeconds -lt 10 -and $title -eq $script:barGoodTitle) {
+    # 这一帧没抓到，但 10 秒内有过成功值：沿用它，别让界面抖。
+    # 只在**同一首歌**里沿用——换歌时沿用的是上一首的进度，界面会直接从 30 秒处开始
+    # （用户 m02806 实测就是这个现象）。
+    $pct = $script:barGood
+  }
+  # 只缓存成功值。失败若也写进缓存，2 秒内每一帧都会直接命中那条 -1，
+  # 一次抓空就会污染后面两帧（实测 poll 序列 -1 / -1 / 0.2447 就是这么来的）。
+  if ($pct -ge 0) {
+    $script:barPct = $pct
+    $script:barAt = $now
+    $script:barTitle = $title
+  }
+  return $pct
+}
+
 # 读当前播放应用的音频会话音量：-1 表示对不上号（或读取失败），界面会置灰滑块。
 # 绝不读系统主音量，也绝不因为读不到就回退到系统音量。
 function GetAppVolume($app) {
   try { return [double][IslandAppVol.AppVol]::Get([string]$app) } catch { return -1 }
+}
+
+# ── SMTC 会话为空时的降级状态 ───────────────────────────────────────────
+# 网易云 3.1.41.205564 实测根本不向 SMTC 注册：连采 8 次 COUNT=0，而同时音频会话
+# state=1、峰值在波动、窗口标题在换歌——它就是没上这条船。桥接若只在有会话时工作，
+# 这颗岛对它就是个摆设。降级路径用四样东西拼出等价状态：
+#   ActiveList() → 谁在出声（进程名,pid,state）
+#   TitleOf(exe) → 歌名（它把「歌名 - 歌手」直接写在窗口标题上）
+#   Peak(exe)    → 是否真在出声（暂停时实测归零，出声时 0.002~0.009）
+#   GetBarPct()  → 进度（PrintWindow 抓它自己的进度条）
+# 时长拿不到（播放器不报 EndTime），交给渲染层用歌词库时长补，这里只回 0。
+$script:fbExe = ""
+$script:fbPct = -1.0
+$script:fbPlaying = $false
+# 把上次认到的播放器记到脚本旁边的小文件里。
+# 为什么要落盘：程序冷启动时若网易云正好处于暂停态（音频会话已被它自己撤掉），
+# 第一帧 ActiveList 就是空的，$fbExe 也是空的，界面会闪一下「现在没有在放歌」。
+# 记住上次的进程名就能让冷启动第一帧直接认出它（实测重启后首帧 active=false 即此因）。
+$script:fbStateFile = [System.IO.Path]::Combine($PSScriptRoot, "last-player.txt")
+try {
+  if ([System.IO.File]::Exists($script:fbStateFile)) {
+    $saved = ([System.IO.File]::ReadAllText($script:fbStateFile)).Trim()
+    if (-not [string]::IsNullOrEmpty($saved)) { $script:fbExe = $saved }
+  }
+} catch { }
+
+function SaveFbExe($exe) {
+  try {
+    if ([string]::IsNullOrEmpty($exe)) { return }
+    if ($exe -eq $script:fbSavedExe) { return }
+    [System.IO.File]::WriteAllText($script:fbStateFile, $exe)
+    $script:fbSavedExe = $exe
+  } catch { }
+}
+$script:fbSavedExe = $script:fbExe
+
+function GetFallback() {
+  try { $list = [IslandAppVol.AppVol]::ActiveList() } catch { $list = "" }
+  $best = $null
+  $bestScore = -1
+  if (-not [string]::IsNullOrEmpty($list)) {
+    foreach ($item in $list.Split(';')) {
+      $f = $item.Split(',')
+      if ($f.Length -lt 3) { continue }
+      $exe = [string]$f[0]
+      # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
+      $procId = 0
+      [void][int]::TryParse([string]$f[1], [ref]$procId)
+      $st = 0
+      [void][int]::TryParse([string]$f[2], [ref]$st)
+      $t = ""
+      try { $t = [IslandBarClick]::TitleOf($exe) } catch { $t = "" }
+      # 没有主窗口的会话（系统音效、后台更新进程）不能用：抓进度条和点击都靠窗口
+      if ([string]::IsNullOrEmpty($t)) { continue }
+      # 打分：正在出声 > 标题带「 - 」（说明在放歌）> 上次认过的那个
+      $score = 0
+      if ($st -eq 1) { $score += 100 }
+      if ($t.Contains(" - ")) { $score += 50 }
+      if ($exe -eq $script:fbExe) { $score += 30 }
+      if ($score -gt $bestScore) {
+        $bestScore = $score
+        $best = @{ exe = $exe; procId = $procId; state = $st; title = $t; live = $true }
+      }
+    }
+  }
+  # 网易云一暂停就把音频会话整条撤掉（实测：暂停后 persess 里 cloudmusic 直接消失），
+  # 只靠 ActiveList 会让界面在「按暂停」的瞬间变成空态——用户看到的是「按钮没反应」。
+  # 所以会话消失后仍认上次那个播放器，只要它的窗口还在（标题还能读到）。
+  if ($null -eq $best -and $script:fbExe -ne "") {
+    $t2 = ""
+    try { $t2 = [IslandBarClick]::TitleOf($script:fbExe) } catch { $t2 = "" }
+    if (-not [string]::IsNullOrEmpty($t2)) {
+      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $t2; live = $false }
+    }
+  }
+  if ($null -eq $best) { return $null }
+  $exe = [string]$best.exe
+  $title = [string]$best.title
+  # 「歌名 - 歌手」拆开：只在第一个 " - " 处断，歌名里带横线也不会拆坏
+  $song = $title
+  $artist = ""
+  $sep = $title.IndexOf(" - ")
+  if ($sep -gt 0) {
+    $song = $title.Substring(0, $sep).Trim()
+    $artist = $title.Substring($sep + 3).Trim()
+  }
+  $pct = GetBarPct $title $exe
+  $peak = -1.0
+  try { $peak = [double][IslandAppVol.AppVol]::Peak($exe) } catch { $peak = -1.0 }
+  # 判「在播/暂停」：以**音频峰值**为准（实测这台机器上它极其干净：在播 0.002~0.005，
+  # 暂停恒为 0.00000，相差三个数量级）。
+  # 不能再用「进度在前进」当在播证据：网易云暂停时不会立刻把音频会话撤掉（state 仍为 1），
+  # 而进度条的读数在两帧之间可能刚好前进了 0.005（暂停发生在两次采样之间），
+  # 那样会把「已经暂停」误判成「在播」，界面按钮就一直显示暂停图标。
+  # 峰值取不到（<0，说明没匹配到会话）时才退回进度判据。
+  $playing = $script:fbPlaying
+  if (-not [bool]$best.live) {
+    # 会话都不在了 = 播放器自己撤了音频流 = 暂停。这时不能沿用上一帧的 true，
+    # 否则歌词会一直滚（实测过：暂停后歌词还在走，比不放歌更迷惑）。
+    $playing = $false
+  } elseif ($peak -gt 0.0008) {
+    $playing = $true
+  } elseif ($peak -ge 0 -and $peak -le 0.0002) {
+    $playing = $false
+  } elseif ($pct -ge 0 -and $script:fbPct -ge 0 -and ($pct - $script:fbPct) -gt 0.0008) {
+    $playing = $true
+  }
+  $script:fbExe = $exe
+  $script:fbPct = $pct
+  $script:fbPlaying = $playing
+  SaveFbExe $exe
+  # barOk 用「位置已知」而不是「这一帧读到了」：字幕背景盖住进度条时读不到，但条还在原处，
+  # 点击照样打得中（ClickPct 会退回上次的行位置）。若直接用 pct>=0，
+  # 用户 m02806 说的「把字幕背景拉下去后进度条就点不了」就会每帧复发。
+  $known = $false
+  try { $known = [IslandBarClick]::RowKnown() } catch { $known = $false }
+  return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct; known = $known }
 }
 
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
@@ -475,11 +1385,16 @@ while ($true) {
   # 解析失败按未知命令处理，只回一条 ack，不让坏输入把循环带崩。
   $cmd = $line
   $val = $null
+  $exe = ""
   if ($line.StartsWith("{")) {
     try {
       $j = $line | ConvertFrom-Json
       $cmd = [string]$j.cmd
       $val = $j.value
+      # 可选：显式指定要操作的进程名（如 cloudmusic.exe）。
+      # 网易云最小化后没有主窗口标题，GetFallback 会跳过它，但它的音频会话还在；
+      # 用 CDP 控制时主进程知道当前播放器就是网易云，直接按进程名调音量即可。
+      $exe = [string]$j.exe
     } catch {
       $cmd = ""
     }
@@ -502,7 +1417,35 @@ while ($true) {
   # 音量依赖当前播放应用：用正在播放（或当前选中）的会话的 SourceAppUserModelId
   # 去找它自己的音频会话。没有会话、或对不上号时只回 ack ok=false，不碰任何音量。
   if ($cmd -eq "volume") {
-    if ($idx -lt 0) { Emit @{ type = "ack"; cmd = "volume"; ok = $false }; continue }
+    # 显式指定了进程名（CDP 控制网易云时主进程会带 cloudmusic.exe）：
+    # 不依赖 SMTC 会话和窗口标题，直接找这个进程的音频会话。
+    if ($exe -ne "") {
+      try {
+        $v = [double]$val
+        if ($v -lt 0) { $v = 0 }
+        if ($v -gt 1) { $v = 1 }
+        $ok = [IslandAppVol.AppVol]::Set($exe, [float]$v)
+        Emit @{ type = "ack"; cmd = "volume"; ok = [bool]$ok }
+      } catch {
+        Emit @{ type = "ack"; cmd = "volume"; ok = $false }
+      }
+      continue
+    }
+    if ($idx -lt 0) {
+      # 无 SMTC 会话时音量仍然可调：降级路径认得那个进程，直接按进程名找它的音频会话。
+      $fb = GetFallback
+      if ($null -eq $fb) { Emit @{ type = "ack"; cmd = "volume"; ok = $false }; continue }
+      try {
+        $v = [double]$val
+        if ($v -lt 0) { $v = 0 }
+        if ($v -gt 1) { $v = 1 }
+        $ok = [IslandAppVol.AppVol]::Set([string]$fb.exe, [float]$v)
+        Emit @{ type = "ack"; cmd = "volume"; ok = [bool]$ok }
+      } catch {
+        Emit @{ type = "ack"; cmd = "volume"; ok = $false }
+      }
+      continue
+    }
     try {
       $s = @($sessions)[$idx]
       $app = [string]$s.SourceAppUserModelId
@@ -517,10 +1460,111 @@ while ($true) {
     continue
   }
 
+  # 读某个进程自己的音频会话音量（目前用于 CDP 控制网易云时的按应用音量）。
+  # 不用 SMTC 会话、也不要求窗口可见：最小化后网易云没有主窗口标题，
+  # 但 ISimpleAudioVolume 按进程仍能对上。没找到会话时 value=-1（界面据此置灰）。
+  if ($cmd -eq "appvol") {
+    if ($exe -eq "") {
+      Emit @{ type = "ack"; cmd = "appvol"; ok = $false; value = -1 }
+      continue
+    }
+    $v = GetAppVolume $exe
+    Emit @{ type = "ack"; cmd = "appvol"; ok = [bool]($v -ge 0); value = [double]$v }
+    continue
+  }
+
+  # 点播放器自己的进度条（用户 m07228 要求「做不到也要做」）。
+  # 只在播放器不实现 SMTC 定位时才该走到这里；能走 SMTC 的一律用 seek，别去点人家窗口。
+  # 找窗口靠「窗口标题包含当前歌名」，因为汽水音乐这类 SMTC 标识和进程名根本对不上。
+  if ($cmd -eq "barseek") {
+    $want = [double]$val
+    if ($want -lt 0) { $want = 0 }
+    if ($want -gt 1) { $want = 1 }
+    if ($idx -lt 0) {
+      # 没有 SMTC 会话时也允许点进度条：网易云这版只能靠窗口坐标操作。
+      # 歌名从窗口标题取（降级路径拿不到就用 FindByExe 兜底）。
+      try {
+        $fb = GetFallback
+        $tk = ""
+        $ak = ""
+        if ($null -ne $fb) { $tk = [string]$fb.title; $ak = [string]$fb.exe }
+        $h = [IntPtr]::Zero
+        if (-not [string]::IsNullOrEmpty($tk)) { $h = [IslandBarClick]::FindByTitle($tk) }
+        if ($h -eq [IntPtr]::Zero -and -not [string]::IsNullOrEmpty($ak)) { $h = [IslandBarClick]::FindByExe($ak) }
+        if ($h -ne [IntPtr]::Zero) {
+          $hit = [IslandBarClick]::ClickPct($h, $want)
+          if ([string]::IsNullOrEmpty($hit)) {
+            Emit @{ type = "ack"; cmd = "barseek"; ok = $false }
+          } else {
+            Emit @{ type = "ack"; cmd = "barseek"; ok = $true }
+          }
+        } else {
+          Emit @{ type = "ack"; cmd = "barseek"; ok = $false }
+        }
+      } catch {
+        Emit @{ type = "ack"; cmd = "barseek"; ok = $false }
+      }
+      continue
+    }
+    try {
+      $s = @($sessions)[$idx]
+      $props = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+      $hit = ""
+      # 标题可能带后缀（网易云主窗标题形如「歌名 - 歌手」），先整串找，找不到再只取歌名找
+      $t = [string]$props.Title
+      if (-not [string]::IsNullOrEmpty($t)) {
+        $h = [IslandBarClick]::FindByTitle($t)
+        if ($h -ne [IntPtr]::Zero) { $hit = [IslandBarClick]::ClickPct($h, $want) }
+      }
+      if ([string]::IsNullOrEmpty($hit)) {
+        Emit @{ type = "ack"; cmd = "barseek"; ok = $false }
+      } else {
+        Emit @{ type = "ack"; cmd = "barseek"; ok = $true }
+      }
+    } catch {
+      Emit @{ type = "ack"; cmd = "barseek"; ok = $false }
+    }
+    continue
+  }
+
   if ($cmd -eq "poll") {
     if ($idx -lt 0) {
-      # 空态也要把新字段补齐，渲染层才不会读到 undefined
-      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false; cover = "" }
+      # SMTC 会话为空 ≠ 没有播放器。网易云这版就是不注册 SMTC，先试试降级路径；
+      # 降级也拿不到（真的没在放歌）才发空态。空态也要把新字段补齐，渲染层才不会读到 undefined。
+      $fb = GetFallback
+      if ($null -ne $fb) {
+        $fbVolRaw = GetAppVolume $fb.exe
+        $fbCanVol = $false
+        $fbVol = 0
+        if ($fbVolRaw -ge 0) { $fbCanVol = $true; $fbVol = [math]::Round($fbVolRaw, 3) }
+        $fbLive = $fb.playing
+        # 暂停时进度条不动，位置就是 barPct；在播时渲染层用自算钟往前推（见 _fb 标记）
+        Emit ([ordered]@{
+          type = "state"
+          active = $true
+          title = $fb.title
+          artist = $fb.artist
+          album = ""
+          position = 0
+          duration = 0
+          playing = [bool]$fbLive
+          app = $fb.exe
+          shuffle = $false
+          repeat = 0
+          volume = $fbVol
+          canSeek = $false
+          canShuffle = $false
+          canRepeat = $false
+          canVolume = $fbCanVol
+          cover = ""
+          barPct = [math]::Round([double]$fb.pct, 4)
+          # 位置已知就允许拖（哪怕这一帧被字幕背景盖住读不出新值）
+          barOk = [bool]($fb.known -or ([double]$fb.pct -ge 0))
+          fallback = $true
+        })
+        continue
+      }
+      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false; cover = ""; barPct = -1; barOk = $false; fallback = $false }
       continue
     }
     # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
@@ -544,15 +1588,33 @@ while ($true) {
       $albumStr = [string]$props.AlbumTitle
       $coverId = $appId + "|" + $titleStr + "|" + $artistStr + "|" + $albumStr
       $cover = GetCover $props $coverId
+      # 用户 m05562「喝唱的对不齐」：TimelineProperties.Position 只是「LastUpdatedTime 那一刻」的位置，
+      # 播放器不一定每秒刷新它（实测汽水音乐/假会话都会隔几秒才更新，甚至几十秒）。
+      # 直接拿它当当前位置，歌词就会落后真实播放。这里按「播放中 + 距上次更新的真实流逝时间」
+      # 补上差值，夹在 0..EndTime 之间；暂停时不动。
+      $posSec = $tl.Position.TotalSeconds
+      $isPlaying = ($info.PlaybackStatus.ToString() -eq "Playing")
+      if ($isPlaying) {
+        $ageSec = ([DateTimeOffset]::Now - $tl.LastUpdatedTime).TotalSeconds
+        if ($ageSec -gt 0 -and $ageSec -lt 600) { $posSec = $posSec + $ageSec }
+      }
+      $endSec = $tl.EndTime.TotalSeconds
+      if ($endSec -gt 0 -and $posSec -gt $endSec) { $posSec = $endSec }
+      if ($posSec -lt 0) { $posSec = 0 }
+      # 播放器自己报不出时长（网易云：EndTime 恒 0）时，去它的窗口里找那条进度条。
+      # barOk=true 表示「能读到它的真实进度、也能点它跳」，界面才允许拖；
+      # barPct 是 0..1 的已播比例，乘以歌词库时长就是比自算墙钟更准的位置。
+      $barPct = -1.0
+      if ($endSec -le 0) { $barPct = GetBarPct $titleStr $appId }
       Emit ([ordered]@{
         type = "state"
         active = $true
         title = $titleStr
         artist = $artistStr
         album = $albumStr
-        position = [math]::Round($tl.Position.TotalSeconds, 1)
-        duration = [math]::Round($tl.EndTime.TotalSeconds, 1)
-        playing = ($info.PlaybackStatus.ToString() -eq "Playing")
+        position = [math]::Round($posSec, 1)
+        duration = [math]::Round($endSec, 1)
+        playing = $isPlaying
         app = $appId
         shuffle = $shuffle
         repeat = $repeat
@@ -562,6 +1624,8 @@ while ($true) {
         canRepeat = [bool]$ctrl.IsRepeatEnabled
         canVolume = $canVol
         cover = $cover
+        barPct = [math]::Round($barPct, 4)
+        barOk = [bool]($barPct -ge 0)
       })
     } catch {
       # 把异常文本吐出去，别再静默发空态——静默会让人误以为「本机没有播放器」
@@ -570,7 +1634,34 @@ while ($true) {
     continue
   }
 
-  if ($idx -lt 0) { Emit @{ type = "ack"; cmd = $cmd; ok = $false }; continue }
+  if ($idx -lt 0) {
+    # 无 SMTC 会话时的按键兜底：toggle/next/prev 用媒体键直接敲播放器。
+    # 媒体键是全局的，只有「降级路径认得出正在放歌的那个应用」时才按——否则会去操纵
+    # 用户根本没在用的播放器，比按钮失灵更糟。
+    if ($cmd -eq "toggle" -or $cmd -eq "next" -or $cmd -eq "prev") {
+      $fb = GetFallback
+      if ($null -ne $fb) {
+        $vk = 0xB3
+        if ($cmd -eq "next") { $vk = 0xB0 }
+        if ($cmd -eq "prev") { $vk = 0xB1 }
+        $ok = $false
+        try {
+          # 绝不能在这里 Activate 播放器窗口。
+          # 2026-11-17 用户 m02409「一点一下按键，岛就会缩起来」的真因：原来的实现先调
+          # Activate（ShowWindow + SetForegroundWindow）把网易云顶到前台，岛窗口随即失焦，
+          # 主进程 blur → 渲染层 setExpanded(false)，看起来就是「按一下按钮岛自己收起」。
+          # 实测 keybd_event 发的是全局媒体键，根本不需要对方在前台（key3.ps1 不置前台
+          # 连发三次 0xB3，峰值 0 → 0.10073 → 0 → 0.07328，播放/暂停每次都生效）。
+          [IslandBarClick]::MediaKey($vk)
+          $ok = $true
+        } catch { $ok = $false }
+        Emit @{ type = "ack"; cmd = $cmd; ok = $ok }
+        continue
+      }
+    }
+    Emit @{ type = "ack"; cmd = $cmd; ok = $false }
+    continue
+  }
 
   # 未知命令先挡掉，否则 switch 的 default 里 continue 之后还会落到下面那条 Emit，吐两条 ack
   if ($cmd -ne "toggle" -and $cmd -ne "next" -and $cmd -ne "prev" -and

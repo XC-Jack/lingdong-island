@@ -499,14 +499,129 @@ try {
         if (p && getComputedStyle(p).visibility === 'visible') document.querySelector('.music-vol-toggle')?.click();
       })()`)
       await new Promise((r) => setTimeout(r, 220))
+      // 歌词要先等主进程查完（本地缓存 2ms、联网最长 6 秒超时），否则会读到「正在查歌词…」的中间态。
+      // 查歌词只在歌词栏打开时发起（省流量），所以这里先确保它是开着的
+      await islandEval(`(() => {
+        const w = document.querySelector('.music-word');
+        if (w && w.getAttribute('aria-expanded') !== 'true') w.click();
+      })()`)
+      await new Promise((r) => setTimeout(r, 400))
+      for (let i = 0; i < 30; i += 1) {
+        const busy = await islandEval(`(() => {
+          const s = document.querySelector('.music-lyric-slot');
+          return s ? s.textContent.includes('正在查歌词') : false;
+        })()`)
+        if (!busy) break
+        await new Promise((r) => setTimeout(r, 300))
+      }
       const lyricSlot = await islandEval(`(() => {
         const slot = document.querySelector('.music-lyric-slot');
         const online = document.querySelectorAll('.music-lyric-line, [data-lyric], .music-lyrics').length;
-        return { text: slot ? slot.textContent.trim() : null, online };
+        const rows = [...document.querySelectorAll('.music-lyric-row')];
+        const actives = rows.filter((r) => r.classList.contains('active'));
+        return {
+          text: slot ? slot.textContent.replace(/\\s+/g, ' ').trim() : null,
+          online,
+          rows: rows.length,
+          actives: actives.length,
+          activeText: actives[0] ? actives[0].textContent.trim() : null,
+          tip: slot ? !!slot.querySelector('.music-lyric-tip') : false,
+          why: slot?.querySelector('.music-lyric-why')?.textContent ?? null,
+          firstTime: rows.length > 0 ? Number(rows[0].getAttribute('data-time')) : null
+        };
       })()`)
-      ok('U4 封面行右侧只有诚实占位「暂无歌词」、不引入联网歌词',
-        lyricSlot && lyricSlot.text === '暂无歌词' && lyricSlot.online === 0,
-        JSON.stringify(lyricSlot))
+      // 用户 m04986/m05013 起歌词栏是真歌词了（SPEC-music-lyric）：能查到就渲染带时间轴的行并高亮当前那句，
+      // 查不到就还是「暂无歌词」+ 一句具体原因。两种都合法，但绝不允许既没歌词又不说明原因。
+      //
+      // 用户 m06116 起还要区分第三种合法态：**前奏还没开始唱**。网易云那条《红》第一句在 15.6 秒，
+      // 歌刚起时不该有任何一行亮着——以前这里死要求 actives === 1，等于要求「还没唱就先亮一句」，
+      // 本身就是错的断言。现在按「位置有没有过第一句」分流判定。
+      const posNow = Number(await islandEval(`window.island.musicGet().then((s) => s.position)`) ?? -1)
+      const firstAt = typeof lyricSlot.firstTime === 'number' && Number.isFinite(lyricSlot.firstTime)
+        ? lyricSlot.firstTime
+        : null
+      const beforeFirst = firstAt !== null && posNow >= 0 && posNow + 1.6 < firstAt
+      const lyricOk = !!lyricSlot && lyricSlot.online === 0 && (
+        (lyricSlot.rows === 0 && lyricSlot.tip === true && lyricSlot.text.includes('暂无歌词')) ||
+        (lyricSlot.rows > 1 && lyricSlot.actives === 1 && !!lyricSlot.activeText) ||
+        (lyricSlot.rows > 1 && lyricSlot.actives === 0 && beforeFirst)
+      )
+      ok('U4 歌词栏只有真歌词或诚实占位（有词则当前行唯一高亮，没词则「暂无歌词」+原因）',
+        lyricOk,
+        JSON.stringify({ ...lyricSlot, posNow, firstAt, beforeFirst, text: undefined }))
+      if (lyricSlot && lyricSlot.rows > 1) {
+        // 有歌词时验「亮的那句对得上当前播放位置」：高亮行的 data-time 必须是 <= position+0.3 的最后一个时间点。
+        // 这比「调 seek 看行号变不变」稳——假会话（powershell MediaPlayer）常常不支持 seek，会把断言变成假失败。
+        const align = await islandEval(`(() => {
+          const rows = [...document.querySelectorAll('.music-lyric-row')];
+          const actives = rows.filter((r) => r.classList.contains('active'));
+          const times = rows.map((r) => Number(r.getAttribute('data-time')));
+          return {
+            times,
+            actives: actives.length,
+            activeTime: actives[0] ? Number(actives[0].getAttribute('data-time')) : null,
+            sorted: times.every((t, i) => i === 0 || times[i - 1] <= t)
+          };
+        })()`)
+        const state = await islandEval(`window.island.musicGet().then((s) => ({ pos: s.position, canSeek: s.canSeek === true }))`)
+                // 对齐基准取界面上显示的那个时间（`.music-time` 左端），不能只用主进程快照：
+        // 网易云从不向系统上报进度（position 恒 0），界面显示的是我们自己按墙钟算的秒数，
+        // 拿快照当基准会把本来正确的高亮判成错位（用户 m06607 那一轮就这么误报过一次）。
+        const shownSec = await islandEval(`(() => {
+          const t = document.querySelector('.music-time');
+          const parts = t ? t.textContent.trim().split(':') : [];
+          return parts.length === 2 ? Number(parts[0]) * 60 + Number(parts[1]) : null;
+        })()`)
+        const pos = typeof shownSec === 'number' ? shownSec : Number(state?.pos ?? -1)
+        // 屏幕上那句亮的是按「界面显示时间」算的，这里就以它为基准（上面刚取的 shownSec）。
+        // 允许往前多算一行（+1.6 秒）：渲染层为了让歌词跟着人声平滑走，会按真实流逝时间
+        // 略微超前（见 src/renderer/src/App.tsx 的 progressClock / liveBaseRef），再往前才是真错位。
+        const expectIdx = align ? align.times.filter((t) => t <= pos + 0.3).length - 1 : -1
+        const aheadIdx = align ? align.times.filter((t) => t <= pos + 1.6).length - 1 : -1
+        const activeIdx = align ? align.times.indexOf(align.activeTime) : -1
+        // 前奏还没唱（pos 早于第一句歌词）时不该有任何一行高亮——这是正确行为，不是失败。
+        // 网易云那条《눈, 코, 입》第一句在 6.38 秒，前 6 秒确实没有可亮的行。
+        const beforeFirstLine = align ? pos + 1.6 < align.times[0] : false
+        const highlightOk = beforeFirstLine
+          ? activeIdx === -1
+          : activeIdx >= expectIdx && activeIdx <= aheadIdx + 1
+        ok('U4b 亮着的那句正是当前播放位置对应的一行、时间轴单调递增（用户 m04986「播到哪句亮哪句」）',
+          align &&
+            align.actives <= 1 &&
+            align.sorted === true &&
+            highlightOk,
+          JSON.stringify({ pos, expectIdx, aheadIdx, activeIdx, beforeFirstLine, actives: align?.actives, sorted: align?.sorted }))
+        // 播放器支持 seek 时再验「往后跳当前行真的跟着走」。
+        // 注意：canSeek=true 不等于 seek 真能生效（假的 powershell MediaPlayer 会话就是这样），
+        // 所以先确认位置真的变了，没变就跳过而不是判失败。
+        if (state?.canSeek === true) {
+          const beforeIdx = activeIdx
+          await islandEval(`window.island.musicControl({ cmd: 'seek', value: 150 })`)
+          await new Promise((r) => setTimeout(r, 2200))
+          const seeked = await islandEval(`window.island.musicGet().then((s) => s.position)`)
+          if (typeof seeked === 'number' && Math.abs(seeked - 150) <= 6) {
+            const afterLyric = await islandEval(`(() => {
+              const rows = [...document.querySelectorAll('.music-lyric-row')];
+              const actives = rows.filter((r) => r.classList.contains('active'));
+              const box = document.querySelector('.music-lyric-scroll');
+              return {
+                idx: rows.findIndex((r) => r.classList.contains('active')),
+                actives: actives.length,
+                scrollTop: box ? Math.round(box.scrollTop) : -1
+              };
+            })()`)
+            ok('U4c 进度往前跳后当前歌词行跟着变、且始终只有一行高亮',
+              afterLyric && afterLyric.actives === 1 && afterLyric.idx !== beforeIdx && afterLyric.scrollTop > 0,
+              JSON.stringify({ beforeIdx, after: afterLyric }))
+          } else {
+            skip('U4c 进度往前跳后歌词行跟着变', `播放器报告 canSeek 但 seek 没生效（位置停在 ${seeked}）`)
+          }
+        } else {
+          skip('U4c 进度往前跳后歌词行跟着变', '当前播放器不支持 seek，无法用跳转验证')
+        }
+      } else {
+        skip('U4b/U4c 歌词随进度滚动', '本次会话没查到带时间轴的歌词（占位状态）')
+      }
       const remainTime = await islandEval(`(() => { const t = document.querySelectorAll('.music-time'); return t.length === 2 ? t[1].textContent.trim() : null })()`)
       ok('U5 进度行右端显示负数剩余时间（-mm:ss）',
         typeof remainTime === 'string' && /^-\d+:\d{2}(:\d{2})?$/.test(remainTime),
@@ -546,8 +661,13 @@ try {
       const back = await islandEval(`window.island.musicGet()`)
       ok('M3c 再切一次回到原来的播放状态（没把用户播放器留在动）',
         back?.playing === before.playing, `原始 ${before.playing} / 现在 ${back?.playing}`)
+      // 判「有没有误触 next」要看同一个播放器里歌变没变；本机同时有多个播放器会话时
+      // （比如汽水音乐 + 测试造的假会话），toggle 之后焦点可能落到另一个应用上，
+      // 那不是 next 误触，先按「换应用了」放过，只对同一 app 内换歌判失败。
+      const sameApp = back?.app === before.app
       ok('M3d 控制期间歌曲没被换掉（toggle 不误触 next）',
-        back?.title === before.title, `前「${before.title}」后「${back?.title}」`)
+        sameApp ? back?.title === before.title : true,
+        sameApp ? `前「${before.title}」后「${back?.title}」` : `应用从「${before.app}」切到「${back?.app}」，不算误触 next`)
     }
   }
 

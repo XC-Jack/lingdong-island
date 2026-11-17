@@ -2374,6 +2374,29 @@ div.pm-row[draggable='true'] {
 
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
+/* 网易云后台精确控制的开启入口：只在「当前是网易云、但调试端口没开」时出现 */
+.music-cdp-tip {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffd479;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.music-cdp-tip:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.music-cdp-tip.busy {
+  color: rgba(255, 255, 255, 0.7);
+  cursor: default;
+}
+
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
 /* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」，
     m03435「左边的歌名有点宽，可以压缩一点，尽量和右边对称」）：
@@ -2394,6 +2417,12 @@ div.pm-row[draggable='true'] {
 }
 .music-panel.lyric-open .music-main {
   justify-content: flex-start;
+  /* 用户 m05419「这个范围都可以显示歌词，而且是像音乐软件那样，一条一条出来」：
+     右栏歌词区要一整块，不能再是 84px 小窗口。但 .music-main 高度是 auto，
+     右栏 flex:1 会被内容撑到 786px、把岛顶到 max-height 再裁掉，
+     所以这里给主区一个确定高度（132 布局 px ＝ 视觉 99），左栏内容在里面居中、
+     右栏滚动区吃满这块高度 */
+  height: 168px;
 }
 /* 左栏：上「封面+曲名/歌手」，下「进度条+时间」，两行都跟左栏同宽。
    用户 m04117「可以把封面等ui分开一点布局，这样子可以填满这个界面，这样两边的黑边就不会很多余」：
@@ -2500,8 +2529,11 @@ div.pm-row[draggable='true'] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 参考图（用户 m03174）：右栏歌词位。歌词功能已在 m02341 实测否决取消，
-   这里只摆一个诚实占位，不编造、不拉取任何歌词文本。
+/* 参考图（用户 m03174）：右栏歌词位。
+   2026-11-16 用户 m04986「我们现在来开发歌词吧」+ m05013「可以按你的来」：这里从
+   「暂无歌词」占位升级为真歌词——主进程去 lrclib.net 查带时间轴的歌词（本地有缓存就先读文件），
+   当前那句跟着播放位置高亮并停在正中。查不到时仍只显示「暂无歌词」+ 一句具体原因，
+   不编造任何歌词文本。
    2026-11-16 用户 m03435「尽量和右边对称」：从左栏剩下的弹性宽度改成与左栏同定宽 212，
    两栏等比，分隔线正好在正中间 */
 .music-lyric-slot {
@@ -2509,12 +2541,109 @@ div.pm-row[draggable='true'] {
   flex: 0 0 260px;
   min-width: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.38);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 歌词滚动区：占满右栏剩下的一整块（不再只露 4 行）。
+   用户 m05419「以我截图的区域为参考，这个范围都可以显示歌词，而且是像音乐软件那样，
+   一条一条出来，不是 txt 这样揉成一团」——原来 max-height 写死 84px、行距 2px、字号 12px，
+   一行行挤在一个小窗口里像 txt。现在改成吃满高度 + 行距拉开（见 .music-lyric-row） */
+.music-lyric-scroll {
+  flex: 1 1 auto;
+  min-height: 168px;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 2px;
+  /* 用户 m05562「歌词播放没有中心感，在上面播放，完全看不到」：
+     歌刚开头那几句，滚动到底了也顶不到「行居中」的位置，当前行只能贴在框顶、还会被
+     上面的渐隐吃掉一半。上下各留半屏空白（由 App.tsx 按实测行高与框高写进 --lyric-pad），
+     第一句和最后一句也能滚到正中，永远有「中心感」 */
+  padding-top: var(--lyric-pad, 0px);
+  padding-bottom: var(--lyric-pad, 0px);
+  /* 上下渐隐，暗示还能往下滚，不显得像被裁断 */
+  mask-image: linear-gradient(180deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+.music-lyric-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* 一句歌词。平时灰、当前那句变白变粗并稍微放大一点点，不抢戏但能看清。
+   用户 m05419：要「一条一条出来」⇒ 字号 12→14、行高 1.45→1.5、行间 gap 2→6，
+   一行连间距占 27 布局 px（视觉 20），132 高的歌词区排得下 5 行，读起来是歌词不是 txt */
+.music-lyric-row {
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1.5;
+  color: rgba(242, 243, 245, 0.32);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 180ms ease, transform 180ms ease;
+  transform-origin: left center;
+}
+.music-lyric-row.active {
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 15px;
+  transform: scale(1.02);
+}
+
+/* 能跳的时候（canSeekNow）整行可点：鼠标移上去必须是手型并给一点悬停反馈，
+   否则用户会以为歌词只是一块死文本（用户反馈「鼠标放在歌词 ui 上样式没变」）。
+   跳不动的播放器不加 .seekable——不给手型，也就不暗示能点。 */
+.music-lyric-row.seekable {
+  cursor: pointer;
+}
+.music-lyric-row.seekable:hover:not(.active) {
+  color: rgba(242, 243, 245, 0.72);
+}
+
+/* 用户 m06418「歌词依旧没反应」：前奏还没到第一句时，把第一句先提亮一档，
+   让用户看到「下一句马上要来」，而不是满屏灰字以为坏了。 */
+.music-lyric-row.next {
+  color: rgba(242, 243, 245, 0.66);
+  font-weight: 600;
+}
+
+/* 前奏倒计时那行：比普通提示更小更淡，不抢歌词的注意力 */
+.music-lyric-prelude {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.3);
+  letter-spacing: 0.2px;
+}
+
+/* 占位与说明：加载中 / 暂无歌词 / 没查到的原因 */
+.music-lyric-tip {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.38);
+  white-space: nowrap;
+}
+.music-lyric-why {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(242, 243, 245, 0.26);
+  white-space: normal;
+}
+@media (prefers-reduced-motion: reduce) {
+  .music-lyric-row,
+  .music-lyric-scroll {
+    transition: none;
+    scroll-behavior: auto;
+  }
 }
 
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
@@ -2540,7 +2669,11 @@ div.pm-row[draggable='true'] {
   transform-origin: left center;
   transform: scaleX(0);
   background: linear-gradient(90deg, #ff8fa3, #ff6b8a);
-  transition: transform 960ms linear;
+  /* 时钟每 250ms 走一格（MusicPanel 里的 setClockTick），过渡只要盖住「两格之间」即可。
+     原来写 960ms：正常前进时看不出来，但一旦位置被大幅度改写（用窗口进度条校准、
+     点完进度条跳转），文字是立刻变的、条子却用接近 1 秒慢慢滑过去，
+     用户 m01457 截图里「条已划到 58%、文字才 2:04/-2:26」就是这个滞后。 */
+  transition: transform 250ms linear;
   will-change: transform;
 }
 /* 拖动进度条时关掉位移动画：条子必须实时跟手，否则 960ms 的缓动会让人觉得「拖不动/回缩」 */
@@ -2629,8 +2762,9 @@ div.pm-row[draggable='true'] {
   color: #f2f3f5;
   background: rgba(255, 255, 255, 0.13);
 }
+/* busy 只是 300ms 的防连点锁，不是「不可用」。以前这里写 opacity:0.45，
+   用户点播放/上一首/下一首时会看到按钮自己淡一下（「隐形一下」）；保持原样，只用光标说明。 */
 .music-btn:disabled {
-  opacity: 0.45;
   cursor: default;
 }
 .music-btn-main {
@@ -2817,7 +2951,8 @@ div.pm-row[draggable='true'] {
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  cursor: default;
+  /* 它是真按钮（点一下开合歌词栏），以前误写成 default，悬停没有任何反馈 */
+  cursor: pointer;
 }
 .music-word:hover {
   background: rgba(255, 255, 255, 0.14);

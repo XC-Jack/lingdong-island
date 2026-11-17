@@ -3,6 +3,15 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SMTC_SCRIPT } from './smtcScript'
+import {
+  clickNetease,
+  enableNeteaseDebugPort,
+  fetchNeteaseCover,
+  isNeteaseRunning,
+  readNeteaseState,
+  seekNetease,
+  type NeteaseCdpState
+} from './neteaseCdp'
 import type { MusicCommand, MusicState } from '../shared/types'
 
 /**
@@ -43,13 +52,31 @@ const EMPTY_STATE: MusicState = {
   canShuffle: false,
   canRepeat: false,
   canVolume: false,
-  cover: ''
+  cover: '',
+  barPct: -1,
+  barOk: false,
+  neteaseCdp: false,
+  neteaseCdpBusy: false,
+  neteaseRunning: false
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
-/** 当前状态缓存：IPC 的 music:get 直接返回它，不等子进程 */
+/** 当前对外状态（桥接 + CDP 合并后的结果）；music:get 直接返回它 */
 let cache: MusicState = { ...EMPTY_STATE }
+/** 桥接子进程最近一次报的原始状态 */
+let bridgeState: MusicState = { ...EMPTY_STATE }
+/** 网易云 CDP 最近一次读到的状态；null = 没连上（端口没开 / 进程没起） */
+let cdpState: NeteaseCdpState | null = null
+/** CDP 拿到的封面（data URL）及其对应的歌，免每秒重复下载 */
+let cdpCover = ''
+let cdpCoverKey = ''
+let cdpTimer: ReturnType<typeof setInterval> | null = null
+let cdpPolling = false
+let cdpBusy = false
+let neteaseRunning = false
+/** 网易云进程自己的音频会话音量（0..1）；null=没读到（界面置灰） */
+let neteaseVol: number | null = null
 /** 最近一次收到任何回包的时间（毫秒），用于判断子进程是不是挂了 */
 let lastAliveAt = 0
 /** 子进程正在启动（避免重复 spawn） */
@@ -97,6 +124,14 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.canRepeat === b.canRepeat &&
     a.canVolume === b.canVolume &&
     a.cover === b.cover &&
+    a.neteaseCdp === b.neteaseCdp &&
+    a.neteaseCdpBusy === b.neteaseCdpBusy &&
+    a.neteaseRunning === b.neteaseRunning &&
+    // 只比 barOk（以及两档精度下的 barPct），不比逐位 barPct：正常播放器 barPct 恒 -1，
+    // 比对是空操作；只有降级路径（播放器不报时间轴、position 恒 0）才靠 barPct 变化
+    // 触发广播——那种情况若也不广播，界面就永远拿不到新的进度，钟也就没法校准。
+    a.barOk === b.barOk &&
+    Math.round(a.barPct * 100) === Math.round(b.barPct * 100) &&
     // 进度按整秒比：SMTC 给的是带小数的秒，每毫秒都在变，逐位比会每秒重渲染
     Math.round(a.position) === Math.round(b.position) &&
     Math.round(a.duration) === Math.round(b.duration)
@@ -117,6 +152,16 @@ function handleLine(text: string): void {
     console.warn('[music] 桥接报错：', String(msg.msg ?? '').slice(0, 300))
     return
   }
+  // 按进程读回来的音量（CDP 控制网易云时用；最小化后没有 SMTC 会话也能读）
+  if (msg.type === 'ack' && msg.cmd === 'appvol') {
+    const v = Number(msg.value)
+    const next = Number.isFinite(v) && v >= 0 ? Math.min(1, v) : null
+    if (next !== neteaseVol) {
+      neteaseVol = next
+      recompute()
+    }
+    return
+  }
   if (msg.type !== 'state') return
   const next: MusicState = {
     active: Boolean(msg.active),
@@ -134,6 +179,15 @@ function handleLine(text: string): void {
     canShuffle: Boolean(msg.canShuffle),
     canRepeat: Boolean(msg.canRepeat),
     canVolume: Boolean(msg.canVolume),
+    // 播放器窗口里进度条的已播比例（用户 m07228）。-1 = 没读到；只在播放器压根不报
+    // 时长时桥接才会去读它，正常播放器一直是 -1。
+    // 注意别用 `Number(x) || 0`：-1 是有效值（表示没读到），NaN 才该落到 -1。
+    barPct: (() => {
+      const n = Number(msg.barPct)
+      if (!Number.isFinite(n) || n < 0) return -1
+      return Math.min(1, n)
+    })(),
+    barOk: Boolean(msg.barOk),
     // 封面：桥接只在「换歌」时回传完整 data URL（或 "" 表示这张没封面）；
     // 未换歌时回 null（JSON），沿用缓存，避免每秒往 stdout 重发几十 KB 的 base64。
     // 空态（active=false）时强制清掉封面，否则下次开播会短暂显示上一首歌的封面。
@@ -141,10 +195,63 @@ function handleLine(text: string): void {
     cover: !Boolean(msg.active)
       ? ''
       : (msg.cover === null || msg.cover === undefined
-          ? cache.cover
+          ? bridgeState.cover
           : (typeof msg.cover === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(msg.cover)
               ? msg.cover
-              : ''))
+              : '')),
+    // 桥接原始状态不带这两个字段，合并时由 recompute() 统一决定
+    neteaseCdp: false,
+    neteaseCdpBusy: false,
+    neteaseRunning: false
+  }
+  bridgeState = next
+  recompute()
+}
+
+/**
+ * 合并桥接状态与网易云 CDP 状态，得到对外的一份快照。
+ *
+ * 选用规则：CDP 在播、或桥接那边没有在播、或桥接认出的就是网易云时用 CDP
+ * （它给的位置/时长是网易云页面里真实的）。否则（比如汽水音乐在放、网易云只是暂停着）
+ * 用桥接，避免把正在听的另一个播放器盖掉。
+ */
+function recompute(): void {
+  const c = cdpState
+  const bridgeIsNetease = /cloudmusic/i.test(bridgeState.app)
+  let next: MusicState
+  // 「桥接里有别的东西 active」不能直接当真：实测 NxDock（Nexus.exe）会挂着一条
+  // state=1 的音频会话却没有在放歌，标题也不像「歌名 - 歌手」。只有它**真的在播**时才让位；
+  // 暂停的杂项应用不该把已经能精确控制的网易云盖掉。
+  if (c && (c.playing || !bridgeState.playing || bridgeIsNetease)) {
+    const sameSong = bridgeState.title === c.title && c.title !== ''
+    next = {
+      ...bridgeState,
+      active: true,
+      title: c.title || bridgeState.title,
+      artist: c.artist || bridgeState.artist,
+      album: sameSong ? bridgeState.album : '',
+      position: c.pos,
+      duration: c.dur,
+      playing: c.playing,
+      app: 'cloudmusic.exe',
+      canSeek: c.dur > 0,
+      canShuffle: false,
+      canRepeat: false,
+      // 音量仍走按应用的音频会话。网易云最小化后没有主窗口标题，桥接的降级识别会跳过它，
+      // 但它自己的音频会话还在——所以 CDP 生效时另用「按进程读音量」那条路（appvol），
+      // 桥接能直接对上时优先用桥接的值。
+      volume: bridgeIsNetease && bridgeState.canVolume ? bridgeState.volume : (neteaseVol ?? 0),
+      canVolume: (bridgeIsNetease && bridgeState.canVolume) || neteaseVol !== null,
+      cover: cdpCover || (sameSong ? bridgeState.cover : ''),
+      // 有真实时间轴了，不再需要「读窗口像素 / 点窗口坐标」那套兜底
+      barPct: -1,
+      barOk: false,
+      neteaseCdp: true,
+      neteaseCdpBusy: cdpBusy,
+      neteaseRunning: true
+    }
+  } else {
+    next = { ...bridgeState, neteaseCdp: false, neteaseCdpBusy: cdpBusy, neteaseRunning }
   }
   if (sameState(cache, next)) return
   cache = next
@@ -152,11 +259,20 @@ function handleLine(text: string): void {
 }
 
 /**
+ * 主进程内部专用的桥接命令：额外带 `exe`，按进程名直接操作音频会话。
+ * 不放进 `MusicCommand`（渲染层不该能指定任意进程名）。
+ */
+type BridgeCommand =
+  | MusicCommand
+  | { cmd: 'volume'; value: number; exe: string }
+  | { cmd: 'appvol'; exe: string }
+
+/**
  * 写一行命令到桥接子进程。
  * 纯文本命令（poll / toggle / next / prev / resync）沿用原行协议；
  * 带参数的新命令序列化成一行 JSON（见 SPEC-music-controls「混合行协议」）。
  */
-function send(cmd: string | MusicCommand): void {
+function send(cmd: string | BridgeCommand): void {
   if (!child || !child.stdin.writable) return
   try {
     const line = typeof cmd === 'string' ? cmd : JSON.stringify(cmd)
@@ -180,9 +296,141 @@ function isValidCommand(cmd: unknown): cmd is MusicCommand {
       return c.value === 0 || c.value === 1 || c.value === 2
     case 'volume':
       return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0 && c.value <= 1
+    case 'barseek':
+      // 比例，不是秒：播放器不报时长，我们手上的时长来自歌词库，换算成秒会偏。
+      return typeof c.value === 'number' && Number.isFinite(c.value) && c.value >= 0 && c.value <= 1
+    case 'netease-enable':
+      return true
     default:
       return false
   }
+}
+
+/**
+ * 拉一次网易云 CDP 状态。没开调试端口时 cdpState=null，对外自动回落桥接。
+ * 每秒一次，和桥接轮询并行；CDP 单次往返通常不到 20ms。
+ */
+async function pollCdp(): Promise<void> {
+  if (cdpPolling) return
+  cdpPolling = true
+  try {
+    neteaseRunning = await isNeteaseRunning()
+    const s = await readNeteaseState()
+    cdpState = s
+    // 最小化后网易云没有 SMTC 会话 / 主窗口标题，桥接的降级识别认不出它；
+    // 但它的音频会话还在，所以按进程名单独读一次音量（1 秒一次）。
+    if (neteaseRunning) send({ cmd: 'appvol', exe: 'cloudmusic.exe' })
+    if (s) {
+      neteaseRunning = true
+      const key = `${s.title}|${s.artist}`
+      if (key !== cdpCoverKey) {
+        cdpCoverKey = key
+        cdpCover = ''
+        if (s.coverUrl) {
+          void fetchNeteaseCover(s.coverUrl).then((data) => {
+            if (cdpCoverKey === key && data) {
+              cdpCover = data
+              recompute()
+            }
+          })
+        }
+      }
+    }
+    recompute()
+  } finally {
+    cdpPolling = false
+  }
+}
+
+function startCdp(): void {
+  if (cdpTimer !== null) return
+  cdpTimer = setInterval(() => {
+    void pollCdp()
+  }, POLL_MS)
+  void pollCdp()
+}
+
+/**
+ * 重启网易云并开启调试端口，然后等播放栏加载出来。
+ * 重启前正在播就恢复播放（网易云重启后会停在同一首歌的暂停态）。
+ */
+async function enableCdp(): Promise<void> {
+  if (cdpBusy) return
+  const wasPlaying = cdpState ? cdpState.playing : cache.playing
+  cdpBusy = true
+  recompute()
+  let ok = false
+  try {
+    ok = await enableNeteaseDebugPort()
+    if (ok) {
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise((r) => setTimeout(r, 500))
+        const s = await readNeteaseState()
+        if (s) {
+          cdpState = s
+          break
+        }
+      }
+      if (wasPlaying && cdpState && !cdpState.playing) await clickNetease('play')
+    }
+  } catch (err) {
+    console.warn('[music] 开启网易云精确控制失败：', err)
+  } finally {
+    cdpBusy = false
+    await pollCdp()
+  }
+  if (!ok) console.warn('[music] 网易云调试端口未就绪（可能没在运行）')
+}
+
+/** 执行一条控制命令；CDP 可用时直接操作网易云页面，否则走原来的桥接通道 */
+async function applyControl(cmd: MusicCommand): Promise<boolean> {
+  startBridge()
+  startCdp()
+  const useCdp = cache.neteaseCdp && cdpState !== null
+  if (typeof cmd === 'string') {
+    if (useCdp) {
+      const ok = await clickNetease(cmd === 'toggle' ? 'play' : cmd)
+      if (ok) {
+        setTimeout(() => {
+          void pollCdp()
+        }, 250)
+        return true
+      }
+    }
+    send(cmd)
+    return true
+  }
+  if (cmd.cmd === 'netease-enable') {
+    void enableCdp()
+    return true
+  }
+  if (cmd.cmd === 'volume' && useCdp) {
+    // 直接按进程名找网易云的音频会话：不依赖桥接有没有把它认成当前播放器，
+    // 也不要求窗口可见（最小化后它的 SMTC 会话/窗口标题都会消失）。
+    send({ cmd: 'volume', value: cmd.value, exe: 'cloudmusic.exe' })
+    setTimeout(() => send({ cmd: 'appvol', exe: 'cloudmusic.exe' }), 200)
+    return true
+  }
+  if (cmd.cmd === 'seek' && useCdp && cdpState) {
+    const ok = await seekNetease(cdpState.dur > 0 ? cmd.value / cdpState.dur : 0)
+    if (ok) {
+      setTimeout(() => {
+        void pollCdp()
+      }, 250)
+      return true
+    }
+  }
+  if (cmd.cmd === 'barseek' && useCdp) {
+    const ok = await seekNetease(cmd.value)
+    if (ok) {
+      setTimeout(() => {
+        void pollCdp()
+      }, 250)
+      return true
+    }
+  }
+  send(cmd)
+  return true
 }
 
 /** 杀掉子进程并清掉轮询（重启时也走这里） */
@@ -291,14 +539,13 @@ export function setupMusicStore(): void {
   ipcMain.handle('music:get', (): MusicState => {
     // 首次调用（用户翻到音乐页）时懒启动子进程，避免没人用音乐页也常驻 50MB
     startBridge()
+    startCdp()
     return cache
   })
 
-  ipcMain.handle('music:control', (_e, cmd: unknown): boolean => {
+  ipcMain.handle('music:control', async (_e, cmd: unknown): Promise<boolean> => {
     if (!isValidCommand(cmd)) return false
-    startBridge()
-    send(cmd)
-    return true
+    return applyControl(cmd)
   })
 }
 
@@ -306,5 +553,13 @@ export function setupMusicStore(): void {
 export function stopMusicStore(): void {
   stopping = true
   killBridge()
+  if (cdpTimer !== null) {
+    clearInterval(cdpTimer)
+    cdpTimer = null
+  }
+  cdpState = null
+  cdpBusy = false
+  neteaseVol = null
+  bridgeState = { ...EMPTY_STATE }
   cache = { ...EMPTY_STATE }
 }

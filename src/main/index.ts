@@ -10,6 +10,7 @@ import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
 import { setupPrefsStore, getPrefs, patchPrefs } from './prefsStore'
 import { setupMusicStore, stopMusicStore } from './musicStore'
+import { setupLyricStore } from './lyricStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
@@ -299,6 +300,8 @@ app.whenReady().then(() => {
   setupExportStore()
   setupPrefsStore()
   setupMusicStore()
+  // 歌词（SPEC-music-lyric）：只注册 IPC，真正联网只在渲染层来问时才发生
+  setupLyricStore()
   setupSettingsWindow()
   // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。
   // 必须在 createWindow 之前——偏好里可能已经是 window 模式，启动时就该把它开出来。

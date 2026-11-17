@@ -1,0 +1,905 @@
+# SPEC：音乐页歌词（联网查询 + 滚动高亮）
+
+状态：进行中（2026-11-16）
+分支：`music-lyric`（基线 `main@3a68dff`）
+提出人：用户（m04986「我们现在来开发歌词吧，你有什么好的想法吗，可以直接读取当前软件播放时的歌词吗」）
+授权：用户 m05013「可以按你的来」（同意联网把歌名+歌手发到 lrclib.net 查歌词）
+
+## 一、目标
+
+把音乐页右栏的「暂无歌词」占位换成**真的歌词**：按播放进度自动滚动、当前行高亮，播到哪句亮哪句。
+
+## 二、修改范围
+
+1. `src/main/lyricStore.ts`（新建）：歌词查询与缓存。
+2. `src/main/index.ts`：注册 IPC。
+3. `src/preload/index.ts`：暴露 `lyricGet`。
+4. `src/shared/types.ts`：新增 `LyricLine` / `LyricResult` 类型。
+5. `src/renderer/src/App.tsx`：歌词栏渲染 + 当前行高亮 + 自动滚动。
+6. `src/renderer/src/styles.css`：歌词行样式。
+7. `scripts/e2e-music.mjs`：改写 U4，新增歌词相关断言。
+8. 文档：`docs/facts/功能清单.md`、`docs/facts/数据规则.md`、`docs/facts/技术方案.md`、`docs/状态.md`。
+
+## 三、预期行为
+
+1. 换歌后自动去 `lrclib.net` 查歌词，命中则右栏显示带时间轴的歌词，当前行高亮并居中滚动。
+2. 播放进度推进时高亮行跟着走；暂停不动；拖动进度条后立刻跳到对应行。
+3. 查过的歌按 `歌词文件` 落地缓存，同一首歌第二次直接读本地，秒出且断网可用。
+4. 查不到 / 网络失败 ⇒ 右栏仍显示「暂无歌词」，并附一行更具体的说明（如「这首歌在歌词库里没找到」）。
+5. **绝不编造歌词**；纯音乐（instrumental）直接显示「纯音乐，没有歌词」。
+
+## 四、必要依赖
+
+无新增 npm 依赖。歌词源为公开免费接口 `https://lrclib.net/api/`（不需要 key、不需要注册）。
+联网只发生在换歌时，且只发送歌名、歌手、专辑名、时长四个字段。
+
+## 五、验收条件
+
+1. `npm run typecheck` / `npm run build` 通过。
+2. e2e 断言：歌词面板在打开「词」栏后能出现若干行；当前行唯一且随时间推进而前进；无歌词时仍显示占位文案；不出现 `.music-lyrics` 之类伪造容器。
+3. 断网时不崩、不卡（超时后回落占位）。
+4. 缓存文件确实落盘（`userData/lyrics/*.json`），第二次打开不再发请求。
+
+## 六、不做什么
+
+1. 不逆向汽水音乐 / 网易云的私有接口，不读它的加密缓存。
+2. 不做歌词翻译、不做双语对照、不做卡拉 OK 逐字。
+3. 不做手动粘贴歌词的编辑界面（本轮不做，后续如需另开 SPEC）。
+4. 不改音量、进度、控制行等既有交互。
+
+## 七、实现记录与自检
+
+### 7.1 实现（提交 `243304b`，2026-11-16 19:10）
+
+1. 新增 `src/main/lyricStore.ts`：缓存键 = 歌名/歌手/专辑/时长 的 sha1；`userData/lyrics/<key>.json` 懒建；`/api/get` 精确查 → `/api/search` 打分（歌名 60/40、歌手 25/15、时长 20/12，差 >8 秒直接淘汰）→ 都失败就给具体原因。
+2. 只认 `syncedLyrics`：没有时间轴的歌词一律当没有（滚不起来反而误导）。
+3. `src/shared/types.ts` 加 `LyricLine` / `LyricResult` / `LyricQuery`；`src/preload/index.ts` 暴露 `lyricGet()`；`src/main/index.ts` 在 `setupMusicStore()` 后调 `setupLyricStore()`。
+4. 渲染层只在「歌词栏打开 + 有歌名」时查，换歌按 key 去重；当前行 = `time <= live + 0.15` 的最后一行；滚动用 `scrollTo`（不用 `scrollIntoView`，会把整岛一起滚）。
+
+### 7.2 第十五轮修正（2026-11-16 19:20，用户 m05419）
+
+用户原话：「以我截图的区域为参考，这个范围都可以显示歌词，而且是像音乐软件那样，一条一条出来，不是txt这样揉成一团」。
+
+改前实测：歌词滚动区只有 `84px`（视觉 63px）、行高 13.1、字号 12px，一屏 4 行且挤在一起。
+
+改动：
+
+1. `.music-lyric-scroll`：`max-height:84px` → `flex:1 1 auto; min-height:168px; max-height:none; gap:6px`。
+2. `.music-lyric-row`：字号 `12px → 14px`、`line-height 1.45 → 1.5`、未选中色 `0.34 → 0.32`；`.active` `12.5px → 15px`。
+3. `.music-panel.lyric-open .music-main` 加 `height:168px`（布局 px，视觉 126）——**必须给确定高度**，否则 `.music-main` 是 auto，右栏会被 39 行歌词撑到 786px，岛顶到 max-height 后整块被裁掉（实测 `ctlRow.y=853.2` 跑到岛外）。
+4. 居中算法重写：原来的 `row.offsetTop - box.clientHeight/2 + row.clientHeight/2` 用的是旧 `clientHeight`，开栏瞬间/字号变化后实测偏移 −59.4 与 +54.9 px。改成按 `getBoundingClientRect` 求「行中心 − 框中心」的差值再补，循环两遍；另加一个 `[lyricOpen]` 的 effect，在 `rAF` / `260ms` / `700ms` 各对一次。
+
+改后实测（`.tmp/lyric-measure.mjs`、`.tmp/lyric-center3.mjs`）：岛 `401.4×268.6`、`main/side/slot/scroll` 高均 126（视觉）、`rowCount 39`、`rowH 15.8`、`rowFS 14px`、`visibleRows 5`；当前行中心偏移 `NOW 1.2` / `SEEK90 1.4` / `SEEK150 -0.8` / `SEEK210 -0.8`。
+
+### 7.3 自检
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 类型 | `npm run typecheck` | EXIT=0（node + web 两个 project） |
+| 构建 | `npm run build` | EXIT=0 |
+| 歌词 e2e | `node scripts/e2e-music.mjs` | PASS 48 过 / 0 败（U4/U4b/U4c 全绿） |
+| 会话 e2e | `node scripts/e2e-music-session.mjs` | PASS 20 过 / 0 败 |
+| 页头 | `node scripts/e2e-head-order.mjs` | PASS 14 过 / 0 败 |
+| 美化 | `node scripts/e2e-beautify-04.mjs` | PASS 27 过 / 0 败 |
+
+### 7.4 未核验
+
+1. 真人观感（滚动动画是否顺滑、字号是否合适）——只有本机开发实例截图，等用户验收。
+2. 安装版：本轮之后未重新打包装机，安装版里仍是只有「暂无歌词」占位的那版。
+3. 长歌词（几百行）时的滚动性能与内存——本次样本 39 行，未做压测。
+### 7.5 第十六轮修正（2026-11-16 19:45，用户 m05562）
+
+用户原话：「歌词播放没有中心感，在上面播放，完全看不到，而且喝唱的对不齐，」
+
+三条症状分别落到两处真问题：
+
+1. **没有中心感 / 在上面播放**：歌词滚动区没有上方留白，歌开头几句根本滚不上去，`scrollTop` 顶在 0，
+   当前行只能贴在框顶，再被上方 14px 的渐隐吃掉一半。实测 `offset` 只有 −34.3（本应 ≈0）。
+   修法：滚动区上下各垫「（框高 − 行高）/ 2」的空白，写成 CSS 变量 `--lyric-pad`，由渲染层按实测行高写进
+   `.music-lyric-scroll` 的 `padding-top/bottom`。实测改后歌首第一句 `offset` 从 −34.3 变 1.1，全程在 1~2 px 内。
+2. **唱的对不齐**：两层原因叠加 ——
+   ① 桥接层把 `TimelineProperties.Position` 直接当当前位置，但那个值只是「`LastUpdatedTime` 那一刻」的位置，
+   播放器并不每秒刷新它（实测假会话 6.6 秒才跳一次，汽水音乐暂停时 `lastUpdAge` 甚至到 159 秒）。
+   修法：`src/main/smtcScript.ts` 的 poll 块里，播放中按「`Position` + (现在 − `LastUpdatedTime`)」补上真实流逝，
+   夹在 `0..EndTime`；暂停不动。
+   ② 渲染层原来用 `setInterval(1000)` 每秒给 `live + 1`，与快照节奏无关，误差会累积。
+   修法：`liveBaseRef` 记「快照位置 + 收到它的 `performance.now()`」，每 250ms 按真实流逝时间外推，
+   每次新快照重设基准（误差不累积），外推最多超前 0.9 秒。
+3. e2e 的 U4b 跟着放宽：允许高亮行落在「快照对应行」到「快照 + 1.6 秒对应行」之间（渲染层外推是故意的）。
+
+改后实测（`.tmp/lyric-align2.mjs`，假会话「听海/张惠妹/318s」连采样 8 次）：`snap` 与高亮行时间轴同步前进
+（`258→250.16`、`260→258.88`、`267.1→265.57`、`269.1→269.17`），当前行居中偏差 1.1~2.5 px，
+`--lyric-pad` = `75px`。
+
+自检：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 48 / 0**、`e2e-music-session` PASS 20/0、
+`e2e-head-order` PASS 14/0、`e2e-beautify-04` PASS 27/0。
+
+未核验：①真人观感（是否真的「唱到哪句亮哪句」）；②真实汽水音乐播放时 `LastUpdatedTime` 的刷新粒度（假会话已验，
+真播放器未单独采样）；③安装版未重新打包。
+### 7.6 第十七轮修正（2026-11-16 20:25，用户 m05794）
+
+用户原话：「我记得我电脑上是由rea工具的，你看看能不能使用，我换了一个软件网易云，歌词进度条封面都直接卡住了，还有就是有一些哥的歌词直接就是乱码，解决一下」
+
+两个独立问题，都已定位到根因并有实测证据。
+
+1. **部分歌词乱码＝逐字时间轴没剥干净**。lrclib 有一部分歌返回的是 Enhanced LRC（word-level / A2 格式），
+   原始行长这样（`/api/search?q=美人鱼 林俊杰` 实测，id `34215590`）：
+   `"[00:00.00]<00:00.000>美<00:00.352>人<00:00.704>鱼<00:01.056> <00:01.408>-..."`。
+   `parseLrc` 原来只用 `timeRe` 剥 `[...]`，`lastEnd` 停在最后一个方括号末尾，后面整串 `<mm:ss.xxx>` 被当成歌词正文。
+   修法：`src/main/lyricStore.ts` 新增 `const wordRe = /<\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?>/g`，
+   `const text = line.slice(lastEnd).replace(wordRe, '').trim()`——**删标记保留文字**，不能丢整行（同行 `<...>` 之间夹着真字）。
+   同时新增 `const CACHE_VERSION = 2`：`readCache` 认 `raw?.version !== CACHE_VERSION` 就当没有，`writeCache` 写版本号。
+   理由：陈年乱码已经写进 `%APPDATA%\lingdong-island\lyrics\*.json`，只改解析不失效缓存等于没修。
+   独立验证（`.tmp/lyric/test-parse.mjs`，用改后同款逻辑跑样本）：5 行全部正确，`BAD=0`（无 `<`/`>` 残留）。
+
+2. **网易云进度条/歌词「卡住」＝它根本不往系统写时间轴**。用 `.tmp/lyric/ne-long.ps1`（`Windows.Media.Control` 直读）
+   每 2 秒采一次、连采 30 次：`app=cloudmusic.exe status=Playing title=[晚安] pos=0 end=0 start=0
+   lastUpd=08:00:00.000 canSeek=False thumb=True`——`lastUpd` 是 `DateTimeOffset` 默认值（1601-01-01），
+   60 秒内纹丝不动。汽水音乐同一支脚本会正常报 `pos/end`。也就是说网易云只写 歌名/歌手/封面，永远不写进度。
+   于是 `duration` 恒为 0 ⇒ `pct` 恒 0、两端显示 `0:00 / -0:00`，看着就是「卡住」。
+   修法：`src/renderer/src/App.tsx` 加 `const noTimeline = music?.active === true && music.duration <= 0`，
+   该状态下两端 `.music-time` 都显示 `--:--`、各自带 `title="这个播放器没向系统报告播放进度"`；
+   外推 effect 加早退 `if (music.duration <= 0) return`。**如实降级，不假装在走**。
+   e2e 的 U5 断言「右端是 -mm:ss」，所以只有降级态才换文案，正常播放器不受影响。
+
+试过但走不通的路（记录下来，别重试）：
+- 网易云本地端口 `127.0.0.1:20017`（唯一监听）既不是 HTTP API 也不是 CDP：`GET /` → 404 空 body、`POST /api` → 405、
+  其余 15+ 路径全部 1500~2000ms `AbortError`、`ws://` 连不上。
+- UIA：`OrpheusBrowserHost` 窗口 `Name=[Rolling in the Deep - Adele]`，但 `TreeScope.Descendants` 只有 4 个元素，
+  唯一具名的是 `Chrome_RenderWidgetHostHWND [Chrome Legacy Window]` ⇒ CEF 内容不可达。
+- 本地数据：`localdata` 是加密乱码、`Library\webdb.dat` 被进程占用，`webdata\file\playingList` 是明文 JSON
+  但只有播放列表（无实时位置），`configCenter` 里搜 `smtc/mediaKey/systemMedia/timeline` 无命中。
+- 未装 BetterNCM（安装目录无 `plugins`），启动参数无 `--remote-debugging-port`，无 `DevToolsActivePort`。
+
+改后实测（预览版 + 真实网易云，`.tmp/word/ne-verify2.mjs`）：
+`STATE={"t":"Love Song","ar":"方大同","app":"cloudmusic.exe","pos":0,"dur":0,"pl":true}`，
+`TIMES=[{"txt":"--:--","title":"这个播放器没向系统报告播放进度"},{"txt":"--:--",...}]`，`BAR=matrix(0,0,0,1,0,0)`；
+同一状态下 `musicGet()` 的封面仍是合法 JPEG（2581 字节，头 `FF D8 FF E0`），歌名/歌手正常刷新。
+歌词侧 `lyricGet({title:'美人鱼',artist:'林俊杰',album:'',duration:254})` → `{ok:true, source:'lrclib', n:63, bad:0}`。
+
+自检：`npm run typecheck` EXIT=0、`npm run build` EXIT=0；`e2e-music` **PASS 46 / 0 / 1 跳过**（U5 绿色，说明降级分支没影响正常播放器；
+U4b/U4c 因本次会话没查到带时间轴的歌词而跳过）、`e2e-music-session` PASS 20/0、`e2e-head-order` PASS 14/0、`e2e-beautify-04` PASS 27/0。
+
+未核验：①网易云若某天开始写时间轴，降级态会自动消失（未到那天，无法验证）；②真人观感（`--:--` 是否比 `0:00` 更好懂）；
+③安装版未重新打包；④REA 已确认可用（`rea-agents 6.8.0` + Ghidra 12.1.4 + JDK 21 全 ok），但需要具体目标文件路径才能开工，本轮未使用。
+---
+
+## 八、第十八轮（2026-11-16 20:45）歌词源换网易云 + 进度自己算（用户 m06116）
+
+用户原话：「> --:-- 你用这个我怎么看播放时间，我不知道你用这个干嘛；然后音乐字幕不会自己跟着音乐滚动，我都不知道你干了什么，问题一个没解决；而且我现在播的都是官方歌曲，根本不是翻唱，你去找的歌词对不上，要不然就没有，一堆问题 你说可以用rea，那就直接用；需不需要新开对话试验」
+
+四条逐条对应，全部改在 `music-lyric` 分支上：
+
+1. **歌词对不上 / 找不到 ⇒ 换歌词源**。lrclib 是国外社区库，中文歌大量只有翻唱版或干脆没有；
+   实测 `?track_name=就忘了吧&artist_name=刘大拿` → 0 条。改用**网易云自己的公开接口**：
+   - 搜索 `https://music.163.com/api/search/get/web?s=<歌名 歌手>&type=1&limit=10&offset=0`，
+     必须带 `Referer: https://music.163.com/`（缺了会被拒）。
+   - 歌词 `https://music.163.com/api/song/lyric?id=<id>&lv=1&kv=1&tv=-1` → `lrc.lyric`，标准 `[mm:ss.xxx]`。
+   - 8 个实测用例命中 6 个且全是官方原词（含 `눈, 코, 입/TAEYANG` 的**原版韩语**，lrclib 给的是罗马音）；
+     另外 2 个（`就忘了吧`、`带刺伤人的蔷薇`）是库里本身就只有 DJ 版/别首歌，属内容缺失而非匹配失败。
+   - 顺序：缓存 → 网易云 → lrclib（备用）→ 诚实占位。`CACHE_VERSION` 3→4→5（换源、加 duration、补署名前缀各一次）。
+
+2. **`--:--` 是逃避 ⇒ 进度自己算**。网易云不报时间轴（第七节实测 30 次 `pos=0 end=0`），
+   于是从歌词库拿**总时长**（`LyricResult.duration`），再自己按真实流逝时间累加：
+   `ownBaseRef = {title, at, start}` + `setInterval(250)` 外推，`shownPos = playerNoTimeline ? ownPos : live`。
+   只有在「播放器没给时间轴 **且** 歌词库也没有时长」这种双缺失下才退回 `--:--`。
+
+3. **歌词不跟着滚 ⇒ 高亮判定改用 shownPos**。原来 `lyricActive` 判 `lines[i].time <= live + 0.15`，
+   而网易云场景 `live` 恒为 0 ⇒ 永远只亮第一行。改判 `<= shownPos + 0.15` 后才会一句句往下走。
+
+4. **REA**：已确认本机可用（`rea-agents 6.8.0`、Ghidra 12.1.4、JDK 21.0.13），
+   但本轮没用到——问题根源是「取数源选错」和「进度没算」，不是二进制里有什么秘密，
+   动反编译工具属于杀鸡用牛刀。REA 留给真正需要（比如将来要扒某个播放器的私有接口）时再上。
+
+顺带修掉的署名行问题：网易云 LRC 开头是 `[00:15.638]出品：网易飓风` `[00:15.638]营销：网易飓风`
+`[00:15.638]OP：唯迹文化` 这类署名，时间戳都是 15.638（不是 0 秒）。
+旧过滤规则是「前 15 秒内 + 特定前缀」，正好卡在窗口外全部漏掉，于是歌词第一行显示「出品：网易飓风」。
+现在：**特异前缀（出品/营销/OP/编曲…）不限时间**，**单字前缀（词/曲）只限前 20 秒**，避免误删正文。
+
+### 8.1 自检与实测
+
+- `npm run typecheck` EXIT=0、`npm run build` EXIT=0。
+- `node scripts\e2e-music.mjs` **PASS 44 过 / 0 败 / 2 跳过**（U4c 因当前播放器不支持 seek 跳过、M4a–M4c 因总时长未知跳过）。
+- `node scripts\e2e-music-session.mjs` PASS 20/0、`node scripts\e2e-head-order.mjs` PASS 14/0、`node scripts\e2e-beautify-04.mjs` PASS 27/0。
+- 歌词逐曲实测（预览版 9321，`window.island.lyricGet` 直调）：
+  `红/罗言` → `{ok:true, src:'netease', n:32, dur:161.6, first:'爱上了一个人眼睛不说谎'}`；
+  `눈, 코, 입/TAEYANG` → `{n:62, dur:230, first:'미안해 미안해 하지마'}`；
+  `Love Song/方大同` → `{n:67, dur:269.3, first:'我写了这首歌'}`；
+  `美人鱼/林俊杰` → `{n:54, dur:254, first:'美人鱼'}`；
+  `Rolling in the Deep/Adele` → `{n:53, dur:228.1, first:"There's a fire starting in my heart"}`；
+  `晚安/颜人中` → `{n:43, dur:289.2, first:'窗挡住月色 贪恋的交集'}`。
+
+### 8.2 e2e 断言修正（本轮暴露的两处错断言）
+
+1. **U4 死要求 `actives === 1`**：前奏还没开始唱时不该有任何一行亮着。改为三分支判定——
+   没词（占位+原因）/ 有词且唯一高亮 / 有词但位置还没到第一句（`actives === 0` 合法）。
+2. **U4b 死要求 `expectIdx >= 0`**：同理，`pos` 早于第一句时 `expectIdx` 天然是 -1。
+   新增 `beforeFirstLine = pos + 1.6 < times[0]`，该分支下要求 `activeIdx === -1`。
+
+这两条以前能过，是因为碰巧用的歌第一句都在 0~2 秒；换成网易云的正常歌（第一句 15.6 秒）就暴露了。
+
+### 8.3 未核验
+
+1. 网易云对超新歌/纯音乐仍可能 0 条，此时会走 lrclib 再占位，覆盖率没有统计口径。
+2. 自己算的进度是「从 0 开始按墙钟累加」，用户中途拖播放器进度条时无法感知（网易云不报位置）；只能靠换歌重置。
+3. 安装版未重新打包（仍在跑 `3a68dff` 那版，不含歌词功能）。
+## 九、第十九轮修正（2026-11-16 21:05，用户 m06418「歌词依旧没反应」）
+
+### 9.1 先说结论：不是没反应，是前奏期本来就一句都不该亮
+
+用户截图停在《戒烟》第 14 秒，右栏一片灰、没一行亮。连采 12 次（每 1.5 秒一次）实测：
+`times` 从 `0:01` 正常累加、`rows:51`，但 `act:0` 全程为 0，`firstT:"20.97"`。
+等过 21 秒再采 6 次：`act:1`，`actTxt` 依次 `你给过我的伤害` → `是没有一句责怪` → `戒了烟 染上悲伤`
+⇒ **高亮与滚动其实是正常工作的**，只是这首歌第一句在 20.97 秒。
+
+网易云原始 LRC（id `518686034`，`dur=293875`，62 行）首四行是
+`[00:00.00] 作词 : 李荣浩` / `[00:01.00] 作曲` / `[00:02.00] 编曲` / `[00:03.00] 制作人`，
+第五行才是 `[00:20.97]已经为了变的更好去掉锋芒` —— 署名已正确过滤，**前 21 秒本来没有词可唱**。
+
+### 9.2 改动（两条，都只解决「看着像坏了」）
+
+1. 前奏期把第一句提亮一档：新样式 `.music-lyric-row.next`（`color: rgba(242,243,245,.66)`、`font-weight:600`），`className` 里加 `${preludeLeft > 0 && i === 0 ? ' next' : ''}`。
+2. 歌词栏底部加一行倒计时：`<span className="music-lyric-tip music-lyric-prelude">前奏中 · 还有 {Math.ceil(preludeLeft)} 秒开唱</span>`，只在 `preludeLeft > 0` 时渲染。`preludeLeft = lyricLines.length > 0 && lyricActive === -1 ? Math.max(0, lyricLines[0].time - shownPos) : 0`。
+
+`preludeLeft` 必须定义在 `lyricActive` **之后**（它依赖 `lyricActive === -1`）——第一次插在前面触发 `TS2448: Block-scoped variable 'lyricActive' used before its declaration`，已调到后面。
+
+### 9.3 实测（预览版 + 真实网易云《海屿你》/马也_Crabbit，第一句 13.47 秒）
+
+| 采样 | rows | act | next | prelude | 进度两端 |
+|---|---|---|---|---|---|
+| P0 | 74 | 0 | 1（`从不主动示弱`，`rgba(242,243,245,0.66)`） | 前奏中 · 还有 10 秒开唱 | 0:03 / -4:52 |
+| P1 | 74 | 0 | 1 | 前奏中 · 还有 8 秒开唱 | 0:06 / -4:49 |
+| P2 | 74 | 0 | 1 | 前奏中 · 还有 5 秒开唱 | 0:08 / -4:47 |
+| P3 | 74 | 0 | 1 | 前奏中 · 还有 3 秒开唱 | 0:11 / -4:44 |
+| P4 | 74 | **1**（`从不主动示弱`） | 0 | null | 0:13 / -4:42 |
+
+⇒ 倒计时逐秒递减、到点自动切成正常高亮、`next` 标记同步消失。
+
+### 9.4 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 125ms`，`index-B_FFMuB9.js` 123.88 kB） |
+| `node scripts/e2e-music.mjs` | **PASS 44 过 / 0 败 / 2 跳过** |
+| `node scripts/e2e-music-session.mjs` | PASS 20 过 / 0 败 |
+| `node scripts/e2e-head-order.mjs` | PASS 14 过 / 0 败 |
+| `node scripts/e2e-beautify-04.mjs` | PASS 27 过 / 0 败 |
+
+### 9.5 未核验
+
+1. 前奏特别长的歌（>30 秒）倒计时读起来是否烦人，没批量试。
+2. 安装版未重新打包（仍跑 `3a68dff` 那版，不含歌词功能）。
+3. 真机上用户拖动播放器进度条时，「自己算的进度」无法感知（网易云不报位置），这条从第十八轮起一直未解。
+## 十、第二十轮修正（2026-11-16 21:45，用户 m06607）
+
+用户原话：「现在的问题我很你说一下，音乐已经播了一半了，然后我每次点到歌曲页面，进度条都会重新开始，字幕也是，而且进度条我也点不了」。
+
+### 10.1 三条症状的真因（均已实测确认）
+
+1. **切页归零**：`src/renderer/src/App.tsx` 的页面是条件渲染（`page === 0 ? <TodoPanel/> : ... : <MusicPanel/>`），切走时 MusicPanel **整块卸载**，`live`/`ownPos` 等组件内 state 与 `ownBaseRef` 全部丢失；切回来重新挂载，自算进度从 0 重新开始。
+2. **字幕跟着回到第一句**：`lyricActive` 用 `shownPos` 判定（`lyricLines[i].time <= shownPos + 0.15`），shownPos 归零后高亮自然回第一句。
+3. **进度条点不了**：`onSeekPointerDown` 原门槛是 `if (!music?.canSeek || music.duration <= 0 || busy) return`，`seekable` 类也要求 `music?.canSeek && duration > 0`。网易云实测 `canSeek=false`、`duration=0`，两个条件全假 ⇒ 永远不可点。
+
+### 10.2 改动
+
+1. **模块级进度钟**（`src/renderer/src/App.tsx` 顶层，`MusicPanel` 之外）：`progressClock`（`key / startAt / startPos / playing`）+ `clockKeyOf()` + `clockNow()` + `clockSync()` + `ensureClockWatcher()`。`clockSync` 的规则：未激活清空；播放器报 `duration > 0` 时以播放器 `position` 为基准整体重设；换歌（title|artist 变）从头算；播放/暂停切换时先冻结 `clockNow()` 再从冻结值继续。`ensureClockWatcher()` 幂等，内部 `musicGet()` 一次 + `onMusicState` 常驻订阅——**所以人不在音乐页也能记准暂停与继续**。
+2. **替换组件内自算进度**：删 `ownPos` / `ownBaseRef` 及其两个 effect，改 `const [, setClockTick] = useState(0)` + 250ms `setInterval` 触发重渲染；`shownPos = playerNoTimeline ? clockNow() : live`——切页回来直接读模块级钟。
+3. **让进度条可点**：新增 `const canSeekNow = totalDur > 0 && !busy`；`secAt()` 改用 `totalDur`（原来用 `music.duration`，网易云恒 0 时永远返回 0）；`onSeekPointerDown` 门槛改 `if (!canSeekNow) return`；`onSeekPointerUp` 在 `playerNoTimeline` 时先把钟挪到目标秒（`progressClock.startPos = sec` 等）再 `ctl({ cmd:'seek', ... })`，否则界面会弹回原位置；`seekable` 类改 `totalDur > 0`。
+
+### 10.3 实测（预览版 CDP + 真实网易云会话）
+
+| 场景 | 结果 |
+|---|---|
+| 停在音乐页 4 秒 | 时间 `0:04 → 0:08`，`seekCls="music-seek seekable"` |
+| 切到待办页 6 秒后再切回 | 时间 `0:20`（**没归零**），高亮 `act:2` 指向「为何总沉默寡言」（**没回第一句**） |
+| 点进度条 75% 处 | `SEEK` 命中 `music-bar`、`seekable` 生效；点击后 `E {"act":26,"actTxt":"子母画面分割上演谍对谍","times":["3:22","-1:06"]}`，2.5 秒后 `F {"act":26,"times":["3:24","-1:04"]}` ⇒ **界面立刻跳过去并继续走** |
+
+### 10.4 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 138ms`，`out/renderer/assets/index-hRw8z8Jc.js` 125.88 kB） |
+| `node scripts/e2e-music.mjs` | **PASS 44 过 / 0 败 / 2 跳过** |
+| `node scripts/e2e-music-session.mjs` | PASS 20 / 0 |
+| `node scripts/e2e-head-order.mjs` | PASS 14 / 0 |
+| `node scripts/e2e-beautify-04.mjs` | PASS 27 / 0 |
+
+### 10.5 未核验 / 已知限制
+
+1. **网易云不响应 SMTC seek**：`musicControl({cmd:'seek'})` 返回 `ACK=true`（桥接层 `TryChangePlaybackPositionAsync` 真的返回 true），但连采 45 秒 `position` 恒为 0、歌名未变 ⇒ SMTC 层谎报成功。所以点进度条后**只有我们自己的钟跳过去**，播放器本身不会真跳。这是网易云自身缺陷，不是本轮改动能修的。
+2. 汽水音乐等正常报时间轴的播放器本轮未复测切页场景（其 position 由播放器提供，理论上不受模块钟影响）。
+3. 安装版仍未重新打包，用户机器上跑的是 `3a68dff` 那版（不含任何歌词功能）。
+
+### 10.6 第二十轮补记（2026-11-16 22:05，e2e 断言口径修正）
+
+`scripts/e2e-music.mjs` 的 U4b 原来拿主进程快照 `musicGet().position` 当对齐基准。网易云**从不向系统上报进度**（`position` 恒 0），界面上显示的是我们自己按墙钟算的秒数，于是「界面高亮在第 34 行、快照说还在 0 秒」被误判成错位（实测输出 `{"pos":0,"expectIdx":-1,"activeIdx":0,"beforeFirstLine":true}`）。
+
+改成以**界面显示的 `.music-time` 左端**为基准（新增 `shownSec`，取不到才回退快照），并把上面那段「快照外推」的过时注释改准。改后 `e2e-music` PASS 44 过 / 0 败 / 2 跳过。
+
+## 十一、第二十一轮修正（2026-11-16 22:30，用户 m06991）
+
+用户原话：「你自己看吧，我说音乐播放没对齐，还没解决吗，我点击 音乐条音乐不会跟着音乐条同步，现在知识字幕同步了而已」。
+
+### 11.1 我上一轮做错了什么
+
+`c01c8fa` 里为了「进度条点得动」，在 `onSeekPointerUp` 里加了一段：点击后先把模块级进度钟 `progressClock` 挪到目标秒。结果界面立刻跳过去了、歌词也跟着跳，**但音乐本身一动不动**——这就是用户抓到的「只是字幕同步了而已」。这是假同步，必须撤掉。
+
+### 11.2 决定性证据
+
+| 探针 | 输出 | 结论 |
+|---|---|---|
+| `.tmp\word\ne-seek-proof.ps1`（目标设成 9999 秒，远超曲末） | `SEEK_9999 ret=True`，随后 5 次采样全部 `status=Paused pos=0 end=0` | 网易云连「夹到结尾」都不做，seek 被彻底忽略，返回值是谎报的 true |
+| `.tmp\word\seek-direct.ps1`（直连 SMTC 遍历所有会话） | `S0 app=cloudmusic.exe posWritable=False` / `SEEK target=40 ret=True pos_after=0 moved=False`；`S1 app=汽水音乐 posWritable=True` / `SEEK target=102.5 ret=True pos_after=102.5 moved=True` | 桥接层 `canSeek` 读的 `IsPlaybackPositionEnabled` 是准的：网易云 false、汽水音乐 true |
+| `musicGet()` 网易云态 | `{"pos":0,"dur":0,"cs":false}` | 位置、时长、可跳三项全为假，只有歌名/歌手/封面是真的 |
+
+### 11.3 改了哪几处
+
+1. `src/renderer/src/App.tsx` 的 `canSeekNow` 由 `totalDur > 0 && !busy` 改回 **`!playerNoTimeline && totalDur > 0 && !busy`**：播放器不接受跳转时，进度条不给 `seekable`、悬停不变手型。注释里写全了上面那份实测证据。
+2. 删掉 `onSeekPointerUp` 里「把 `progressClock` 挪到目标秒」那段（原 `:2335-2341`），只保留 `seekGuardRef` + `ctl({cmd:'seek'})`。
+3. `.music-seek` 的 `className` 改用 `canSeekNow`，并新增 `title` 说明三种情况：能跳「点任意位置跳到那里」、不能跳「网易云这类播放器不接受系统的跳转指令，只能听它自己播」、时长未知「总时长未知，暂时不能跳」。
+4. `src/main/smtcScript.ts` 的 `PickIndex`：原来只看「谁在 Playing」，多个播放器同时放时先扫到谁就用谁 —— 用户截图里网易云在前台播《天使的翅膀》，岛上却显示后台汽水音乐的《Take Me Hand》。改成：单个在播就用它；多个在播时，优先**有可见顶层窗口**（`MainWindowHandle != 0`，摆用户眼前的那个），都没有可见窗口再退回第一个。新增 `VisibleApps()` 带 3 秒缓存（poll 每秒一次，扫全进程不免费但也不能让窗口切换几分钟才生效）。
+
+### 11.4 实测
+
+| 场景 | 结果 |
+|---|---|
+| 汽水音乐在播（`canSeek=true`） | `SEEKBAR={"cls":"music-seek seekable ","cursor":"pointer","title":"点任意位置跳到那里","times":["0:53","-2:21"]}`；点 70% 处 → `["2:18","-0:57"]`，`musicGet().pos=137.3` 同步，`dur=195.3` |
+| 网易云在播（`canSeek=false`） | `SEEKBAR={"cls":"music-seek  ","cursor":"default","title":"网易云这类播放器不接受系统的跳转指令，只能听它自己播","times":["0:01","-4:01"]}`；点 70% 处 → `["0:02","-4:00"]`（只是自然往前走 1 秒，**没有被伪装跳转**） |
+| 两个播放器同时 Playing | 网易云有可见窗口时岛选网易云（`app=cloudmusic.exe`、`寂寞寂寞不好/曹格`）；改前会选到后台的汽水音乐 |
+
+### 11.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 127ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 44 过 / 0 败 / 2 跳过**（U4c 因 `canSeek=false` 走 skip，符合预期） |
+| `node scripts/e2e-music-session.mjs` | PASS 20 / 0 |
+| `node scripts/e2e-head-order.mjs` | PASS 14 / 0 |
+| `node scripts/e2e-beautify-04.mjs` | PASS 27 / 0 |
+
+### 11.6 未核验 / 已知限制
+
+1. **网易云就是不让跳**：这是它自身不实现 SMTC 定位，我们无法修好。现在的行为是如实标明「不能跳」，不再演假跳转。用户若要「点了就真跳」，只能换播放器（汽水音乐可以）。
+2. **网易云的播放位置我们看不见**：只能靠歌词库的总时长 + 自己按墙钟累加。用户如果在网易云里手动拖进度、或切歌后我们又拿到旧快照，界面会短暂不准，需要等下一次歌词查询/换歌才对上。
+3. 首次跑 e2e-music 出现过 `M3a/M3c` 两败（点主按钮播放状态没翻转）。原因是本机**两个真实播放器同时在放**，`toggle` 落到了另一个会话上；把两个播放器都暂停后重跑 PASS 44/0。这属于测试环境干扰，但也说明多播放器并存确实会让「控制」指向别人——第 11.3 条第 4 点的可见窗口优选就是为它加的。
+
+---
+
+## 十二、第二十二轮修正：网易云真的能跳了（2026-11-17 11:50，用户 m07228 / m07754）
+
+### 12.1 上一轮的两条结论作废
+
+**作废 1（11.6 第 1 条）**：「网易云就是不让跳，我们无法修好，只能换播放器」——**错**。
+`TryChangePlaybackPositionAsync` 确实被网易云无视，但**它自己窗口里画的那条进度条是可以点的**：`PrintWindow` 离屏抓图 → 从像素定位进度条 → `SetCursorPos` + `mouse_event` 点它 → 网易云真的跳。误差 **+0.01**。
+
+**作废 2（`docs/状态.md` 2026-11-17 10:20 条卡点②）**：「网易云没在真正播放就不创建 SMTC 会话」——**错**。
+实测[已核验]：它放着歌（音频会话 `state=1`、峰值 0.002~0.009 在波动）时 SMTC 会话数**照样是 0**。用 `Windows.Media.Playback.MediaPlayer` 播一段本地 wav 自测，会话管理器立刻 `COUNT=1 / ST=Playing`，证明**系统 SMTC 链路本身完好，是网易云 3.1.41.205564 这个版本压根不向 SMTC 注册**。所以「等它建会话」这条路从一开始就不通，必须自己判活、自己取位置。
+
+### 12.2 降级路径：SMTC 会话=0 时怎么工作
+
+| 需要什么 | SMTC 有会话时 | SMTC 会话=0 时（本轮新增） |
+|---|---|---|
+| 谁在放歌 | `PickIndex($sessions)` | `GetFallback()`：`ActiveList()` 列所有出声的音频会话（`进程名,pid,state`，**含暂停**）→ `TitleOf(exe)` 取窗口标题 → 打分 `state==1 +100`／标题含 `" - " +50`／上次认过的 exe `+30` |
+| 歌名/歌手 | `$props.Title/Artist` | 从窗口标题 `"歌名 - 歌手"` 拆，**只在第一个 `" - "` 处拆**（歌名自带横线不会拆坏） |
+| 播放还是暂停 | `GetPlaybackInfo().PlaybackStatus` | `Peak(exe) > 0.0008` 或 pct 比上帧前进 `> 0.0008` 判在播；只有「峰值 `<0.0002` 且 pct 几乎不动」才判暂停（宁可多判一帧在播，也别让歌词冻住） |
+| 播放位置 | `Position + LastUpdatedTime` | `GetBarPct` 读窗口进度条像素 |
+| 跳转 | `TryChangePlaybackPositionAsync` | `barseek` → `ClickPct` 点窗口进度条 |
+| 播放/暂停/切歌 | `TryTogglePlayPauseAsync` 等 | 先 `Activate(hwnd)` 再发媒体键 `MediaKey(0xB3/0xB0/0xB1)` |
+| 音量 | `AppVol.Find(smtc)` | 直接按进程名 `AppVol.Set($fb.exe, $v)` |
+
+**媒体键的护栏**：只有判得出「谁在放歌」时才按，判断不出来就 ack `ok:false`。媒体键是全局的，乱按会去操纵用户没在用的播放器。
+
+### 12.3 进度条判据的四轮迭代（含两条死路）
+
+`Row` 函数（`src/main/smtcScript.ts:697`）的判据演进：
+
+1. 初版「整行铺满 + 单分界 + 至少一侧红 + 垂直连续 ≥5 行」——只在浅色主题成立，深色主题全灭。
+2. 第二版「未播段必须是中性灰」——实测四主题未播段颜色是浅灰 `(231,233,234)`、暗绿 `(37,49,30)`、暗棕 `(61,47,28)`、灰 `(35,35,35)`，饱和度 0~33，判「灰」漏一半。
+3. 第三版（**现版**）「未播段一整段均匀」：从右缘取色，向左扫到变色处，再在 1/4、2/4、3/4 三点校验 `Df(...,off) <= 8`。这是主题无关判据——四主题实测未播段差 ≤3，而唱片机/背景是渐变的。
+4. 已播段取样点必须**紧贴分界左侧**（`playedEnd - min(12, playedLen/2)`）：已播段内部是渐变，绿色主题左端 `(41,53,33)` 与未播段 `(37,49,30)` 只差 4，从左边取样必判「色差太小」。
+5. 「必须有饱和色相」放宽为「色相 ≥40 **或** 亮度高 ≥25」：点击后窗口进入 hover 态会把整条进度条灰化成 `44,44,44 → 113,113,113` 的渐变、饱和度 0，硬要求色相会全灭。
+6. 第五版（第二十三轮）补上**滑块锚定**（见 13.3）：绿色/橄榄色主题的已播段与背景只差 20 级，靠颜色扫出来 `playedLen` 恒为 4，只有贴着分界的白色小滑块能定位。
+
+**死路 1：全宽锚定 + 单调性判据**。加了「已播段左暗右亮单调上升」后，窗口中部那条背景渐变带被认成进度条，`barPct` 卡在假值 `0.8615` 不动（6 帧全同值）。**教训**：单调渐变是很弱的特征，深色主题下到处都是。
+
+**死路 2：双帧差分**。隔 650ms 抓两帧、认「分界右移」的行，想绕开颜色判断。实测唱片机的唱臂圆弧也在移动（`y=783..817` 两帧 `la=697→705`），被认成进度条，读数乱跳（`BEFORE 0.0681 → AFTER 0.6124`）。
+
+**另一条失败路线：点击前不置前台**。同样代码，不 `Activate` 时点不动（`BEFORE 0.8494 → AFTER 0.8554`），置前台后一次成功（`0.9205 → 0.2619`）。所以 `ClickPct` 里加了 `Activate(h); Sleep(120);` 再重取 `GetWindowRect`（置前台可能改变窗口位置）。
+
+### 12.4 端到端实测
+
+**独立脚本**（`.tmp\word\runtest5.ps1`：poll → barseek → 等 2.4s 缓存过期 → 再 poll ×2，四个目标点）：
+
+| 目标 | before | after1 | after2 | 误差 |
+|---|---|---|---|---|
+| 0.20 | 0.5708 | 0.2112 | 0.2226 | +0.01 |
+| 0.55 | 0.2294 | 0.5594 | 0.5708 | +0.01 |
+| 0.80 | 0.5776 | 0.8092 | 0.8213 | +0.01 |
+| 0.35 | 0.8289 | 0.3611 | 0.3694 | +0.01 |
+
+**真实 UI**（`.tmp\word\uiseek3.mjs`，用 `Input.dispatchMouseEvent` 发**真鼠标事件**点 `.music-seek`，合成 `PointerEvent` 无效）：
+
+| 目标 | before | after | `.music-time` |
+|---|---|---|---|
+| 0.20 | 0.4868 | 0.2112 | `["0:58","-3:34"]` |
+| 0.55 | 0.2180 | 0.5556 | `["2:33","-1:59"]` |
+| 0.80 | 0.5708 | 0.8183 | `["3:43","-0:49"]` |
+| 0.35 | 0.8251 | 0.3656 | `["1:38","-2:54"]` |
+
+**时钟与歌词**：同一首歌 0s / 3s / 12s 三次采样，`.music-time` 为 `["1:46","-2:46"]` → `["1:49","-2:43"]` → `["2:08","-2:24"]`，连续推进；`.music-lyric-row` 共 23 行、正常渲染。（该歌歌词密度低，12 秒内未跨行，**跨行切换未验证**。）
+
+### 12.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 160ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过**（比基线 44 少 1 条：本机当前歌曲无封面，`M2n` 整条条件不执行，不是失败） |
+| `node scripts/e2e-music-session.mjs` | 19 过 / **1 败**：`S2 正在播放的会话确实不在索引 0` 得 `PLAYING_IDX=0`。已 `git stash` 做 A/B，**基线同样失败** ⇒ 与本轮改动无关，属本机会话顺序 |
+| `npx tsc --noEmit -p tsconfig.node.json` | EXIT=0（每轮改 `Row` 后都跑） |
+
+### 12.6 未核验 / 已知限制
+
+1. **只在网易云 3.1.41.205564 上验过**。进度条判据是按这台机器的四种主题外观（浅灰/粉红/暗绿/暗棕 + hover 灰度）调的，换版本或换主题可能失配。
+2. **进度条 y 坐标随主题变化**（粉红/绿 `836..839`、暗棕 `833..842` 共 10 行），`Probe` 靠「垂直连续 2~12 行 + 打分取最优」自适应，但**没在极窄或极宽的窗口尺寸上验过**（日志里出现过窗口被 `+72px` 整体平移的情况）。
+3. **歌词跨行切换未验证**：仅确认同一行内时间推进。需要一首歌词密集的歌放满一轮才能验。
+4. **`fallback` 字段没透传到 `MusicState`**：桥接输出里有 `fallback=true`，但 `types.ts`/`musicStore.ts` 没有这个字段，渲染层也读不到。当前靠 `active=true + duration=0` 间接成立（`playerNoTimeline` 成立），够用；但如果以后要区分「降级态」和「正常播放器」，需要补透传。
+5. **OCR 备选方案未接进产品**：`Windows.Media.Ocr` 能稳定读出 `02:17 / 03:33` 这样的时间文本（`.tmp\word\ocr.ps1` 验证过），比像素判据更抗主题变化；但 OCR 每次要 200~400ms，且要额外加载 WinRT 组件，本轮没接。若将来像素判据在某些主题上失效，这是首选替代方案。
+
+---
+
+## 十三、第二十三轮修正：用户验收「完全对不上，播放键也控制不了」（2026-11-17 12:50，用户 m01455 / m01457）
+
+### 13.1 用户原话与两个症状
+
+用户 m01457：**「完全对不上，而且播放键也控制不了，」**
+
+1. **对不上**：m01455 的截图里进度条画到左栏轨道约 58.7%，文字却是 `2:04 / -2:26`（＝45.7%）。
+2. **播放键控制不了**：按了岛上的播放/暂停按钮，界面没反应。
+
+### 13.2 五个真因（逐个实测定位）
+
+**真因 1：进度条的 CSS 过渡 960ms，比时钟刻度慢四倍 [已核验]**
+`.music-bar-fill` 原本 `transition: transform 960ms linear`，而时钟每 250ms 走一格。点击跳转/校准这类「位置被大幅改写」的时刻，文字立刻重渲染、条子要滑近 1 秒才追上——这正是截图里条跑到 58%、文字还停在 45.7% 的成因。改成 `250ms linear`（`src/renderer/src/styles.css:2639`），与时钟同拍。
+
+**真因 2：`Probe` 在「超长连续带」里重启假段 [已核验]**
+底部控制条的图标/按钮区有几十行都满足 `Row`，而 `Probe` 原代码 `if (ch > 12) ch = 0;` 把超长段归零后继续扫，于是在这一大段中间重新起了一个 2~12 行的假段，抓到控制条上某行（实测回报 `y=903`、`pct=0.0643`，而真进度条在 `y=836`）。
+修法：改成**毒化**——超长时 `ch = -1`，并加 `else if (ch < 0) { /* 吞掉 */ }`，直到出现 `Row` 不通过的行才允许重新起段。**两处都改才生效**（第一版只改一处，实测仍回 `y=903`）。
+
+**真因 3：`ScoreRow` 打分偏爱「barStart 更靠左」的假行 [已核验]**
+毒化后仍回 `y=903`：底部控制条那行的 `barStart` 更靠左（真条已播段左端与背景同色，扫出 `x=95`），旧公式 `(e-s+1)/w * 10000` 给假行 12160、真条 11980。
+修法：改按**已播段长度**打分 + 2% 门槛：`int playedLen = p - s + 1; if (playedLen * 50 < w) return -1;`，真条 423px≈32%、假行 11~17px（1%）。
+
+**真因 4：`TitleOf` 碰到无窗口的同名进程就返回空串 [已核验]**
+网易云一次开 3 个进程，只有 1 个有真窗口（`OrpheusBrowserHost 1057x752`）。原代码遇到第一个同名进程就 `return`，碰上的正是无窗口的辅助进程 → `GetFallback` 因空标题 `continue` 掉全部候选 → 降级路径整体失效。修法：遍历全部同名进程，命中真窗口才返回。
+
+**真因 5：播放/暂停判定被「进度在前进」污染 [已核验]**
+原逻辑把「进度前进 > 0.0008」也当在播证据，而暂停发生在两次采样之间时执行进度仍会前进，于是「按了暂停但还判在播」，界面按钮图标不翻转。
+实测数据：在播峰值 `0.00239~0.00470`，暂停**恒为 `0.00000`**（6 次采样全零），相差三个数量级。修法：以峰值为准——`>0.0008` 判在播、`≤0.0002` 判暂停，峰值取不到时才退回进度判据。
+
+### 13.3 绿色/橄榄色主题：滑块锚定（第三条失败路线之后的正解）
+
+「颜色 / Gareth.T」这类橄榄绿主题下，已播段是 `(145,159,48)` 而背景是 `(53,56,22)`，**只差 20 级**，且已播段只有 4~5px 宽。`Row` 扫出来 `barStart=763、playedEnd=766、playedLen=4`，被 `playedLen < 6` 直接否掉 → `Probe` 返回空 → `barOk=false` → 用户点进度条**完全没反应**。
+
+实测该帧逐像素（`y=837`）：
+
+```
+762=(53,56,23)  763=(204,205,196)  764..766=(235,236,232)  767=(70,73,41)  768=(53,56,22)
+```
+
+即：**贴着分界有一个 3~4px 宽的白色小滑块**，颜色 `(235,236,232)`，亮度比未播段高 180+。它才是这类主题里唯一可靠的锚点。
+
+于是新增 `ThumbX(b, y, off)`：扫描行内 2~10px 宽、亮度高于未播段 90+ 的窄亮块，且左右两侧在 3px 内能回到未播段色。**关键细节**：滑块左右各有 1~2px 抗锯齿过渡（763、767 都不是纯未播段色），第一版要求「紧邻像素等于未播段色」，每行都因过渡色被判失败——加了 `NearOff(b,y,x0,dir,off)`（沿方向最多看 3px，有一格回到未播段色就算干净边界）才通过。
+
+`Row` 里的用法：滑块位置与颜色扫出的 `offL` 相差 ≤14px 时，认定这是真进度条，`playedEnd = thumb`、`barStart = 0`（全宽锚定）。
+
+**为什么不是又一条死路**：滑块是**结构性标记**（它是网易云自己画的当前播放位置指示器），换主题、换歌都跟着分界走；而前两条死路（单调渐变、双帧差分）依赖的是「颜色在变」这种在深色主题里到处都是的弱特征。
+
+### 13.4 冷启动空态：把上次认到的播放器落盘
+
+网易云一暂停就把音频会话整条撤掉（实测 `persess` 里 `cloudmusic` 直接消失）。程序冷启动时若正好赶上它暂停，第一帧 `ActiveList()` 为空、`$script:fbExe` 也为空 → 界面闪一下「现在没有在放歌」。
+
+修法：把上次认到的进程名写进 `$PSScriptRoot\last-player.txt`，启动时读回（`SaveFbExe` 只在变化时写，避免每秒落盘）。
+
+### 13.5 端到端实测
+
+| 目标比例 | 点击前读数 | 点击后读数 | 岛内时间 | 误差 |
+|---|---|---|---|---|
+| 0.30 | 0.2513 | 0.3073 | `["1:04","-2:26"]` | 0.007 |
+| 0.65 | 0.3073 | 0.6571 | `["2:30","-1:17"]` | 0.007 |
+| 0.70 | 0.3073 | 0.6995 | `["2:27","-1:03"]` | 0.0005 |
+| 0.25（橄榄绿主题） | 0.5791 | 0.2513 | — | 0.0013 |
+
+**进度条与文字一致性**：`fill=scaleX(0.3073)` 对应 `1:04 / -2:26`（64/210 = 0.305）；`fill=scaleX(0.7)` 对应 `2:27 / -1:03`（147/210 = 0.700）。两者由同一个 `shownPos` 算出，且过渡时间已与时钟同拍，截图里那种 13% 偏差不再出现。
+
+**播放键**：`.music-btn-main` 连点三次，`playing` 依次 `false→true→false→true`，每次都翻转，`barPct` 持续跟随。
+
+### 13.6 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 106ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过**（第二十二轮的 `M3c` 失败已随之修好） |
+| `npx tsc --noEmit -p tsconfig.node.json` | EXIT=0（每次改 `Row`/`ThumbX` 后都跑） |
+
+### 13.7 未核验 / 已知限制
+
+1. **滑块法只在橄榄绿主题上验过**：「颜色 / Gareth.T」这一帧滑块宽 4px、亮 180+。若某主题的滑块半透明或颜色接近未播段，`ThumbX` 会返回 -1，此时退回颜色判据（该主题下会失败）。
+2. **窗口极小/极大时未验**：`Probe` 仍要求 `200 < w < 8000、200 < h < 5000`，且只在窗口下部 1/4 扫。
+3. **`last-player.txt` 只记一个进程名**：同时装多个播放器时，记的是最后一次认到的那个。
+4. **`fallback` 字段仍未透传到 `MusicState`**（第二十二轮 12.6 第 4 条未变）。
+---
+
+## 十四、第二十四轮修正（2026-11-17）
+
+### 14.1 用户反馈
+
+用户 m02409 原话：**「说几个问题：我现在只要一点一下按键，岛就会缩起来」**。
+
+即：岛处于展开态、停在音乐页，点一下播放/暂停（或上一首/下一首）键，岛立刻回收起态，而播放器的播放状态其实切换了。
+
+### 14.2 真因
+
+不是渲染层的收起逻辑出错，而是**桥接侧为了发媒体键把播放器窗口顶到前台，岛因此失焦**。
+
+链路：`src/main/smtcScript.ts` 降级分支（SMTC 会话为 0 时的 `toggle`/`next`/`prev` 兜底）原先是
+
+```
+$h = FindByExe($fb.exe)
+if ($h -ne [IntPtr]::Zero) { [void][IslandBarClick]::Activate($h, $false) }
+[IslandBarClick]::MediaKey($vk)
+```
+
+`Activate` 内部是 `ShowWindow(h, 9)` + `SetForegroundWindow(h)`。网易云被置前台 → 灵动岛主窗口 `blur` → `mainWindow.on('blur')` 发 `island:window-blur` → 渲染层 `setExpanded(false)`。
+
+`userData/collapse-log.txt` 里可见每次点按钮都成对出现：
+
+```
+main window blur; focused-after=false
+render blur -> collapse now
+render set-expanded=false; hasFocus(主进程视角)=false
+```
+
+### 14.3 修法
+
+删掉那次 `Activate`，只发媒体键：
+
+```
+[IslandBarClick]::MediaKey($vk)
+```
+
+依据 [已核验]：`keybd_event` 发的是全局媒体键，**不需要目标窗口在前台**。`.tmp/word/key3.ps1` 不置前台连发三次 `0xB3`，音频峰值依次 `0 → 0.10073 → 0 → 0.07328`，播放/暂停每次都生效。
+
+同时留下 `Activate(h, useKey)` 重载（第二十三轮引入），供未来需要真正置前台的场景（`ClickPct` 里的进度条点击）继续用——那条路径必须置前台，因为 `SetCursorPos` + `mouse_event` 点的是屏幕坐标，会被遮挡物吃掉。
+
+### 14.4 实测
+
+| 场景 | 结果 |
+|---|---|
+| CDP 真鼠标点 `.music-btn-main`（`.tmp/word/uibtn3.mjs`） | `expanded` 保持 `true`，`playing` 由 `true` 翻 `false`，日志零新增 |
+| 连点第二轮 | `expanded` 仍 `true`，`playing` 由 `false` 翻 `true`，日志零新增（行数 3223 → 3223） |
+| 物理鼠标点（`.tmp/word/realbtn.ps1`，岛窗口 `RECT=801,8,319,275`，按钮屏幕坐标 `929,169`） | 岛尺寸保持 `319×275`，`FG_AFTER=灵动岛`（焦点仍在岛），无新增收起日志 |
+| 点进度条 `.tmp/word/uiseek4.mjs 0.2 0.8` | `0.2 → 0.2014`、`0.8 → 0.807`，岛不收起 |
+
+最后一条要注意：**点进度条本身仍然会调 `ClickPct` → `Activate`（无 `useKey`，即会发试探性 `0xB3`）**，但实测岛未收起。原因是 `ClickPct` 在鼠标按下前就 `SetCursorPos` 到进度条并点击，点击动作使岛先失焦——而岛在 `mouseleave`/失焦前已经处理完 `pointerup`，`ctl` 已发出。此处不进一步收敛：进度条点击必须置前台，否则点击落到遮挡物上。
+
+> 更正（第二十五轮）：上一段里「会发试探性 `0xB3`」正是用户 m02535 报「点进度条先暂停」的成因，已在 15.3 改成 `BringKeyless`（`AttachThreadInput` 免键置前台）。置前台的必要性不变，只是不再靠媒体键绕前台锁。
+
+### 14.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npx tsc --noEmit -p tsconfig.node.json` | EXIT=0 |
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 155ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过** |
+| 部署核验 | `%APPDATA%\lingdong-island\music\smtc-bridge.ps1` 含新注释（`Select-String '绝不能在这里 Activate'` 命中 L1391），`LastWriteTime=13:04:23` |
+
+### 14.6 未核验 / 已知限制
+
+1. **只在网易云 3.1.41.205564 上验过**：其它播放器的媒体键响应路径未验。
+2. ~~**`Activate` 的试探性 `0xB3` 仍留在 `ClickPct` 里**~~ —— **此限制已在第二十五轮修掉**（见 15.3）。
+3. **冷启动首帧仍会闪一下空态**（第二十三轮 13.7 已记，未修）。
+
+## 十五、第二十五轮修正：点进度条不再先暂停，一次点击直接跳（2026-11-17，用户 m02535）
+
+### 15.1 用户反馈
+
+用户 m02535 原话：**「我随便点进度条的一个位置，他是先暂停音乐定位到那个位置，然后我要再点一次进度条，不管点什么位置，他才会在刚刚我点的位置播放；我要的是我点进度条，他要立刻到那个位置播放」**。
+
+两个要求：①点进度条不该改变播放状态；②一次点击就要「跳到目标位置并继续播」，不是「暂停 + 定位」。
+
+### 15.2 真因：`Activate` 里的试探性媒体键
+
+`src/main/smtcScript.ts` 的 `Activate(IntPtr h, bool useKey)`（第二十三轮引入）在 `SetForegroundWindow` 被前台锁拒绝后，会先发一次 `MediaKey(0xB3)` 让系统把目标当「用户刚交互过的进程」放行，再重试置前台。
+
+`ClickPct` 里调的是 `Activate(h)`，即 `useKey=true`。用户从岛内点进度条时，前台是灵动岛 → `SetForegroundWindow` 必然失败 → 那次 `0xB3` 必然发出。
+
+实测证明 `MediaKey(0xB3)` 真的会暂停（`.tmp/word/keydiag.ps1`，先确认 `target_is_fg=True`）：
+
+```
+BEFORE_KEY peak=0.01135
+AFTER_KEY1 peak=0.00000
+AFTER_KEY2 peak=0.01064
+```
+
+⇒ 每按一次翻转一次播放状态。链路即：点进度条 → 0xB3 把音乐暂停 → 鼠标点击只做定位 → 用户看到的「先暂停、再点一次才播」。
+
+顺带排除了另一条路线：`.tmp/word/msgclick.ps1` 用 `ScreenToClient` + `PostMessage` 发 `WM_MOUSEMOVE/WM_LBUTTONDOWN/WM_LBUTTONUP`，完全不发键也不抢前台，但目标 0.15 / 0.85 只把进度从 `0.7676 → 0.7714`、`0.7805 → 0.7858`。网易云是 `OrpheusBrowserHost`（Chromium），不认合成消息，必须真实鼠标事件。
+
+### 15.3 修法：`AttachThreadInput` 免键置前台
+
+新增 `IslandBarClick.BringKeyless(IntPtr h)`：
+
+1. 已在前台直接返回 `true`；
+2. `IsIconic` 则 `ShowWindow(h, 9)`；
+3. 取当前前台窗口所属线程 id，`AttachThreadInput(本线程, 前台线程, true)`；
+4. `SetForegroundWindow(h)`，失败退 `BringWindowToTop(h)`；
+5. `Sleep(120)` 后以 `GetForegroundWindow() == h` 为结果，`finally` 里解绑。
+
+**全程不发任何用户输入事件。** `Activate(h, useKey)` 改为先试 `BringKeyless`，成功即返回；只有 `useKey=true` 时才保留老的「媒体键兜底」。`ClickPct` 里的 `Activate(h)` 改成 `BringKeyless(h)`。
+
+同时修掉 `Probe` 的两个读数缺陷（这两条会直接让「点一下」变成「点空」）：
+
+- **假目标**：底部控制条那几行（实测 `y=870/906/907/910`）也能通过 `Row`，且 `s=0` 时 `playedLen = p+1` 从窗口左缘算起会变得很大，把分数抬高到 2806，一度压过真进度条的 5873/2806 之争。改法：`if (tx <= 0 && s <= 0) return -1;` —— 真进度条一定有干净的已播段起点（实测 `s=58~64`），假目标没有；滑块分支（`tx > 0`）是全宽锚定，不受这条限制。
+- **连续段被判碎**：`Probe` 判定相邻行是否同一段时原本比 `|s - cs| <= 4`。`s` 是「已播段左端与背景回到同色」的位置，本身带抗锯齿噪声（同一帧四行 `s=58/64/58/63`，换帧后 `166/184/168/186`，抖动可达 18），于是真条被切成单行段，`Probe` 明明看到四行却因「段高 < 2」返回空串——实测连续 12 次采样前 10 次返回空、后 2 次才有值。改成只比分界 `p`（`|p - cp| <= 6`）和右端 `e`（`<= 4`），不再比 `s`。
+
+### 15.4 实测
+
+| 场景 | 结果 |
+|---|---|
+| `.tmp/word/probe12.ps1`（12 次连续 `Probe`，间隔 260ms） | 12/12 全部有读数且随播放单调前进：`0.3119 → 0.3210 → 0.3301 → 0.3391 → 0.3490`（修复前 10/12 为空） |
+| `.tmp/word/clickpause.ps1 0.62`（先真实点岛造出「岛在前台」场景，再走产品代码 `ClickPct`） | `PEAK_BEFORE=0.00390` → `0.00764` → `0.00739`（**一直在播，没暂停**），落点 `0.5693 → 0.6586`（目标 0.62） |
+| `.tmp/word/uiseek5.mjs 0.6 0.3`（CDP 真鼠标点岛内进度条，点击后 4 秒每 500ms 采样） | `0.6`：`pausedFrames=0/8`，落点 `0.6177`；`0.3`：`pausedFrames=0/8`，落点 `0.3195` |
+| 同上 `0.45` | `pausedFrames=0/8`，`0.3596 → 0.4686`，`.music-time` 同步 `["1:57","-2:13"]` |
+| `.tmp/word/uiseek6.mjs 0.7`（暂停态下点击） | 跳到位（`0.4762 → 0.6995`，时间 `["2:55","-1:15"]`）且仍保持暂停，**不强行开播** |
+
+「保持暂停」是刻意的：点击进度条只表达「我要听这里」，不该顺便替用户按下播放键；用户要的是「在播时点一下不要停」，不是「暂停时点一下自动播」。
+
+### 15.5 自检
+
+| 检查 | 结果 |
+|---|---|
+| `npx tsc --noEmit -p tsconfig.node.json` | EXIT=0 |
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 147ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过** |
+| 部署核验 | `%APPDATA%\lingdong-island\music\smtc-bridge.ps1` 76237 B / 13:20:35，含 `BringKeyless` 5 处 |
+
+### 15.6 未核验 / 已知限制
+
+1. **只在网易云 3.1.41.205564 上验过**，`AttachThreadInput` 路径是否被其它播放器接受未验。
+2. **`BringKeyless` 每次点击会把播放器窗口顶到前台**：这是点击能落到进度条上的前提（否则点的是遮挡物）。用户如果正在岛上看歌词，点击后网易云会盖住岛——但岛已收起，且这是既有行为（第二十三轮起就如此），本轮未改。
+3. **冷启动首帧仍会闪一下空态**（13.7 / 14.6 已记，未修）。
+4. **`uiseek5` 的「暂停帧」判据依赖桥接 1 秒轮询**：若暂停恰好发生在两次采样之间且时长 < 1 秒，理论上采不到。本轮三次测试共 24 帧全为在播，未观察到该情况。
+
+---
+
+## 十六、第二十六轮修正：点进度条岛收起 / 字幕背景挡住 / 换歌进度乱跳
+
+### 16.1 用户反馈（m02806 原话）
+
+> 我一点进度条，岛就会缩起来；
+> 有时候我的鼠标会点不了进度条，原因是我只要把网易云的字幕背景拉下下去了，岛的播放器的进度就会点不了；
+> 还有就是如截图所示，我每次一点下一首，岛的播放器的进度条不会从零开始，直接从30s左右的位置直接开始；
+
+三条是三个独立缺陷，分别处理。
+
+### 16.2 第 1 条：点进度条岛就收起
+
+**真因**：第二十五轮把 `ClickPct` 里的 `Activate(h)` 换成了 `BringKeyless(h)`（免媒体键置前台），但它仍然会把播放器窗口顶到前台 → 主窗口 `blur` → `src/main/index.ts:255-259` 发 `island:window-blur` → `src/renderer/src/App.tsx` 的 `onWindowBlur` 回调立刻 `setExpanded(false)`。
+
+**修法**（`src/renderer/src/App.tsx`）：
+
+1. 模块级新增 `let blurSuppressUntil = 0`（不能写成组件内 `useRef`：`onSeekPointerUp` 在 `MusicPanel`、`onWindowBlur` 在 `App`，两个组件互相看不见，`typecheck:web` 会报 `TS2304`）。
+2. `onWindowBlur` 回调开头：`if (Date.now() < blurSuppressUntil) { window.island.logDiag('render blur ignored; bar seek in flight'); return }`。
+3. `onSeekPointerUp` 的 `if (wasBar)` 分支里、`ctl({ cmd: 'barseek', ... })` 之前：`blurSuppressUntil = Date.now() + 2500`。
+
+**实测**：`.tmp/word/uikeep.mjs 0.4` → `COLLAPSED_FRAMES=0/10`、`CLASSES=["island expanded"]`。
+
+### 16.3 第 2 条：字幕背景拉下去后点不了
+
+**真因**：字幕背景层盖住窗口底部进度条区域时，`Probe` 的像素判据全灭 → `barPct=-1` → `barOk=false` → 渲染层把进度条当死条，点击入口直接关闭。
+
+**修法**（`src/main/smtcScript.ts` 的 `$barSrc`）：
+
+1. `static double LastRowFrac = -1;` 记录上一次成功读到的进度条所在行（按窗口高度比例，窗口大小变了也跟得上）。`Probe` 成功时写 `LastRowFrac = (double)by / (double)hh`。
+2. `public static bool RowKnown()` → `LastRowFrac >= 0 && LastRowFrac <= 1`。
+3. `static bool FallbackRow(IntPtr h, out int y)`：用 `LastRowFrac × 当前窗口高` 算回行号（要求 `hh >= 200`）。
+4. `ClickPct`：`Probe` 返回空串时走 `FallbackRow`，否则照旧解析 `parts[1]`；`w` 单独从 `GetWindowRect` 取。
+5. `GetFallback` 返回值新增 `known`，`poll` 降级分支 `barOk = [bool]($fb.known -or ([double]$fb.pct -ge 0))` —— 读不出但位置知道，条仍可拖。
+
+**实测**：`.tmp/word/fallbacktest.ps1` 先把窗口缩到 150x400 让 `Probe` 返回空，再走 `ClickPct`：`PROBE_NORMAL=[0.1665|875|1321|940|0|1320]`、`ROW_KNOWN=True` → `PROBE_SHRUNK=[]`、`ROW_KNOWN_SHRUNK=True`、`CLICKPCT_FALLBACK=[351,413]` → `PROBE_RESTORED=[0.5132|908|...]`。最小化态下 `musicGet()` 返回 `barPct:-1, barOk:true`（不再是死条）。
+
+### 16.4 第 3 条：点下一首后进度不从 0 开始
+
+这条挖出来四个叠加的真因，逐个修：
+
+**(a) `GetBarPct` 的旧值跨歌沿用**：`$script:barGood` 只按时间（10 秒）沿用，不管换没换歌。新增 `$script:barGoodTitle`，沿用条件加上 `-and $title -eq $script:barGoodTitle`。
+
+**(b) `Probe` 抓到「红色圆形播放按钮」**：网易云切到歌手页/歌单页时，底部那行有个红色圆按钮浮在背景中间，逐行扫出 `s≈639~654 p≈667~682`，`pct` 恒为 0.5132 一动不动。`ScoreRow` 新增三条排除：
+
+- `if (tx <= 0 && s > w * 15 / 100) return -1;` —— 真进度条已播段起点必在窗宽 15% 内（实测 0/58~64/86）。
+- `if (tx <= 0) { Color left = b.GetPixel(Math.Min(2, w - 1), y); if (Df(left, off) <= 8) return -1; }` —— 真条从窗口左缘起，第 0~2 列不该是未播段色。
+- `if (tx <= 0 && s <= 0) return -1;` —— 没有干净分界的不是进度条。
+
+**(c) `Probe` 按行分取最大 → 选中 1~2 行的假目标**：实测棕主题真条 `y=833..842` 共 10 行、行分 2758；假目标 `y=869..874`（6 行、1724）、`y=877`（1 行、2901）、`y=904/909/910`（1~2 行、2790~2868）。改为**段高优先，段高相同才比行分**：新增 `int bestH = 0;`，三处选择点全部改成 `if (ch > bestH || (ch == bestH && sc2 > best))`。三处缺一处无效。
+
+**(d) 未播段上「位置固定的标记点」截停扫描（本轮最关键的一个）**：网易云深色主题的进度条本体只有 10 行（y=833..842），条上还画着一个**位置固定的小标记点**（实测 x≈729..738，宽 10px，纵向也只有 10 行）；真滑块是凸出到条外的圆点（x≈119..136，宽 18px，纵向 20 行）。`Row` 从右缘向左扫未播段同色时，标记点把扫描截停，于是 `offL` 落到 738、`pct` 恒为 0.5556。
+
+修法：扫描时跳过小色块——遇到非未播段色的色块，若宽度 `<= 12` 且左边又回到未播段色，就跳过继续扫；否则它就是分界。圆点（宽度 `<= 24`）用**中心**当分界，长渐变段用右端。
+
+**(e) 换歌过渡动画期间抓到「一排图标和文字」**：换歌瞬间整页做过渡动画，`Probe` 抓到 `y=879` 的假条带（`offL=1221`、`pct` 恒为 0.8857 不动）。那一行有十几个 3~5px 的小亮块，而真进度条那一行只有一两个亮块。新增 `BlockCount(b, y, off, xEnd)` 数已播侧亮块数，`> 4` 直接否掉。
+
+**(f) 换歌守卫窗口过宽**：原本换歌后 6 秒内丢弃「> 0.12」的读数。实测（`.tmp/word/nextev.ps1` 用时间徽标 `00:00 → 00:07` 对照）网易云约 1 秒就重画完，6 秒太长——那 6 秒里读数全被丢掉，渲染层的钟继续按旧歌走，一恢复读数就触发「偏差 >1.5 秒 → `clockAnchor`」一次性掰到 0.43×总时长。**这才是用户看到「直接从 30s 左右开始」的直接成因**。缩到 2.5 秒。
+
+### 16.5 实测
+
+| 项 | 结果 |
+|---|---|
+| 换歌后进度归零（`nexttrace3.mjs`） | `BEFORE b=0.2286` → `T1..T3 b=-1` → `T4..T7 b=0.0204` 单调上升，**不再跳 0.88** |
+| 进度随播放前进 | 连测 4 帧 `barPct` = `0.0575 → 0.0666 → 0.0666 → 0.0825` |
+| 点进度条不收起（`uikeep.mjs 0.4`） | `COLLAPSED_FRAMES=0/10` |
+| 点进度条落点（`uiseek5.mjs 0.3 0.7`） | `0.3 → 0.3301`（`times=["1:19","-2:40"]`）、`0.7 → 0.7282`（`times=["2:53","-1:05"]`），`pausedFrames=0/8` |
+
+### 16.6 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0（`✓ built in 131ms`） |
+| `node scripts/e2e-music.mjs` | **PASS 43 过 / 0 败 / 2 跳过** |
+
+### 16.7 未核验 / 已知限制
+
+1. **第 2 条（字幕背景）的兜底只用「缩窗让 `Probe` 返回空」模拟过**，没有真正把网易云的字幕背景拉下来复现原场景；`FallbackRow` 走的是「上次成功行号 × 当前窗口高」，若用户把窗口拉高/拉矮，行号会按比例缩放，理论上对，但**未实测窗口比例变化后的点击落点**。
+2. **`BlockCount` 的阈值 4 是经验值**：真条实测 1~3 个、假条带 16 个，中间没有采样到 4~15 的情况。
+3. **标记点判据（宽度 `<= 12` 跳过）依赖「标记点窄于滑块」**：实测标记点 10px、滑块 18px。若网易云某主题把标记点画得更宽，会退化成从标记点分界。
+4. 冷启动首帧仍会闪一下空态（13.7 / 14.6 / 15.6 已记，未修）。
+
+## 十七、第二十七轮：网易云后台精确控制（CDP），不再要求窗口可见（2026-11-17）
+
+### 17.1 用户反馈
+
+「网易云必须要完全显现出来才能控制进度条，网易云必须要在桌面显示进度条才能控制，那还不如不要这个功能……那些第三方做音乐工具的是怎么读取官方音乐的？」
+
+### 17.2 结论：改走 Chromium 调试协议
+
+网易云 3.x 是基于 Chromium 的客户端（`OrpheusBrowserHost`，页面 `orpheus://orpheus/pub/app.html`）。它在启动时接受 `--remote-debugging-port=9222`，开放 DevTools 协议（CDP）。通过 CDP 可以直接操作它自己页面里的播放栏：
+
+- 进度控件：`div.slider-default[aria-label="播放进度调节"]`，`textContent` 形如 `"01:09 / 03:52"`，精确到秒；
+- 播放键/上一首/下一首：`[data-testid=tid_playbar_play_btn]`、`tid_playbar_prev_btn`、`tid_playbar_next_btn`；
+- seek：在进度控件上派发 `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`，网易云的 React 监听器照常处理；
+- 封面：播放栏 `img` 的 `src` 是 `orpheus://cache/?https://...`，取 `https://` 部分并把 `type=webp`/`thumbnail` 换成 `param=200y200`，服务端回 PNG。
+
+**这条通道不依赖窗口可见、不依赖前台、不依赖像素识别**，窗口最小化/被遮挡都能用。原来「抓窗口像素 + 把窗口顶到前台点屏幕坐标」的路径降级为「CDP 不可用时的兜底」。
+
+### 17.3 端口只能在启动时打开 → 一键开启
+
+Chromium 的调试端口只认启动参数，运行中打不开，也不能靠二次启动把参数转发给已有实例（实测第二次 `cloudmusic.exe --remote-debugging-port=9222` 不会开端口）。所以：
+
+- 主进程每 3~4 秒用 `tasklist` 检查 `cloudmusic.exe` 是否在跑，并在 `MusicState` 里给出 `neteaseRunning`；
+- 网易云在跑但 CDP 连不上时，音乐页顶部出现「网易云：点此开启后台精确控制（重启一次，之后最小化也能拖进度）」；
+- 点击后主进程执行：`CloseMainWindow` → 强制结束所有 `cloudmusic.exe` → 用原路径带 `--remote-debugging-port=9222` 重启 → 等播放栏加载出来；若重启前在播，自动点一次播放键恢复。
+
+### 17.4 状态合并
+
+桥接（SMTC/音频会话）与 CDP 每秒各采一次，合并规则：CDP 在播、或桥接那边没有在播、或桥接认出的就是网易云时用 CDP；否则保留桥接的另一个播放器。CDP 生效时 `canSeek=true`、`duration` 为网易云页面的真实时长、`barPct/barOk` 不再使用。
+
+实测踩到的坑：`NxDock`（`Nexus.exe`）会挂着 `state=1` 的音频会话却不在放歌，桥接会把它当当前播放器，把已经连上的网易云盖掉。合并条件因此用「桥接是否真的在播（`playing`）」而不是「桥接是否 active」。
+
+`Input.dispatchMouseEvent` 在这台机器的 Electron 主进程 WebSocket 上**发得出去、收不到回包**（1.5 秒超时）；同一条连接上的 `Runtime.evaluate` 正常，所以 seek 改成页面内派发指针事件，一次往返完成。
+
+### 17.5 实测
+
+| 场景 | 结果 |
+|---|---|
+| 网易云最小化，直接 CDP 点 30% / 85% | `01:09 / 03:52`、`03:17 / 03:52`（0.3×232≈69.6s、0.85×232≈197s） |
+| 网易云最小化，从岛内点进度条 25% / 40% / 70% | 网易云 `00:53` / `01:26` / `02:25`，岛上时间同步 |
+| 网易云最小化，点岛上播放键 | 图标 `cmd-icon-play → cmd-icon-pause`，位置持续前进 |
+| 一键开启（普通方式启动网易云 → 点开启入口） | `busy=true` → 约 10 秒后 `neteaseCdp=true`、`9222` 监听、歌名/时长/位置正确、入口消失 |
+| 桥接把 `NxDock` 当播放器时 | CDP 仍正确接管网易云（`cdp=true`，标题/歌手来自网易云页面） |
+
+### 17.6 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0 |
+| `node scripts/e2e-music.mjs` | **PASS 48 过 / 0 败**（此前 FAIL 的 M2a2/M2n 封面格式与 M4a–M4c 进度比例一并转绿） |
+| `node scripts/e2e-music-session.mjs` | 19 过 / 1 败，失败项 `S2` 是基线就存在的环境问题（本机只有一个 SMTC 会话，`PLAYING_IDX=0`） |
+
+### 17.7 未核验 / 已知限制
+
+1. 只在网易云 **3.1.41.205564** 上验过；其他版本的选择器/`data-testid` 可能不同。
+2. 调试端口只在本次启动有效。用户用普通方式重新打开网易云后端口消失，音乐页会再次出现开启入口（不是自动重启）。
+3. 开启会中断播放约 5~10 秒；重启后停在同一首歌的暂停位置，原状态在播时会自动恢复播放。
+4. 本功能依赖网易云本地的 `9222` 调试端口，本机其他进程也能连上它（仅 `127.0.0.1`）。
+5. 音量仍走原有的按应用音频会话，未改走 CDP。
+
+---
+
+## 十八、第二十八轮：歌词行手型 / 点歌词跳转、点进度条不再闪灰（2026-11-17）
+
+用户原话：「1、就是我的鼠标放在歌词的ui上的时候，鼠标的样式没变；2、还有就是我每次点进度条的时候，播放和切换会隐形一下；看起来很变扭，你看看能不能修一下」
+
+### 18.1 真因与改法
+
+1. **「词」按钮**：它是真按钮（点一下开合歌词栏），但 `.music-word` 的 `cursor` 被误写成 `default`，悬停没有任何反馈。改成 `pointer`。
+2. **歌词行**：原来整块歌词没有任何交互，悬停自然不变手型。按本项目「不演假交互」的红线，不单独加 `cursor:pointer` 了事——改成**真能跳**：`canSeekNow` 成立时给行加 `.seekable` + `onClick`，调 `jumpToSec(ln.time)`，与拖进度条共用同一条通道（CDP 可用时按总时长换算成比例；`barClickable` 兜底时走 `barseek`）。跳不动的播放器不加类、不给手型、不给 title、不响应点击。
+3. **点进度条时按钮「隐形一下」**：`ctl()` 对所有命令都 `setBusy(key)`，三个控制按钮是 `disabled={busy !== null}`，命中 `.music-btn:disabled { opacity: 0.45 }`，于是每次点进度条按钮都会灰 300ms。改法：`seek` / `barseek` 不进入 busy（两者幂等，后一次覆盖前一次），仍保留开头的 `if (busy) return`，避免与前一个按钮动作并发。
+4. 顺带修正歌词栏 `title`：以前所有非缓存歌词都写「来自 lrclib.net」，实际主源早已是网易云；按 `source` 分 `cache` / `netease` / `lrclib` 三档显示。
+
+### 18.2 实测（`.tmp/probe-visual.mjs`，跑完已删除）
+
+| 断言 | 结果 |
+|---|---|
+| 「词」按钮 `getComputedStyle(...).cursor` | `pointer` |
+| 歌词行 `cursor` / `classList.contains('seekable')` | `pointer` / `true`（当前歌 50 行） |
+| `window.island.musicGet().neteaseCdp` | `true`（播放中，pos=81） |
+| 点进度条后 900ms 内三个 `.music-btn` 最小 `opacity` | **1**（修前为 0.45） |
+| 点第 4 句（22.76s）后真实位置 | 159 → 24（播放中继续走 1.2s；断言 ±3s 内） |
+
+### 18.3 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0 |
+| `node scripts/e2e-music.mjs` | **PASS 48 过 / 0 败** |
+
+### 18.4 未核验
+
+1. 真实鼠标手感：探针用合成 `PointerEvent` 并把 `setPointerCapture` 置空，未用 OS 级鼠标点。
+2. 歌词行点击在「网易云未开 CDP、只能点它窗口进度条」的兜底路径下未单独验（走同一条 `ctl`，但需要窗口可见）。
+
+---
+
+## 十九、第二十九轮：切换键不再闪灰、网易云最小化后音量仍可用（2026-11-17）
+
+用户原话：「还有就是点击切换键也会隐形；还有就是音量键功能失效」
+
+### 19.1 「切换键隐形」
+
+与第十八轮的闪灰同源：`ctl()` 对上一首/下一首/播放暂停也 `setBusy`，三个按钮 `disabled` 后命中 `.music-btn:disabled { opacity: 0.45 }`。busy 只是 300ms 防连点锁，不代表不可用，所以删掉透明度变化，只保留 `cursor: default`。
+
+### 19.2 「音量键功能失效」真因
+
+实测（[已核验]）：
+
+- CDP 读到网易云在播（`playing=true`、`position` 前进），但**独立查询 SMTC 会话数 = 0**；
+- 网易云窗口最小化/收进托盘后，`Get-Process cloudmusic | MainWindowTitle` 全为空；
+- 桥接的降级识别 `GetFallback` 要求「音频会话对应的进程有窗口标题」，于是把网易云整条跳过 → `canVolume=false`；
+- CDP 合并分支又把 `canVolume` 绑在「桥接是否认出网易云」上 → 音量滑块置灰、数字显示 `--`。
+
+也就是说：切到 CDP 后，进度/播控不再需要窗口，但音量还悄悄依赖「窗口可见」，正好撞上用户测试最小化的场景。
+
+### 19.3 改法
+
+1. 桥接新增两条按进程名操作的命令（主进程内部使用，不开放给渲染层）：
+   - `{"cmd":"appvol","exe":"cloudmusic.exe"}` → 读该进程音频会话的 `ISimpleAudioVolume` 音量，找不到回 `value:-1`；
+   - `{"cmd":"volume","value":0..1,"exe":"cloudmusic.exe"}` → 直接设该进程音量。
+   两条都走现有的 `IslandAppVol.AppVol`（`IAudioSessionControl2.GetProcessId` 对号），**不需要 SMTC 会话、不需要窗口标题**。
+2. `musicStore` CDP 生效时每秒向桥接发一次 `appvol`，`recompute()` 用它的结果补 `volume/canVolume`；
+   `volume` 命令在 CDP 生效时改发带 `exe` 的版本。桥接自己能对上时仍优先用桥接的值。
+3. 仍然只读写**该应用自己的音频会话**，绝不碰系统主音量。
+
+### 19.4 实测
+
+| 断言 | 结果 |
+|---|---|
+| 网易云最小化、SMTC 会话数 0 时的 `musicGet()` | `volume=1`、`canVolume=true`、`neteaseCdp=true` |
+| 音量面板 | `input.disabled=false`，数字 `100%` |
+| IPC 设 0.25 → 读回 | `0.25`；恢复原值 `1` 成功 |
+| 点下一首后 900ms 内按钮最小 opacity | **1**（修前 0.45） |
+| `npm run typecheck` / `npm run build` | EXIT=0 |
+| `node scripts/e2e-music.mjs` | 连续两次 **PASS 48 过 / 0 败**（改动后首次跑出现 44/4，未保留失败项，随后两次全绿） |
+
+### 19.5 未核验
+
+1. 真实鼠标拖音量条的手感（探针走 IPC 设值，未拖 DOM 滑块）。
+2. 改动后首次 e2e 的 4 条失败未抓到具体断言；两次重跑全绿，暂判为探针刚杀进程、网易云在切歌过渡态导致的环境抖动。
