@@ -24,7 +24,7 @@
  * ⑤光标别停在屏幕顶部 4px 感应带里——那会让岛一直「临时现身」，测延迟必假失败。
  */
 import { spawn, execSync, USER_DATA } from './isolate-userdata.mjs'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -382,6 +382,26 @@ try {
     await sleep(200)
   }
   ok('M7 辅助进程运行中 DevTools /json/list 仍秒回', Math.max(...lat) < 2000, `latency=${lat.join(',')}ms`)
+
+  // M8 判断路径的依赖面（SPEC-avoid-helper-robustness，2026-11-17）
+  // 用户另一台机器上玩独占全屏游戏时弹过「powershell.exe - 系统错误 / 0xc0000005」，
+  // 当时判断路径上有两个可疑面：①常驻脚本加载了 System.Windows.Forms（只为拿工作区尺寸）；
+  // ②摸边临时现身期间每 400ms 再 spawn 一个 PowerShell 读光标。这两条都必须消失。
+  const watchSrc = readFileSync(join(ROOT, 'src', 'main', 'fullscreenWatch.ts'), 'utf8')
+  // 只看「真的去加载那个程序集」（注释里提到它不算）
+  const noWinForms = !/-AssemblyName System\.Windows\.Forms/.test(watchSrc)
+  const noCursorSpawn = !/CURSOR_WATCH_INTERVAL_MS/.test(watchSrc) && !/cursorScript/.test(watchSrc)
+  ok('M8a 判断路径不再加载 System.Windows.Forms', noWinForms, noWinForms ? '' : '仍有 WinForms 引用')
+  ok('M8b 摸边不再每 400ms spawn 一个 PowerShell', noCursorSpawn, noCursorSpawn ? '' : '仍存在光标轮询 spawn')
+
+  // M8c 心跳文件必须带光标坐标：码|毫秒|x,y
+  let beatRaw = ''
+  try {
+    beatRaw = readFileSync(join(USER_DATA, 'avoid-mode-beat.txt'), 'utf8').trim()
+  } catch {
+    beatRaw = ''
+  }
+  ok('M8c 心跳文件格式 = 码|毫秒|光标x,y', /^[FZN]\|\d+\|-?\d+,-?\d+$/.test(beatRaw), `beat=${beatRaw}`)
 
   // 收尾恢复默认，别把测试设置留在隔离 prefs 里给下一轮添乱（必须放在所有用例之后——
   // [实测] 2026-11-17 放早了：M6 把档位切成 fullscreen 后没再复位，害得 e2e-fullscreen-misjudge
