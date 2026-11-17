@@ -144,6 +144,18 @@ export interface MusicState {
    * 而不是 SMTC 的 seek——后者对这类播放器是谎言（返回成功、位置不动）。
    */
   barOk: boolean
+  /**
+   * 是否已连上网易云的调试接口（CDP，Chromium DevTools 协议）。
+   *
+   * true 时进度、时长、seek、播放键全部由它直接操作网易云页面，**不需要网易云窗口
+   * 显示在桌面上**，也完全不依赖像素识别。false 且当前播放器是网易云时，界面会给出
+   * 「一键重启开启」的入口——调试端口只能在网易云启动时打开。
+   */
+  neteaseCdp: boolean
+  /** 正在重启网易云以开启调试接口，界面据此显示「正在重启…」并禁用按钮 */
+  neteaseCdpBusy: boolean
+  /** 网易云进程是否在运行（不依赖它是不是当前播放器），用于决定是否显示开启入口 */
+  neteaseRunning: boolean
 }
 
 /**
@@ -166,6 +178,11 @@ export type MusicCommand =
    * 直接用比例点，播放器自己按它的真实时长换算。
    */
   | { cmd: 'barseek'; value: number }
+  /**
+   * 重启网易云并带调试端口，开启后台精确控制（用户 m0xxxx「网易云必须显示才能控」）。
+   * 会让网易云中断几秒；成功后进度/seek 不再依赖窗口可见。
+   */
+  | { cmd: 'netease-enable' }
 
 /**
  * 歌词（SPEC-music-lyric）。

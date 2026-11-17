@@ -2374,6 +2374,29 @@ div.pm-row[draggable='true'] {
 
 /* ---------- 音乐页（SPEC-music-page / US-031） ---------- */
 
+/* 网易云后台精确控制的开启入口：只在「当前是网易云、但调试端口没开」时出现 */
+.music-cdp-tip {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffd479;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.music-cdp-tip:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.music-cdp-tip.busy {
+  color: rgba(255, 255, 255, 0.7);
+  cursor: default;
+}
+
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
 /* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」，
     m03435「左边的歌名有点宽，可以压缩一点，尽量和右边对称」）：

@@ -2458,6 +2458,22 @@ function MusicPanel(): React.JSX.Element {
 
   return (
     <div className={`todo-panel music-panel ${lyricOpen ? 'lyric-open' : ''}`}>
+      {/* 网易云后台精确控制（用户 m0xxxx「必须把网易云显示出来才能控进度，那还不如不要」）：
+          调试端口只能在网易云启动时打开，所以这里给一键重启入口。开启后进度/seek 直接
+          操作它的页面，窗口最小化也有效，不再依赖抓像素和把窗口顶到前台。 */}
+      {music?.neteaseRunning === true && !music.neteaseCdp && (
+        <button
+          type="button"
+          className={`music-cdp-tip ${music.neteaseCdpBusy ? 'busy' : ''}`}
+          disabled={music.neteaseCdpBusy || busy === 'netease-enable'}
+          onClick={() => ctl({ cmd: 'netease-enable' })}
+          title="网易云的调试端口只能在启动时开启；会重启网易云一次，之后最小化、被遮挡都能拖动进度"
+        >
+          {music.neteaseCdpBusy
+            ? '正在重启网易云开启后台控制…几秒后自动恢复播放'
+            : '网易云：点此开启后台精确控制（重启一次，之后最小化也能拖进度）'}
+        </button>
+      )}
       {/* 参考图（用户 m03174「根据截图，把音乐页面的布局先做，宽幅不过可以拉长」，
           2026-11-16 用户 m03368 指出进度条不该横穿整页）：
           上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
