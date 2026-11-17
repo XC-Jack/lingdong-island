@@ -65,8 +65,6 @@ const HEARTBEAT_STALE_MS = 5000
 const FALLBACK_POLL_MS = 1000
 /** 回退期间多久尝试重启一次辅助进程 */
 const HELPER_RETRY_MS = 15000
-/** 现身期间光标轮询回隐的周期 */
-const CURSOR_WATCH_INTERVAL_MS = 400
 /** 感应窗实际高度：Windows 对顶层窗口有最小尺寸约束（SM_CXMINTRACK/SM_CYMINTRACK），
  * 请求 4px 会被强制放大到 ~40px（[实测] .tmp/mini-edge2.cjs：height:4 → getBounds 40）。
  * 解决：窗口整体上移、主体悬在屏幕外，屏内只露 EDGE_HEIGHT 像素——命中带仅 4px，
@@ -105,6 +103,8 @@ let beatFile = ''
 let lastBeatTs = 0
 /** 连续读到心跳不新鲜的次数（回退判据，防误判） */
 let staleReads = 0
+/** 最近一次从辅助进程/回退轮询拿到的光标坐标（OS 层真相，摸边回隐用它） */
+let lastCursor: { x: number; y: number; at: number } = { x: 0, y: 0, at: 0 }
 /** 回退路径（辅助进程不可用时的单发轮询） */
 let fallbackTimer: NodeJS.Timeout | null = null
 let fallbackChild: ReturnType<typeof spawn> | null = null
@@ -135,7 +135,11 @@ function probeCs(): string {
     '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
     '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern int GetSystemMetrics(int i);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool SystemParametersInfo(uint a, uint p, out RECT r, uint w);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetCursorPos(out POINT p);',
     'public struct RECT { public int L, T, R, B; }',
+    'public struct POINT { public int X, Y; }',
     'public const int TOL = 8;',
     // DWMWA_CLOAKED = 14：返回 0 表示窗口没被 DWM 隐藏
     'public static int Cloak(IntPtr h) { int v; int r = DwmGetWindowAttribute(h, 14, out v, 4); return r == 0 ? v : -1; }',
@@ -158,6 +162,19 @@ function probeCs(): string {
     '  return r.L <= wl + TOL && r.T <= wt + TOL && r.R >= wr - TOL && r.B >= wb - TOL;',
     '}',
     // 返回单字符判定码：F=真全屏 / Z=最大化（盖住工作区但不算真全屏） / N=都不算
+    // ⚠ 不要用 System.Windows.Forms 的 Screen 拿工作区尺寸：那要 Add-Type -AssemblyName
+    // System.Windows.Forms，会在常驻辅助进程里初始化整个 WinForms（含隐藏的 parking window），
+    // 用户实测在独占全屏游戏期间弹过「powershell.exe - 系统错误 / 0xc0000005」。
+    // 改用 user32 的 GetSystemMetrics + SystemParametersInfo(SPI_GETWORKAREA)：
+    // 跟 GetWindowRect 处在同一个 DPI 上下文里（都是本进程的 DPI 虚拟化坐标），
+    // 既不会与 DPI 缩放打架，也彻底不碰 WinForms。
+    'public static string ProbeAll() {',
+    '  RECT w; SystemParametersInfo(0x0030, 0, out w, 0);', // SPI_GETWORKAREA
+    '  int sw = GetSystemMetrics(0), sh = GetSystemMetrics(1);', // SM_CXSCREEN / SM_CYSCREEN
+    '  string code = Probe(w.L, w.T, w.R, w.B, 0, 0, sw, sh);',
+    '  POINT p; GetCursorPos(out p);',
+    '  return code + ' + TICK + '|' + TICK + ' + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ' + TICK + '|' + TICK + ' + p.X + ' + TICK + ',' + TICK + ' + p.Y;',
+    '}',
     'public static string Probe(int wl, int wt, int wr, int wb, int bl, int bt, int br, int bb) {',
     '  IntPtr h = GetForegroundWindow();',
     '  if (h == IntPtr.Zero) return ' + TICK + 'N' + TICK + ';', // 没有前台窗口（桌面上什么都没选）
@@ -175,9 +192,15 @@ function probeCs(): string {
   ].join(' ')
 }
 
-/** 常驻辅助进程的脚本：编译一次 C#，然后 120ms 一轮把判定码写进心跳文件。
+/** 常驻辅助进程的脚本：编译一次 C#，然后 120ms 一轮把「判定码|毫秒时间戳|光标坐标」
+ * 覆盖写进心跳文件（同一份数据同时服务判定与摸边回隐，省掉每 400ms 再 spawn 一个 PS）。
  * 用 -EncodedCommand 传（多行脚本压平成 -Command 会被转义炸，[实测]）。
- * 输出走文件、stdio 全 ignore：绝不使用管道（管道 + 不退出的子进程会拖死 DevTools HTTP）。 */
+ * 输出走文件、stdio 全 ignore：绝不使用管道（管道 + 不退出的子进程会拖死 DevTools HTTP）。
+ *
+ * ⚠ 脚本里刻意**不加载 System.Windows.Forms**：只为了拿「工作区尺寸」就初始化整个 WinForms，
+ * 会在常驻进程里留一个隐藏的 parking window；用户实测在独占全屏游戏（三角洲）期间弹过
+ * 「powershell.exe - 系统错误 / Exception Processing Message 0xc0000005」。改用 user32 的
+ * GetSystemMetrics + SystemParametersInfo(SPI_GETWORKAREA)，零组件依赖。 */
 function helperScript(): string {
   const beat = beatFile.replace(/'/g, "''")
   // 父进程（本应用主进程）pid：辅助进程是长驻循环，必须自己盯着父进程是否还活着——
@@ -186,35 +209,21 @@ function helperScript(): string {
   const parentPid = String(process.pid)
   return [
     'Add-Type "' + probeCs() + '"',
-    'Add-Type -AssemblyName System.Windows.Forms',
     '$beat = ' + "'" + beat + "'",
-    '$last = ' + "'" + "'",
-    '$i = 0',
+    '$n = 0',
     'while ($true) {',
-    '  if ($i -eq 0) { try { [void][System.Diagnostics.Process]::GetProcessById(' + parentPid + ') } catch { break } }',
-    '  $w = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
-    '  $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
-    '  $code = [FS]::Probe($w.Left, $w.Top, $w.Right, $w.Bottom, $b.Left, $b.Top, $b.Right, $b.Bottom)',
-    '  $i++',
-    '  if ($code -ne $last -or $i -ge 4) {',
-    '    try { [System.IO.File]::WriteAllText($beat, $code + ' + "'|'" + ' + [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) } catch { }',
-    '    $last = $code',
-    '    $i = 0',
-    '  }',
+    // 每约 1 秒（8 轮 × 120ms）确认一次父进程还在
+    '  if (($n % 8) -eq 0) { try { [void][System.Diagnostics.Process]::GetProcessById(' + parentPid + ') } catch { break } }',
+    '  $n++',
+    '  try { [System.IO.File]::WriteAllText($beat, [FS]::ProbeAll()) } catch { }',
     '  Start-Sleep -Milliseconds ' + HELPER_TICK_MS,
     '}'
   ].join('; ')
 }
 
-/** 回退路径用的单发脚本：判一次就退出，把判定码打到 stdout。 */
+/** 回退路径用的单发脚本：判一次就退出，stdout 输出同样的「码|时间戳|光标」。 */
 function oneShotScript(): string {
-  return [
-    'Add-Type "' + probeCs() + '"',
-    'Add-Type -AssemblyName System.Windows.Forms',
-    '$w = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea',
-    '$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
-    '[FS]::Probe($w.Left, $w.Top, $w.Right, $w.Bottom, $b.Left, $b.Top, $b.Right, $b.Bottom)'
-  ].join('; ')
+  return ['Add-Type "' + probeCs() + '"', '[FS]::ProbeAll()'].join('; ')
 }
 
 export function initFullscreenWatch(
@@ -345,9 +354,16 @@ export function initFullscreenWatch(
     } catch {
       raw = ''
     }
-    const sep = raw.indexOf('|')
-    const code = sep > 0 ? raw.slice(0, sep).trim() : ''
-    const ts = sep > 0 ? Number(raw.slice(sep + 1)) : 0
+    const parts = raw.split('|')
+    const code = (parts[0] ?? '').trim()
+    const ts = Number(parts[1] ?? 0)
+    const pos = (parts[2] ?? '').trim()
+    // 「辅助进程还活着」只看时间戳；坐标用于摸边回隐（原来每 400ms 再 spawn 一个 PS 读光标，
+    // 2026-11-17 改成并进心跳文件：少一个高频 spawn，也少一个可能弹系统错误框的进程）
+    if (pos) {
+      const m = pos.match(/^(-?\d+),(-?\d+)$/)
+      if (m) lastCursor = { x: Number(m[1]), y: Number(m[2]), at: Date.now() }
+    }
     const fresh = Number.isFinite(ts) && ts > 0 && Date.now() - ts < 5000
     if (fresh && ts !== lastBeatTs && (code === 'F' || code === 'Z' || code === 'N')) {
       lastBeatTs = ts
@@ -361,8 +377,8 @@ export function initFullscreenWatch(
       bannerHold = false
       bannerHoldAt = 0
     }
-    // 光标轮询自愈：摸边现身后万一轮询定时器丢了，岛会一直亮着，补一次
-    if (state === 'avoided' && tempVisible && !cursorTimer) startCursorWatch()
+    // 摸边现身后的「光标移开就回隐」检查：数据来自心跳文件（见上），不额外起进程
+    if (tempVisible) checkCursor()
     // 每轮都评估一次：策略（avoidMode）改了不会产生新的心跳，靠这里在 150ms 内跟上
     evaluate()
     if (fresh) {
@@ -506,93 +522,52 @@ export function initFullscreenWatch(
   probeTimers.add(beatTimer)
   readBeat()
 
-  /** 现身期间的光标轮询回隐（A5 修复）。
+  /** 现身期间的「光标移开就回隐」（A5 修复）+ 摸边检查。
+   *
    * 实测踩坑（US-041）：岛 showInactive 现身后 Chromium 不认为光标在窗口内（未注册
    * TrackMouseEvent），光标离开不派发 mouseleave → 渲染层 onMouseLeave 永不上报。
-   * 且 Electron screen.getCursorScreenPoint() 与外部 SetCursorPos 结果不一致（probe 实测）。
-   * 故现身期间由主进程用单发 PS GetCursorPos（OS 层真相）轮询：连续 2 次光标不在岛 bounds
-   * （含余量）→ 回隐；光标回岛内重置计数。 */
-  let cursorTimer: NodeJS.Timeout | null = null
-  let cursorWatching = false
+   * 另外 Electron 的 `screen.getCursorScreenPoint()` 与外部 SetCursorPos 结果不一致（probe 实测），
+   * 所以光标坐标必须走 OS 层 GetCursorPos。
+   *
+   * 2026-11-17 改法：**不再每 400ms 起一个 PowerShell 读光标**，而是让常驻辅助进程把光标坐标
+   * 一起写进心跳文件（120ms 一轮）。用户实测在独占全屏游戏期间弹过
+   * 「powershell.exe - 系统错误 / 0xc0000005」，而这类高频 spawn 是最可能的相关面之一。
+   * 连续 2 次读到光标不在岛 bounds（含余量）→ 回隐；回到岛内就清零。 */
+  let cursorCheckOn = false
   let cursorOutsideStreak = 0
-  const cursorScript = (): string =>
-    'Add-Type "using System; using System.Runtime.InteropServices; public class CW { [DllImport(`"user32.dll`")] public static extern bool GetCursorPos(out POINT p); public struct POINT { public int X, Y; } }"; ' +
-    '$p=New-Object CW+POINT; [void][CW]::GetCursorPos([ref]$p); "{0},{1}" -f $p.X,$p.Y'
   const stopCursorWatch = (): void => {
-    if (cursorTimer) {
-      clearInterval(cursorTimer)
-      probeTimers.delete(cursorTimer)
-      cursorTimer = null
-    }
-    cursorWatching = false
+    cursorCheckOn = false
     cursorOutsideStreak = 0
   }
-  const cursorPollOnce = (): void => {
-    if (cursorWatching) return // 上一发未结束，跳过
-    cursorWatching = true
-    let done = false
-    const finish = (): void => {
-      if (done) return
-      done = true
-      cursorWatching = false
-    }
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cursorScript()], {
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore']
-      })
-    } catch {
-      finish()
+  const startCursorWatch = (): void => {
+    cursorCheckOn = true
+    cursorOutsideStreak = 0
+  }
+  /** 由 readBeat 每 150ms 驱动一次（辅助进程 120ms 更新一次光标）。 */
+  const checkCursor = (): void => {
+    if (!cursorCheckOn) return
+    if (state !== 'avoided' || !tempVisible || bannerHold) return
+    // 坐标太旧（辅助进程走了回退路径、或刚重启）就这一轮先不判，免得拿旧坐标误回隐
+    if (Date.now() - lastCursor.at > 2000) return
+    const win = getMain()
+    if (!win || win.isDestroyed()) return
+    const b = win.getBounds()
+    const MARGIN = 8
+    const inside =
+      lastCursor.x >= b.x - MARGIN &&
+      lastCursor.x <= b.x + b.width + MARGIN &&
+      lastCursor.y >= b.y - MARGIN &&
+      lastCursor.y <= b.y + b.height + MARGIN
+    if (inside) {
+      cursorOutsideStreak = 0
       return
     }
-    const guard = setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        /* noop */
-      }
-      finish()
-    }, 3000)
-    child.stdout?.on('data', (chunk: Buffer) => {
-      const line = chunk.toString('utf8').trim()
-      const m = line.match(/^(-?\d+),(-?\d+)$/)
-      if (!m) return
-      const win = getMain()
-      if (!win || win.isDestroyed()) return
-      const b = win.getBounds()
-      const MARGIN = 8
-      const inside =
-        Number(m[1]) >= b.x - MARGIN &&
-        Number(m[1]) <= b.x + b.width + MARGIN &&
-        Number(m[2]) >= b.y - MARGIN &&
-        Number(m[2]) <= b.y + b.height + MARGIN
-      if (inside) {
-        cursorOutsideStreak = 0
-        return
-      }
-      cursorOutsideStreak++
-      if (cursorOutsideStreak < 2) return
-      // 连续 2 次在岛外 → 真移开，回隐
-      stopCursorWatch()
-      if (state !== 'avoided' || bannerHold) return
-      tempVisible = false
-      if (decision(judge)) apply(true)
-    })
-    child.on('exit', () => {
-      clearTimeout(guard)
-      finish()
-    })
-    child.on('error', () => {
-      clearTimeout(guard)
-      finish()
-    })
-  }
-  const startCursorWatch = (): void => {
+    cursorOutsideStreak++
+    if (cursorOutsideStreak < 2) return
+    // 连续 2 次在岛外 → 真移开，回隐
     stopCursorWatch()
-    cursorWatching = false
-    cursorTimer = setInterval(cursorPollOnce, CURSOR_WATCH_INTERVAL_MS)
-    probeTimers.add(cursorTimer)
+    tempVisible = false
+    if (decision(judge)) apply(true)
   }
 
   // 摸边唤回：感应窗 mouseenter 上报。岛现身会盖住感应条（岛就在顶部），
@@ -619,7 +594,9 @@ export function initFullscreenWatch(
       const win = getMain()
       if (!win || win.isDestroyed()) return
       const b = win.getBounds()
-      const p = screen.getCursorScreenPoint()
+      // 用 OS 层 GetCursorPos 的结果（心跳文件里带的），不用 screen.getCursorScreenPoint()：
+      // 后者在本机实测与真实光标位置不一致（[实测] US-041 排障记录）
+      const p = Date.now() - lastCursor.at < 2000 ? lastCursor : { x: screen.getCursorScreenPoint().x, y: screen.getCursorScreenPoint().y }
       const inIsland = p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y - EDGE_HEIGHT && p.y <= b.y + b.height
       if (inIsland) return // 误报（岛现身遮挡感应窗的迟到 leave）
       tempVisible = false
