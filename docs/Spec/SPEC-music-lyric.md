@@ -820,3 +820,39 @@ Chromium 的调试端口只认启动参数，运行中打不开，也不能靠�
 3. 开启会中断播放约 5~10 秒；重启后停在同一首歌的暂停位置，原状态在播时会自动恢复播放。
 4. 本功能依赖网易云本地的 `9222` 调试端口，本机其他进程也能连上它（仅 `127.0.0.1`）。
 5. 音量仍走原有的按应用音频会话，未改走 CDP。
+
+---
+
+## 十八、第二十八轮：歌词行手型 / 点歌词跳转、点进度条不再闪灰（2026-11-17）
+
+用户原话：「1、就是我的鼠标放在歌词的ui上的时候，鼠标的样式没变；2、还有就是我每次点进度条的时候，播放和切换会隐形一下；看起来很变扭，你看看能不能修一下」
+
+### 18.1 真因与改法
+
+1. **「词」按钮**：它是真按钮（点一下开合歌词栏），但 `.music-word` 的 `cursor` 被误写成 `default`，悬停没有任何反馈。改成 `pointer`。
+2. **歌词行**：原来整块歌词没有任何交互，悬停自然不变手型。按本项目「不演假交互」的红线，不单独加 `cursor:pointer` 了事——改成**真能跳**：`canSeekNow` 成立时给行加 `.seekable` + `onClick`，调 `jumpToSec(ln.time)`，与拖进度条共用同一条通道（CDP 可用时按总时长换算成比例；`barClickable` 兜底时走 `barseek`）。跳不动的播放器不加类、不给手型、不给 title、不响应点击。
+3. **点进度条时按钮「隐形一下」**：`ctl()` 对所有命令都 `setBusy(key)`，三个控制按钮是 `disabled={busy !== null}`，命中 `.music-btn:disabled { opacity: 0.45 }`，于是每次点进度条按钮都会灰 300ms。改法：`seek` / `barseek` 不进入 busy（两者幂等，后一次覆盖前一次），仍保留开头的 `if (busy) return`，避免与前一个按钮动作并发。
+4. 顺带修正歌词栏 `title`：以前所有非缓存歌词都写「来自 lrclib.net」，实际主源早已是网易云；按 `source` 分 `cache` / `netease` / `lrclib` 三档显示。
+
+### 18.2 实测（`.tmp/probe-visual.mjs`，跑完已删除）
+
+| 断言 | 结果 |
+|---|---|
+| 「词」按钮 `getComputedStyle(...).cursor` | `pointer` |
+| 歌词行 `cursor` / `classList.contains('seekable')` | `pointer` / `true`（当前歌 50 行） |
+| `window.island.musicGet().neteaseCdp` | `true`（播放中，pos=81） |
+| 点进度条后 900ms 内三个 `.music-btn` 最小 `opacity` | **1**（修前为 0.45） |
+| 点第 4 句（22.76s）后真实位置 | 159 → 24（播放中继续走 1.2s；断言 ±3s 内） |
+
+### 18.3 自检
+
+| 命令 | 结果 |
+|---|---|
+| `npm run typecheck` | EXIT=0（node + web） |
+| `npm run build` | EXIT=0 |
+| `node scripts/e2e-music.mjs` | **PASS 48 过 / 0 败** |
+
+### 18.4 未核验
+
+1. 真实鼠标手感：探针用合成 `PointerEvent` 并把 `setPointerCapture` 置空，未用 OS 级鼠标点。
+2. 歌词行点击在「网易云未开 CDP、只能点它窗口进度条」的兜底路径下未单独验（走同一条 `ctl`，但需要窗口可见）。

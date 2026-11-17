@@ -2600,6 +2600,16 @@ div.pm-row[draggable='true'] {
   transform: scale(1.02);
 }
 
+/* 能跳的时候（canSeekNow）整行可点：鼠标移上去必须是手型并给一点悬停反馈，
+   否则用户会以为歌词只是一块死文本（用户反馈「鼠标放在歌词 ui 上样式没变」）。
+   跳不动的播放器不加 .seekable——不给手型，也就不暗示能点。 */
+.music-lyric-row.seekable {
+  cursor: pointer;
+}
+.music-lyric-row.seekable:hover:not(.active) {
+  color: rgba(242, 243, 245, 0.72);
+}
+
 /* 用户 m06418「歌词依旧没反应」：前奏还没到第一句时，把第一句先提亮一档，
    让用户看到「下一句马上要来」，而不是满屏灰字以为坏了。 */
 .music-lyric-row.next {
@@ -2940,7 +2950,8 @@ div.pm-row[draggable='true'] {
   font-size: 13px;
   font-weight: 700;
   line-height: 1;
-  cursor: default;
+  /* 它是真按钮（点一下开合歌词栏），以前误写成 default，悬停没有任何反馈 */
+  cursor: pointer;
 }
 .music-word:hover {
   background: rgba(255, 255, 255, 0.14);

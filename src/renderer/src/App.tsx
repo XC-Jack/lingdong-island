@@ -2331,6 +2331,13 @@ function MusicPanel(): React.JSX.Element {
     (cmd: MusicCommand) => {
       if (busy) return
       const key = typeof cmd === 'string' ? cmd : cmd.cmd
+      // 拖/点进度条不锁整页控件。busy 的用途是「防连点把播放器按懵」，
+      // 而 seek 本身幂等（后一次覆盖前一次）；以前这里一并 setBusy，导致每次点进度条
+      // 三个按钮都会 disabled 300ms、透明度掉到 0.45，看起来像「闪一下消失」。
+      if (key === 'seek' || key === 'barseek') {
+        void window.island.musicControl(cmd).catch(() => false)
+        return
+      }
       setBusy(key)
       void window.island
         .musicControl(cmd)
@@ -2393,6 +2400,32 @@ function MusicPanel(): React.JSX.Element {
    */
   const canSeekNow = ((!playerNoTimeline && totalDur > 0) || barClickable) && !busy
 
+  /**
+   * 跳到某一秒。拖进度条松手与「点歌词行」共用这一条通道。
+   *
+   * ratio 可选：拖进度条时用鼠标落点算出的比例（比秒更贴近播放器的真实长度），
+   * 点歌词行时只有时间戳，就按 totalDur 换算。
+   */
+  const jumpToSec = (sec: number, ratio?: number): void => {
+    if (!canSeekNow || totalDur <= 0) return
+    const target = Math.min(totalDur, Math.max(0, sec))
+    const r = ratio ?? Math.min(1, Math.max(0, target / totalDur))
+    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
+    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
+    seekGuardRef.current = { target, at: Date.now(), title: music?.title ?? '' }
+    if (barClickable) {
+      // 播放器不报进度：把钟先拨到目标秒，让进度条/歌词立刻跟手；
+      // 紧接着真的去点它窗口里的进度条（点完它是真的会跳的，`music:state` 回来还会再校准）
+      clockAnchor(target, music?.playing === true)
+      // 这一下会让桥接把播放器顶到前台，岛紧接着就会失焦。先挂个抑制窗口，
+      // 否则用户「点一下进度条」的观感就是「岛自己缩起来了」（用户 m02806）。
+      blurSuppressUntil = Date.now() + 2500
+      ctl({ cmd: 'barseek', value: Math.round(r * 1000) / 1000 })
+    } else {
+      ctl({ cmd: 'seek', value: Math.round(target * 10) / 10 })
+    }
+  }
+
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (!canSeekNow) return
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -2409,24 +2442,10 @@ function MusicPanel(): React.JSX.Element {
     if (!seekingRef.current) return
     const sec = secAt(e.clientX)
     const ratio = ratioAt(e.clientX)
-    const wasBar = barClickable
     seekingRef.current = false
     setSeeking(false)
     setLive(sec)
-    // 松手后先进入保护窗口：期间忽略播放器回传的旧 position，条子不回缩；
-    // 收到跳到目标附近的快照（或换歌 / 2.5s 超时）再恢复跟随真实位置
-    seekGuardRef.current = { target: sec, at: Date.now(), title: music?.title ?? '' }
-    if (wasBar) {
-      // 播放器不报进度：把钟先拨到目标秒，让进度条/歌词立刻跟手；
-      // 紧接着真的去点它窗口里的进度条（点完它是真的会跳的，`music:state` 回来还会再校准）
-      clockAnchor(sec, music?.playing === true)
-      // 这一下会让桥接把播放器顶到前台，岛紧接着就会失焦。先挂个抑制窗口，
-      // 否则用户「点一下进度条」的观感就是「岛自己缩起来了」（用户 m02806）。
-      blurSuppressUntil = Date.now() + 2500
-      ctl({ cmd: 'barseek', value: Math.round(ratio * 1000) / 1000 })
-    } else {
-      ctl({ cmd: 'seek', value: Math.round(sec * 10) / 10 })
-    }
+    jumpToSec(sec, ratio)
   }
 
   const volume = volLocal ?? music?.volume ?? 0
@@ -2564,7 +2583,9 @@ function MusicPanel(): React.JSX.Element {
               : lyric?.ok
                 ? lyric.source === 'cache'
                   ? '歌词（来自本地缓存）'
-                  : '歌词（来自 lrclib.net）'
+                  : lyric.source === 'netease'
+                    ? '歌词（来自网易云）'
+                    : '歌词（来自 lrclib.net）'
                 : (lyric?.reason ?? '暂无歌词')
           }
         >
@@ -2577,10 +2598,14 @@ function MusicPanel(): React.JSX.Element {
                   <div
                     key={`${ln.time}-${i}`}
                     ref={i === lyricActive ? lyricActiveRef : null}
-                    className={`music-lyric-row ${i === lyricActive ? 'active' : ''}${
-                      preludeLeft > 0 && i === 0 ? ' next' : ''
-                    }`}
+                    className={`music-lyric-row ${canSeekNow ? 'seekable' : ''} ${
+                      i === lyricActive ? 'active' : ''
+                    }${preludeLeft > 0 && i === 0 ? ' next' : ''}`}
                     data-time={ln.time}
+                    // 点某句直接跳到那句（用户反馈「鼠标放在歌词上样式没变」）：
+                    // 只有真能跳（canSeekNow）才给手型和点击，跳不动的播放器不装样子。
+                    title={canSeekNow ? `点这句跳到 ${fmtDuration(ln.time)}` : undefined}
+                    onClick={canSeekNow ? () => jumpToSec(ln.time) : undefined}
                   >
                     {ln.text}
                   </div>
