@@ -282,7 +282,35 @@ function createWindow(): void {
   }
 }
 
+/**
+ * 单实例锁（2026-11-17 加）。
+ *
+ * 为什么需要：用户机器重启后同时出现了**两个岛**。原因是注册表 HKCU\...\Run 里有两条自启：
+ * 早期版本写的 `electron.app.灵动岛`（Electron 默认名）和现在的 `com.xcjack.lingdong-island`
+ * （改用自定义 appId 后写的），两条都指向同一个 exe —— 于是开机起两个实例，各自一个岛窗口、
+ * 各自一个常驻判定进程抢同一个心跳文件。过时那条已手工删掉，这里加锁兜底：
+ * 任何方式重复启动（自启、双击、开发预览版与装机版同时开）第二个实例都直接退出，
+ * 并尽量把已有的岛叫到前面。
+ *
+ * 注意：E2E 都用 `--user-data-dir` 隔离数据目录，Electron 的单实例锁按 userData 划分，
+ * 所以互不干扰。
+ */
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow
+    if (win && !win.isDestroyed()) {
+      if (!win.isVisible()) win.showInactive()
+      win.moveTop()
+    }
+  })
+}
+
 app.whenReady().then(() => {
+  // 拿不到锁的实例已经 quit 了，别再往下初始化（否则会建第二个岛、起第二个辅助进程）
+  if (!hasSingleInstanceLock) return
   // 通知归属（US-029 反馈修复）：Windows 上不设 AppUserModelId，系统通知可能
   // 归不到本应用而不弹出。id 必须与打包配置的 appId 一致才能对上快捷方式。
   if (process.platform === 'win32') {
