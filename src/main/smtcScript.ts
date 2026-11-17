@@ -588,6 +588,10 @@ public static class IslandBarClick {
   [DllImport("user32.dll")] static extern void mouse_event(uint f, int dx, int dy, uint data, IntPtr extra);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int n);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
@@ -692,20 +696,54 @@ public static class IslandBarClick {
   // 置前台后同一段代码一次成功（BEFORE 0.9205 / AFTER 0.2619）。
   // 注意：抓图（PrintWindow）不需要前台，只有点击需要，所以只在 ClickPct 里调。
   public static bool Activate(IntPtr h) { return Activate(h, true); }
-  // useKey=false 时不发媒体键。降级路径的 toggle/next/prev 要自己发媒体键，
-  // 若先调 Activate 再发，前台锁解开时那次「试探性」0xB3 会把播放状态切一下，
-  // 紧接着自己发的 0xB3 又切回去——两次抵消，表现就是「播放键按了没反应」。
+  // 只置前台，绝不发送任何用户输入事件。
+  //
+  // 历史（2026-11-17，用户 m02535）：这里原本在 SetForegroundWindow 失败后用
+  // 「发一次试探性 0xB3」来绕开前台锁。实测 MediaKey(0xB3) 是真的会把网易云
+  // 暂停的（.tmp/word/keydiag.ps1：BEFORE peak=0.01135 → AFTER_KEY1 peak=0.00000
+  // → AFTER_KEY2 peak=0.01064）。于是「点进度条」变成「先暂停、再点才播」，
+  // 正是用户报的现象。绕前台锁改用 AttachThreadInput：把自己的线程输入附加到
+  // 当前前台窗口所属线程上，之后 SetForegroundWindow 就不再被系统拒绝，
+  // 全程不发键、不改变播放状态（.tmp/word/fgtest2.ps1 实测 BRING_OK=True、
+  // 峰值 0.01315 → 0.01210 保持不变）。
+  public static bool BringKeyless(IntPtr h) {
+    if (h == IntPtr.Zero) return false;
+    try { if (GetForegroundWindow() == h) return true; } catch { }
+    try { if (IsIconic(h)) ShowWindow(h, 9); } catch { }
+    IntPtr fg = IntPtr.Zero;
+    uint fgPid = 0;
+    uint fgTid = 0;
+    uint myTid = 0;
+    bool attached = false;
+    try {
+      fg = GetForegroundWindow();
+      if (fg != IntPtr.Zero) fgTid = GetWindowThreadProcessId(fg, out fgPid);
+      myTid = GetCurrentThreadId();
+      if (fgTid != 0 && fgTid != myTid) attached = AttachThreadInput(myTid, fgTid, true);
+      bool ok = false;
+      try { ok = SetForegroundWindow(h); } catch { }
+      if (!ok) { try { ok = BringWindowToTop(h); } catch { } }
+      System.Threading.Thread.Sleep(120);
+      return GetForegroundWindow() == h;
+    } catch {
+      return false;
+    } finally {
+      if (attached) {
+        try { AttachThreadInput(myTid, fgTid, false); } catch { }
+      }
+    }
+  }
+  // useKey=false 时连「媒体键兜底」都不用（点击进度条这条路径就必须如此）。
+  // 降级路径的 toggle/next/prev 仍保留 useKey=true 的老行为，但它们自己随后会发
+  // 媒体键，所以调用方传 false（见 PowerShell 侧注释）。
   public static bool Activate(IntPtr h, bool useKey) {
     if (h == IntPtr.Zero) return false;
-    try { ShowWindow(h, 9); } catch { }
-    try {
-      if (SetForegroundWindow(h)) return true;
-    } catch { }
+    if (BringKeyless(h)) return true;
     if (!useKey) return false;
-    // SetForegroundWindow 在前台锁定时会失败（返回 false）。媒体键一按，系统会把
-    // 目标当「用户刚交互过的进程」放行，这是绕开前台锁最省事的一条路（实测有效）。
+    // 最后手段：媒体键会让系统把目标当「用户刚交互过的进程」放行。
+    // 代价是切换一次播放状态，只能给「本来就要切播放状态」的命令用。
     try { MediaKey(0xB3); } catch { }
-    try { System.Threading.Thread.Sleep(120); return SetForegroundWindow(h); } catch { return false; }
+    try { System.Threading.Thread.Sleep(120); return BringKeyless(h); } catch { return false; }
   }
   // 发一个媒体键（0xB3 = 播放/暂停，0xB0 = 下一首，0xB1 = 上一首）。
   // SMTC 会话不存在时（网易云这版就不注册），媒体键是唯一还能控制它的途径。
@@ -843,7 +881,11 @@ public static class IslandBarClick {
     Color off = b.GetPixel(w - 1, y);
     int tx = ThumbX(b, y, off);
     if (tx > 0) p = tx;
-    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
+    // 假目标的共同特征：**没有真正的分界**。实测底部控制条那几行（y=870/906/907/910）
+    // 扫出来的 s=0（或很靠左），意味着从 x=0 到未播段之间全是渐变色，Row 一路都没
+    // 遇到「回到未播段色」的点；真进度条则一定有干净的已播段起点（实测 s=58~64）。
+    // 滑块分支是例外：它把 barStart 固定成 0 做全宽锚定，所以有滑块时不受这条限制。
+    if (tx <= 0 && s <= 0) return -1;    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
     if (!(f > 0.002 && f < 0.995)) return -1;         // 排除整行同色（Row 已挡大部分）
     // 已播段按「从窗口左缘到分界」算，不按 barStart 算：绿色主题已播段左端与背景
     // 同色，barStart 会落到分界左边几像素处，按它算 playedLen 恒为 4，整条作废。
@@ -876,7 +918,7 @@ public static class IslandBarClick {
         }
         if (!shot) return "";
         int best = -1, bs = -1, bp = -1, be = -1, by = -1;
-        int ch = 0, cs = -1, ce = -1, cys = -1;
+        int ch = 0, cs = -1, cp = -1, ce = -1, cys = -1;
         // 只在窗口下部 1/4 找：进度条贴着底部控制条，往上就是歌词/封面区，
         // 那里有成片的渐变和文字边缘，放进来只会制造假目标。
         int yTop = hh * 3 / 4;
@@ -885,20 +927,24 @@ public static class IslandBarClick {
         // 都满足 Row，归零会在这一大段中间重新起一个 2~12 行的假段，于是抓到控制条上的
         // 某个 mid 行（实测回报 y=903、pct=0.0643，而真进度条在 y=836）。改成「毒化」：
         // 一旦超长就置 -1，直到这一大段结束（出现 Row 不通过的行）才允许重新起段。
+        // 相邻行的连续性只比**分界位置** p 和右端 e，不比 barStart s：s 是「已播段左端
+        // 与背景回到同色」的位置，本身带抗锯齿噪声（实测真条四行 s=58/64/58/63、
+        // 换帧后 166/184/168/186，抖动可达 18），拿它判连续会把真条切碎成单行段，
+        // 于是 Probe 明明看到四行却因为「段高 < 2」返回空串（实测就是这样丢读数的）。
         for (int y = hh - 1; y >= yTop; y--) {
           int s, p, e;
           int sc = ScoreRow(bmp, y, hh, out s, out p, out e);
           if (sc > 0) {
-            if (ch == 0) { cys = y; cs = s; ce = e; ch = 1; }
+            if (ch == 0) { cys = y; cs = s; cp = p; ce = e; ch = 1; }
             else if (ch < 0) { /* 已在超长段内，继续吞掉 */ }
-            else if (Math.Abs(e - ce) <= 4 && Math.Abs(s - cs) <= 4) { ch++; }
+            else if (Math.Abs(e - ce) <= 4 && Math.Abs(p - cp) <= 6) { ch++; }
             else {
               if (ch >= 2 && ch <= 12) {
                 int mid = cys - ch / 2; int s2, p2, e2;
                 int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
                 if (sc2 > best) { best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
               }
-              cys = y; cs = s; ce = e; ch = 1;
+              cys = y; cs = s; cp = p; ce = e; ch = 1;
             }
             if (ch > 12) ch = -1;
           } else {
@@ -907,7 +953,7 @@ public static class IslandBarClick {
               int sc2 = ScoreRow(bmp, mid, hh, out s2, out p2, out e2);
               if (sc2 > best) { best = sc2; bs = s2; bp = p2; be = e2; by = mid; }
             }
-            ch = 0;
+            ch = 0; cs = -1; cp = -1; ce = -1;
           }
         }
         if (ch >= 2 && ch <= 12) {
@@ -952,7 +998,10 @@ public static class IslandBarClick {
     RECT r;
     if (!GetWindowRect(h, out r)) return "";
     // 必须先置前台：实测窗口不在前台时 SetCursorPos+mouse_event 点不动（点到遮挡物上）。
-    Activate(h);
+    // 但**只能**用不发键的 BringKeyless：老的 Activate(h) 在前台锁挡住时会发一次
+    // MediaKey(0xB3)，那一下会先把网易云暂停掉，用户看到的就是「点一下先暂停、
+    // 再点一次才播」（用户 m02535 原话）。点击进度条不该改变播放状态。
+    BringKeyless(h);
     System.Threading.Thread.Sleep(120);
     if (!GetWindowRect(h, out r)) return "";
     int tx = r.L + bs + (int)Math.Round((be - bs) * pct);
