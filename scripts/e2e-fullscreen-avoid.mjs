@@ -52,22 +52,50 @@ function withTimeout(promise, ms, tag) {
   ])
 }
 
-// 造一个全屏置顶 WinForms 窗口（覆盖主屏，SetForegroundWindow 强制抢前台 → 触发避让判定）。
-// 踩坑：ShowDialog+Activate 抢不到前台（Windows 前台锁定策略），必须 SetForegroundWindow。
-function makeFullscreen(tag) {
-  const script = [
+// 造受控窗口。kind：
+//  'full'  —— 无边框铺满主屏（真全屏应用）
+//  'small' —— 500×400 普通窗（用来把前台从「用户自己的最大化窗口」换成普通窗口）
+//
+// 两点实测教训（2026-11-17）：
+// ①**不要**给 full 加 TopMost：Electron 在 Windows 上 setAlwaysOnTop(true,'screen-saver') 的
+//   level 参数是 macOS 专用、Windows 只有 topmost 一个档位，于是两者同桶、按创建顺序压叠；
+//   若 full 比顶部 4px 感应带更晚置顶，就会盖住感应带 → A4 摸边唤回收不到 mouseenter（假失败）。
+//   前台靠 Steal()（attach + SetForegroundWindow + SwitchToThisWindow）拿，不需要 TopMost。
+// ②抢前台必须重试：用户正在敲键盘/前台是最大化窗口时，单次 SetForegroundWindow 会被系统拒绝。
+function makeWin(tag, kind) {
+  const cls = 'AW' + tag
+  const cs =
+    'using System; using System.Runtime.InteropServices; public class ' + cls + ' { ' +
+    '[DllImport(`"user32.dll`")] public static extern bool SetForegroundWindow(IntPtr h); ' +
+    '[DllImport(`"user32.dll`")] public static extern IntPtr GetForegroundWindow(); ' +
+    '[DllImport(`"user32.dll`")] public static extern void SwitchToThisWindow(IntPtr h, bool alt); ' +
+    '[DllImport(`"user32.dll`")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p); ' +
+    '[DllImport(`"user32.dll`")] public static extern bool AttachThreadInput(uint a, uint b, bool attach); ' +
+    '[DllImport(`"kernel32.dll`")] public static extern uint GetCurrentThreadId(); ' +
+    'public static bool Steal(IntPtr h) { uint p; uint ftid = GetWindowThreadProcessId(GetForegroundWindow(), out p); uint me = GetCurrentThreadId(); AttachThreadInput(me, ftid, true); bool ok = SetForegroundWindow(h); AttachThreadInput(me, ftid, false); SwitchToThisWindow(h, true); return ok; } }'
+  const lines = [
     'Add-Type -AssemblyName System.Windows.Forms',
-    'Add-Type "using System; using System.Runtime.InteropServices; public class FG' + tag + ' { [DllImport(`"user32.dll`")] public static extern bool SetForegroundWindow(IntPtr h); }"',
+    'Add-Type "' + cs + '"',
     '$f = New-Object System.Windows.Forms.Form',
-    "$f.FormBorderStyle = 'None'",
-    '$f.Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds',
-    '$f.TopMost = $true',
+    "$f.Text = '" + cls + "'",
     '$f.ShowInTaskbar = $false',
-    '$f.BackColor = [System.Drawing.Color]::FromArgb(30,30,40)',
-    '$f.Add_Shown({ [void][FG' + tag + ']::SetForegroundWindow($f.Handle) })',
-    '[void]$f.ShowDialog()'
-  ].join('; ')
-  const enc = Buffer.from(script, 'utf16le').toString('base64')
+    '$f.BackColor = [System.Drawing.Color]::FromArgb(30,30,40)'
+  ]
+  if (kind === 'full') {
+    lines.push("$f.FormBorderStyle = 'None'")
+    lines.push('$f.Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds')
+  } else {
+    lines.push("$f.StartPosition = 'Manual'")
+    lines.push('$f.Bounds = New-Object System.Drawing.Rectangle(300,300,500,400)')
+  }
+  lines.push('$f.Add_Shown({ [void][' + cls + ']::Steal($f.Handle) })')
+  lines.push('$tm = New-Object System.Windows.Forms.Timer')
+  lines.push('$tm.Interval = 400')
+  lines.push('$n = 0')
+  lines.push('$tm.Add_Tick({ $script:n++; if ([' + cls + ']::GetForegroundWindow().ToInt64() -eq $f.Handle.ToInt64() -or $script:n -gt 10) { $tm.Stop() } else { [void][' + cls + ']::Steal($f.Handle) } })')
+  lines.push('$tm.Start()')
+  lines.push('[void]$f.ShowDialog()')
+  const enc = Buffer.from(lines.join('; '), 'utf16le').toString('base64')
   return spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', enc], { stdio: 'ignore' })
 }
 
@@ -150,40 +178,64 @@ async function win32IslandVisible() {
   return out.trim().includes('VIS=1')
 }
 function watchIslandVisScript() {
-  return [
-    'Add-Type "using System; using System.Text; using System.Runtime.InteropServices; public class WV { public delegate bool EnumProc(IntPtr h, IntPtr lp); [DllImport(\`"user32.dll\`")] public static extern bool EnumWindows(EnumProc cb, IntPtr lp); [DllImport(\`"user32.dll\`")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); [DllImport(\`"user32.dll\`")] public static extern int GetClassName(IntPtr h, StringBuilder sb, int n); [DllImport(\`"user32.dll\`")] public static extern bool IsWindowVisible(IntPtr h); [DllImport(\`"user32.dll\`")] public static extern bool GetWindowRect(IntPtr h, out RECT r); public struct RECT { public int L, T, R, B; } }"',
-    '$found = 0',
-    '$cb = [WV+EnumProc]{ param($h, $lp)',
-    '  $p2 = 0; [void][WV]::GetWindowThreadProcessId($h, [ref]$p2)',
-    '  if ($script:epids -contains $p2) {',
-    '    $sb = New-Object System.Text.StringBuilder 256; [void][WV]::GetClassName($h, $sb, 256)',
-    '    if ($sb.ToString() -eq "Chrome_WidgetWin_1") {',
-    '      $r = New-Object WV+RECT; [void][WV]::GetWindowRect($h, [ref]$r)',
-    '      $hgt = $r.B - $r.T',
-    '      if ($hgt -gt 60 -and $hgt -lt 300 -and [WV]::IsWindowVisible($h)) { $script:found++ }',
-    '    }',
-    '  }',
-    '  return $true',
+  // ⚠ 2026-11-17 重写（原来恒返回 false，A3/A4 等「岛应可见」的断言全部假失败）：
+  // 旧实现用「PowerShell 脚本块当 EnumWindows 回调 + $script:found++」，而上面初始化的
+  // 是 `$found = 0`（少了 $script: 前缀）——两个变量根本不是同一个，计数永远传到外面是空，
+  // 于是 VIS= 恒为空。同类写法在 e2e-fullscreen-misjudge.mjs 也翻过车：回调里的脚本块
+  // 在 -EncodedCommand 下连字符串输出都被丢弃。结论：枚举逻辑写进 C#，别用 PS 回调。
+  const TICK = '`"'
+  const cs = [
+    'using System;',
+    'using System.Text;',
+    'using System.Runtime.InteropServices;',
+    'public class WV {',
+    'public delegate bool EnumProc(IntPtr h, IntPtr lp);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool EnumWindows(EnumProc cb, IntPtr lp);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder sb, int n);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsWindowVisible(IntPtr h);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
+    'public struct RECT { public int L, T, R, B; }',
+    'public static int Count(uint[] pids) {',
+    '  int found = 0;',
+    '  EnumWindows((h, l) => {',
+    '    uint p; GetWindowThreadProcessId(h, out p);',
+    '    if (Array.IndexOf(pids, p) < 0) return true;',
+    '    var sb = new StringBuilder(256); GetClassNameW(h, sb, 256);',
+    '    if (sb.ToString() != ' + TICK + 'Chrome_WidgetWin_1' + TICK + ') return true;',
+    '    RECT r; GetWindowRect(h, out r);',
+    '    int hgt = r.B - r.T;',
+    '    if (hgt > 60 && hgt < 300 && IsWindowVisible(h)) found++;',
+    '    return true;',
+    '  }, IntPtr.Zero);',
+    '  return found;',
     '}',
-    '$script:epids = (Get-Process electron -ErrorAction SilentlyContinue).Id',
-    '[void][WV]::EnumWindows($cb, [IntPtr]::Zero)',
-    '"VIS=$script:found"'
+    '}'
+  ].join(' ')
+  return [
+    'Add-Type "' + cs + '"',
+    '$pids = [uint32[]]@((Get-Process electron -ErrorAction SilentlyContinue).Id)',
+    '"VIS=" + [WV]::Count($pids)'
   ].join('; ')
 }
 try {
   await sleep(7000)
   cdp = await cdpConnect()
 
-  // A1 常态可见
-  await sleep(1500)
+  // A1 常态可见。注意：不能指望「起来就该可见」——本机若用户前台正开着一个**最大化**窗口，
+  // 修正后的判据（基准=工作区）会正确判定避让，起手就是隐藏态（2026-11-17 实测）。
+  // 先用一个普通小窗把前台换过来，再断言。
+  const baseWin = makeWin('a1', 'small')
+  await sleep(3500)
   const v1 = await islandVisible('A1')
   ok('A1 常态岛可见', v1 === true, String(v1))
+  baseWin.kill()
 
   // A2 造全屏窗口 → 2s 内岛隐藏（判定 1s + 去抖 300ms + 余量）
   // 光标先复位：上轮测试残留的光标位置（若停在顶部感应区）会让 probe 提前命中、污染后续断言
   await moveCursor('400', 500)
   await sleep(600)
-  const fullWin = makeFullscreen('a2')
+  const fullWin = makeWin('a2', 'full')
   await sleep(4000)
   const v2 = await islandVisible('A2')
   ok('A2 全屏→岛隐藏', v2 === false, String(v2))
@@ -200,11 +252,14 @@ try {
   const v5 = await islandVisible('A5')
   ok('A5 移开回隐', v5 === false, String(v5))
 
-  // A3 关全屏 → 恢复
+  // A3 关全屏 → 恢复。同样要先把前台交给一个普通窗口：只关全屏的话，前台可能回到
+  // 用户那个最大化窗口，按修正后的判据岛就该继续藏着（那不是 bug）。
   fullWin.kill()
-  await sleep(4000)
+  const backWin = makeWin('a3', 'small')
+  await sleep(3000)
   const v3 = await islandVisible('A3')
   ok('A3 退出全屏→恢复', v3 === true, String(v3))
+  backWin.kill()
 
   // A6 手动隐藏 → 摸边无效 → IPC 等价托盘恢复
   await cdpEval(cdp, `window.island.manualHide(); 1`)
@@ -224,7 +279,7 @@ try {
   await sleep(500)
 
   // A7 全屏时横幅临时现身 + 结束回隐（temp-show 通道等价验证；真实横幅链路 notify-live 已覆盖）
-  const fullWin2 = makeFullscreen('a7')
+  const fullWin2 = makeWin('a7', 'full')
   await sleep(4000)
   await cdpEval(cdp, `window.island.requestTempShow(true); 1`)
   await sleep(1000)
