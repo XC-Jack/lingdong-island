@@ -23,8 +23,8 @@
  * ④预检 taskkill 必须在 spawn 之前，否则把刚起的被测实例一起杀掉；
  * ⑤光标别停在屏幕顶部 4px 感应带里——那会让岛一直「临时现身」，测延迟必假失败。
  */
-import { spawn, execSync } from './isolate-userdata.mjs'
-import { existsSync } from 'node:fs'
+import { spawn, execSync, USER_DATA } from './isolate-userdata.mjs'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -168,6 +168,17 @@ function makeWindow(kind) {
   return spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', enc], { stdio: 'ignore' })
 }
 
+/** 把光标放到顶部 4px 感应带上（触发摸边临时现身）。 */
+async function hoverTopEdge() {
+  await ps(
+    'Add-Type "using System; using System.Runtime.InteropServices; public class MCE { [DllImport(' +
+      TICK +
+      'user32.dll' +
+      TICK +
+      ')] public static extern bool SetCursorPos(int x, int y); }"; [void][MCE]::SetCursorPos(768, 0); "ok"'
+  )
+}
+
 /** 光标移出顶部感应带：光标停在 y<4 会让岛「临时现身」，测隐藏延迟必假失败。 */
 async function parkCursor() {
   await ps(
@@ -242,6 +253,14 @@ if (process.platform === 'win32') {
     /* 没有残留 */
   }
   await sleep(700)
+}
+// 清掉上一轮留下的隔离偏好：M1 断言的是「字段缺失时的默认档」，上一轮结束时若把
+// avoidMode 写成了别的值，这一轮就会假失败（[实测] 2026-11-17 就这么翻过一次车）。
+// 只删隔离目录里的 prefs.json，真实用户数据在 %APPDATA% 下，这里完全不碰。
+try {
+  rmSync(join(USER_DATA, 'prefs.json'), { force: true })
+} catch {
+  /* 删不掉就按现状跑 */
 }
 
 const child = spawn(
@@ -329,8 +348,29 @@ try {
   ok('M5 延迟 ≤1000ms（现身）', showTimes.length === 3 && Math.max(...showTimes) <= 1000,
     `show=${showTimes.join(',')}ms avg=${avg(showTimes)}`)
 
-  // 恢复默认，别把测试设置留在隔离 prefs 里给下一轮添乱
+  // M6 残留状态自愈（回归 2026-11-17 用户实测：按 F11 岛没藏）
+  // 复现序列：最大化隐藏（avoided）→ 摸边临时现身 → 切成 fullscreen 档（期望变 false，但被
+  // tempVisible 压制）→ 光标移开 → 此时 state 仍是 avoided 而岛可见 → 再来一次真全屏，
+  // 旧代码的 commit(true) 因 state!=='normal' 静默失效，岛就一直亮着。新代码靠 reconcile 自愈。
   await setMode('maximized')
+  await parkCursor()
+  const staleWin = makeWindow('max')
+  wins.push(staleWin)
+  await sleep(2500)
+  await waitVisible(false, 3000) // 先确认已隐藏（avoided，感应带存在）
+  await hoverTopEdge()
+  await sleep(1500)
+  await setMode('fullscreen') // 判定 Z → 期望 false，但 tempVisible 压着不落地
+  await parkCursor()
+  await sleep(1500)
+  const fullWin3 = makeWindow('full')
+  wins.push(fullWin3)
+  await sleep(2000)
+  const healed = await waitVisible(false, 3000)
+  ok('M6 摸边现有残留后进入真全屏 → 岛仍能自己藏起来（自愈）', healed.value === false, `hide=${healed.elapsed}ms`)
+  fullWin3.kill()
+  staleWin.kill()
+  await sleep(1200)
 
   // M7 辅助进程运行期间 DevTools 必须仍然秒回（旧事故：长驻子进程 + 管道把 HTTP 拖死）
   const lat = []
@@ -342,6 +382,11 @@ try {
     await sleep(200)
   }
   ok('M7 辅助进程运行中 DevTools /json/list 仍秒回', Math.max(...lat) < 2000, `latency=${lat.join(',')}ms`)
+
+  // 收尾恢复默认，别把测试设置留在隔离 prefs 里给下一轮添乱（必须放在所有用例之后——
+  // [实测] 2026-11-17 放早了：M6 把档位切成 fullscreen 后没再复位，害得 e2e-fullscreen-misjudge
+  // 的 F4「最大化→隐藏」假失败）
+  await setMode('maximized')
 } catch (err) {
   console.error('e2e error:', err)
   results.push({ name: 'e2e 运行异常', pass: false, detail: String(err && err.message) })

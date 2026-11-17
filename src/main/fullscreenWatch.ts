@@ -85,6 +85,8 @@ let state: AvoidState = 'normal'
 let tempVisible = false
 /** 横幅临时现身中（渲染层 requestTempShow） */
 let bannerHold = false
+/** bannerHold 置 true 的时刻（看门狗用：横幅最长 8 秒，超时说明结束事件丢了） */
+let bannerHoldAt = 0
 let edgeWindow: BrowserWindow | null = null
 /** 当前「按策略应该避让」的期望值；-1 表示还没算过 */
 let wantHidden: boolean | null = null
@@ -298,13 +300,40 @@ export function initFullscreenWatch(
     }, DEBOUNCE_MS)
   }
 
-  /** 重新按当前判定 + 当前策略算一次期望值；变了才进去抖。 */
+  /** 把「窗口实际可见性」与期望对齐（自愈）。
+   *
+   * 为什么需要它：`commit()` 只在**期望值翻转**时动作，而 `tempVisible`（摸边临时现身）
+   * 与 `bannerHold`（横幅）会合法地压制某次翻转，之后可能留下
+   * 「期望隐藏、state 还是 avoided、窗口却还开着」的残留。此时再来一次
+   * `commit(true)` 会因为 `state !== 'normal'` 什么都不做，岛就再也不藏了。
+   * [实测] 2026-11-17 用户按 F11 岛没藏就是这个序列：摸边临时现过身 → 窗口最大化态
+   * 切到真全屏 → 期望变 true 但 state 已是 avoided → 静默失效。
+   * 每 150ms 对齐一次，代价可忽略（窗口可见性相同就什么都不做）。 */
+  const reconcile = (want: boolean): void => {
+    const win = getMain()
+    if (!win || win.isDestroyed()) return
+    if (state === 'manual' || tempVisible || bannerHold) return
+    const visible = win.isVisible()
+    if (want) {
+      if (state === 'normal') state = 'avoided'
+      if (visible) apply(true)
+    } else if (!visible) {
+      if (state === 'avoided') state = 'normal'
+      apply(false)
+    }
+  }
+
+  /** 重新按当前判定 + 当前策略算一次期望值；变了才进去抖，没变就做一次自愈对齐。 */
   const evaluate = (): void => {
     if (stopped) return
     const want = decision(judge)
-    if (want === wantHidden) return
-    wantHidden = want
-    commit(want)
+    if (want !== wantHidden) {
+      wantHidden = want
+      commit(want)
+      return
+    }
+    // 正在去抖就等它落地，别抢跑（否则会和去抖抢同一个窗口）
+    if (!debounceTimer) reconcile(want)
   }
 
   /** 读心跳文件：内容 `F|1731830000123`。只有时间戳变化才算「辅助进程还活着」。 */
@@ -325,6 +354,15 @@ export function initFullscreenWatch(
       judge = code
       if (fallbackTimer) stopFallback() // 辅助进程活了，关掉回退轮询
     }
+    // bannerHold 看门狗：横幅最长 8 秒。若结束事件丢了（渲染层定时器被节流/窗口被隐藏），
+    // bannerHold 会一直为 true 把岛钉在屏幕上——超过 20 秒就强制清掉。
+    if (bannerHold && bannerHoldAt > 0 && Date.now() - bannerHoldAt > 20000) {
+      console.log('[fullscreen] 横幅临时现身超时未结束，强制清除 bannerHold')
+      bannerHold = false
+      bannerHoldAt = 0
+    }
+    // 光标轮询自愈：摸边现身后万一轮询定时器丢了，岛会一直亮着，补一次
+    if (state === 'avoided' && tempVisible && !cursorTimer) startCursorWatch()
     // 每轮都评估一次：策略（avoidMode）改了不会产生新的心跳，靠这里在 150ms 内跟上
     evaluate()
     if (fresh) {
@@ -609,6 +647,7 @@ export function initFullscreenWatch(
   // 横幅临时现身（渲染层横幅/验证码弹出时调用，结束回传 false）
   ipcMain.on('island:temp-show', (_e, on: unknown) => {
     bannerHold = on === true
+    bannerHoldAt = bannerHold ? Date.now() : 0
     if (bannerHold && !getMain()?.isVisible()) apply(false)
     if (!bannerHold && state === 'avoided' && !tempVisible && decision(judge)) apply(true)
     if (!bannerHold && state === 'manual' && getMain()?.isVisible()) apply(true)

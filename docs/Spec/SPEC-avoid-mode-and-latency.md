@@ -74,7 +74,8 @@
 | M3 | `fullscreen`：最大化窗口 → 岛**保持可见**；真全屏 → 隐藏 | 同上 |
 | M4 | `off`：最大化/真全屏都不隐藏 | 同上 |
 | M5 | 隐藏延迟 ≤ 1.0 秒（目标 0.75），记录实测均值 | 同上，从 `SetForegroundWindow` 起算轮询可见性 |
-| M6 | 旧判定精度不回归 | `node scripts/e2e-fullscreen-misjudge.mjs` 7/0、`node scripts/e2e-fullscreen-avoid.mjs` 8/0 |
+| M6 | **残留状态自愈**：摸边临时现身之后（期望被压制）再进入真全屏，岛仍能自己藏起来 | `scripts/e2e-avoid-mode.mjs` 的 M6 |
+| M6b | 旧判定精度不回归 | `node scripts/e2e-fullscreen-misjudge.mjs` 7/0、`node scripts/e2e-fullscreen-avoid.mjs` 8/0 |
 | M7 | 辅助进程不拖死 DevTools HTTP | e2e 运行期间 `fetch('http://127.0.0.1:<port>/json/list')` 连续 5 次均 < 2s 成功 |
 | M8 | 辅助进程 CPU 占用远低于旧方案 | 记录 10 秒内辅助进程 `TotalProcessorTime` 增量，与旧方案（每次 spawn 340~516ms CPU × 1 次/秒）对比 |
 | M9 | 退出不留孤儿 PowerShell | 正常退出后 `Get-Process powershell` 中无本应用的辅助进程（按命令行含 `avoid-beat` 判定） |
@@ -102,6 +103,9 @@
 | 2026-11-17 | [实测] `node scripts/e2e-fullscreen-misjudge.mjs` | **7 过 / 0 败**（判定精度不回归：贴边窗可见、真全屏隐藏、cloak 壳层/桌面可见、最大化隐藏、恢复） | — |
 | 2026-11-17 | [实测] `node scripts/e2e-fullscreen-avoid.mjs` | **8 过 / 0 败**。本轮顺带修了两个测试基础设施 bug：①`cdpConnect` 取「第一个 page」会取到避让态的 4px 感应窗（`data:` 页面、没有 preload），实测表现为 `Runtime.evaluate` 永不返回、整轮卡死 → 改为按 `index.html` 挑页面 + 8 秒超时；②预检 `taskkill electron` 前移（原来在 spawn 之后，会杀掉被测实例）。A8 断言同步改成新机制 | — |
 | 2026-11-17 | [实测] 开发中修掉的两个真实缺陷 | ①手动隐藏期间期望值被记成 true 却没落地，`manualRestore` 后「恢复了却再也不自动避让」→ 恢复时清缓存重算（`e2e-fullscreen-avoid` 的 A7 横幅结束不回隐就是这个）；②辅助进程在应用被强杀时残留 80MB 的 `powershell.exe` → 脚本内盯父进程 pid 自行退出 | — |
+| 2026-11-17 | [实测] **A/B 复现用户上报的「按 F11 岛还在」**（`.tmp/fw-speed/`）：①把「摸边临时现身」与「最大化↔真全屏」组合起来复现残留；②旧代码（v0.1.2）跑新加的 M6 用例 **失败**（3000ms 内岛不藏），新代码 **通过**（287ms） | 确认根因是**状态机残留**而非判据：`commit(true)` 只在 `state==='normal'` 时落地，而 `tempVisible` 会合法压制一次翻转，留下「期望隐藏、state 还是 avoided、窗口却开着」的残留，之后同方向的判定就静默失效 | — |
+| 2026-11-17 | [实测] 修法与辅助安全带 | ①`evaluate()` 在期望值没翻转时做一次 `reconcile()`（把窗口可见性与期望对齐，150ms 一次，受 `tempVisible`/`bannerHold`/`manual` 保护）；②摸边现身后若光标轮询定时器丢了自动重挂；③`bannerHold` 超 20 秒未结束强制清除（横幅最长 8 秒，结束事件丢了才会残留） | 未给 `bannerHold` 的丢失场景造出真实复现（只做了超时兜底） |
+| 2026-11-17 | [实测] 三套 e2e 复跑 | `e2e-avoid-mode` **9 过 / 0 败**（新增 M6）、`e2e-fullscreen-misjudge` **7 过 / 0 败**、`e2e-fullscreen-avoid` **8 过 / 0 败**。顺带修了两处测试互相污染：`e2e-avoid-mode` 的「恢复默认档」放得太早（M6 之后没复位，害 misjudge 的 F4 假失败）、两个脚本现在都会清掉隔离目录里的 `prefs.json` | — |
 | — | 未做 | — | **未打包、未装机、未合并 `main`**；设置页三档的真人点击体验待用户确认（M10 装机部分） |
 
 ## 八、验收记录

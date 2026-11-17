@@ -21,8 +21,8 @@
  *   + IsWindowVisible，`MainWindowHandle` 与 CDP visibilityState 都不可靠；
  * ③spawn 的 electron 必须删 ELECTRON_RUN_AS_NODE，否则会退化成 node 跑不起来。
  */
-import { spawn, execSync } from './isolate-userdata.mjs'
-import { existsSync } from 'node:fs'
+import { spawn, execSync, USER_DATA } from './isolate-userdata.mjs'
+import { existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
@@ -326,6 +326,14 @@ function forceShellForeground(kind, holdMs = 0) {
 // 预检（必须放在 spawn 之前！放后面会把刚起的被测实例一起杀掉，于是全程没有岛窗口、
 // 所有「岛应可见」断言假失败）：清掉残留 electron。e2e 共用同一个隔离 userData，
 // 残留实例的岛窗口会被 islandVisible() 一并数进去（它按进程名 electron 枚举）。
+// 清掉上一轮留下的隔离偏好：本脚本 F4「最大化→隐藏」的前提是默认策略 maximized，
+// 若上一轮（如 e2e-avoid-mode）把 avoidMode 留成 fullscreen，F4 会假失败（[实测] 2026-11-17）。
+// 只删隔离目录，真实用户数据在 %APPDATA% 下，完全不碰。
+try {
+  rmSync(join(USER_DATA, 'prefs.json'), { force: true })
+} catch {
+  /* 删不掉就按现状跑 */
+}
 if (process.platform === 'win32') {
   try {
     execSync('taskkill /IM electron.exe /T /F', { stdio: 'ignore' })
