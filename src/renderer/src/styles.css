@@ -2636,7 +2636,11 @@ div.pm-row[draggable='true'] {
   transform-origin: left center;
   transform: scaleX(0);
   background: linear-gradient(90deg, #ff8fa3, #ff6b8a);
-  transition: transform 960ms linear;
+  /* 时钟每 250ms 走一格（MusicPanel 里的 setClockTick），过渡只要盖住「两格之间」即可。
+     原来写 960ms：正常前进时看不出来，但一旦位置被大幅度改写（用窗口进度条校准、
+     点完进度条跳转），文字是立刻变的、条子却用接近 1 秒慢慢滑过去，
+     用户 m01457 截图里「条已划到 58%、文字才 2:04/-2:26」就是这个滞后。 */
+  transition: transform 250ms linear;
   will-change: transform;
 }
 /* 拖动进度条时关掉位移动画：条子必须实时跟手，否则 960ms 的缓动会让人觉得「拖不动/回缩」 */

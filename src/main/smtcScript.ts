@@ -579,6 +579,7 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 public static class IslandBarClick {
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -587,7 +588,13 @@ public static class IslandBarClick {
   [DllImport("user32.dll")] static extern void mouse_event(uint f, int dx, int dy, uint data, IntPtr extra);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int n);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int max);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L; public int T; public int R; public int B; }
   static bool dpiReady = false;
   public static void InitDpi() {
@@ -595,19 +602,40 @@ public static class IslandBarClick {
     try { SetProcessDPIAware(); } catch { }
     dpiReady = true;
   }
+  // 取某进程「面积最大的可见顶层窗口」。
+  // 为什么要这条而不是直接用 Process.MainWindowHandle：实测网易云被最小化到托盘后，
+  // MainWindowHandle 仍指着一个 159x27 的残壳（iconic=True），PrintWindow 抓到的就是
+  // 那张空图，Probe 因为 w<200 直接拒收——barPct 恒 -1 的真因就在这里。
+  // EnumWindows 能拿到同一 pid 下所有顶层窗口，按面积挑最大的那个才是真主窗。
+  public static IntPtr Biggest(uint pid) {
+    IntPtr best = IntPtr.Zero;
+    long bestArea = 0;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint p;
+      GetWindowThreadProcessId(h, out p);
+      if (p != pid) return true;
+      if (!IsWindowVisible(h)) return true;
+      RECT r;
+      if (!GetWindowRect(h, out r)) return true;
+      long a = (long)(r.R - r.L) * (long)(r.B - r.T);
+      if (a > bestArea) { bestArea = a; best = h; }
+      return true;
+    }, IntPtr.Zero);
+    return best;
+  }
   public static IntPtr FindByTitle(string title) {
     if (title == null || title.Length < 2) return IntPtr.Zero;
-    IntPtr hit = IntPtr.Zero;
-    Process[] ps = Process.GetProcesses();
-    foreach (Process p in ps) {
+    foreach (Process p in Process.GetProcesses()) {
       try {
-        if (p.MainWindowHandle == IntPtr.Zero) continue;
         string t = p.MainWindowTitle;
         if (t == null || t.Length == 0) continue;
-        if (t.IndexOf(title, StringComparison.OrdinalIgnoreCase) >= 0) { hit = p.MainWindowHandle; break; }
+        if (t.IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) continue;
+        IntPtr h = Biggest((uint)p.Id);
+        if (h == IntPtr.Zero) h = p.MainWindowHandle;
+        if (h != IntPtr.Zero) return h;
       } catch { }
     }
-    return hit;
+    return IntPtr.Zero;
   }
   // 按进程名找主窗口（传 "cloudmusic.exe" 或 "cloudmusic" 都行）。
   // 为什么要这条兜底：用户切到歌单页/首页时，网易云主窗标题会从「歌名 - 歌手」变成
@@ -618,45 +646,62 @@ public static class IslandBarClick {
     string want = exeName.Trim();
     if (want.Length < 3) return IntPtr.Zero;
     if (!want.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) want = want + ".exe";
-    IntPtr hit = IntPtr.Zero;
-    Process[] ps = Process.GetProcesses();
-    foreach (Process p in ps) {
+    foreach (Process p in Process.GetProcesses()) {
       try {
-        if (p.MainWindowHandle == IntPtr.Zero) continue;
         string pn = p.ProcessName + ".exe";
-        if (string.Equals(pn, want, StringComparison.OrdinalIgnoreCase)) { hit = p.MainWindowHandle; break; }
+        if (!string.Equals(pn, want, StringComparison.OrdinalIgnoreCase)) continue;
+        IntPtr h = Biggest((uint)p.Id);
+        if (h == IntPtr.Zero) h = p.MainWindowHandle;
+        if (h != IntPtr.Zero) return h;
       } catch { }
     }
-    return hit;
+    return IntPtr.Zero;
   }
   // 取该进程主窗口的标题。SMTC 会话为空时（网易云不注册），标题里的「歌名 - 歌手」
   // 是唯一还能拿到的曲目信息——它把歌名放在自己窗口标题上（实测「梦哑 - 任然」）。
+  // 不能再用 Process.MainWindowTitle：实测网易云会把 MainWindowHandle 指到一个
+  // 109x26 的 Chrome_WidgetWin_0（标题为空），于是标题、进度条一起失效。
+  // 改成「面积最大的可见窗口 + GetWindowText」才稳定。
   public static string TitleOf(string exeName) {
     if (exeName == null) return "";
     string want = exeName.Trim();
     if (want.Length < 3) return "";
     if (!want.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) want = want + ".exe";
+    string fallback = "";
     foreach (Process p in Process.GetProcesses()) {
       try {
-        if (p.MainWindowHandle == IntPtr.Zero) continue;
         if (!string.Equals(p.ProcessName + ".exe", want, StringComparison.OrdinalIgnoreCase)) continue;
-        string t = p.MainWindowTitle;
-        return t == null ? "" : t;
+        // 网易云一次开三个进程，只有其中一个有真窗口。不能遇到第一个同名进程就返回：
+        // 先碰到的往往是无窗口的辅助进程，直接返回空串会让标题、进度条一起失效。
+        IntPtr h = Biggest((uint)p.Id);
+        if (h != IntPtr.Zero) {
+          StringBuilder sb = new StringBuilder(1024);
+          if (GetWindowText(h, sb, sb.Capacity) > 0) return sb.ToString();
+        }
+        if (fallback.Length == 0) {
+          string t = p.MainWindowTitle;
+          if (t != null && t.Length > 0) fallback = t;
+        }
       } catch { }
     }
-    return "";
+    return fallback;
   }
   // 点进度条之前必须把窗口置前台（实测 2026-11-17）。
   // SetCursorPos + mouse_event 是「真实鼠标」事件，落在屏幕坐标上；窗口被别的窗口盖住时
   // 点到的就是遮挡物，进度条纹丝不动（实测 BEFORE 0.8494 / AFTER 0.8554 = 没跳）。
   // 置前台后同一段代码一次成功（BEFORE 0.9205 / AFTER 0.2619）。
   // 注意：抓图（PrintWindow）不需要前台，只有点击需要，所以只在 ClickPct 里调。
-  public static bool Activate(IntPtr h) {
+  public static bool Activate(IntPtr h) { return Activate(h, true); }
+  // useKey=false 时不发媒体键。降级路径的 toggle/next/prev 要自己发媒体键，
+  // 若先调 Activate 再发，前台锁解开时那次「试探性」0xB3 会把播放状态切一下，
+  // 紧接着自己发的 0xB3 又切回去——两次抵消，表现就是「播放键按了没反应」。
+  public static bool Activate(IntPtr h, bool useKey) {
     if (h == IntPtr.Zero) return false;
     try { ShowWindow(h, 9); } catch { }
     try {
       if (SetForegroundWindow(h)) return true;
     } catch { }
+    if (!useKey) return false;
     // SetForegroundWindow 在前台锁定时会失败（返回 false）。媒体键一按，系统会把
     // 目标当「用户刚交互过的进程」放行，这是绕开前台锁最省事的一条路（实测有效）。
     try { MediaKey(0xB3); } catch { }
@@ -714,6 +759,18 @@ public static class IslandBarClick {
     barStart = p + 1;
     barEnd = w - 1;
     int playedLen = playedEnd - barStart + 1;
+    // ⑤ 滑块确认：绿色/橄榄色主题（如「颜色 / Gareth.T」）里已播段与背景只差
+    //    20 级，向左扫同色会把 barStart 落到分界左边几像素（实测 s=763,p=766），
+    //    于是 playedLen=4 过不了下面的门槛。但**分界位置本身是准的**（offL=766
+    //    → 766/1321=0.58，与真实进度一致），只要确认分界上确实贴着那个白色小滑块
+    //    （实测 x=764..766、色 (235,236,232)、亮度比未播段高 180），就说明这是
+    //    真进度条，把 barStart 固定为 0（全宽锚定）。
+    int thumb = ThumbX(b, y, off);
+    if (thumb > 0 && Math.Abs(thumb - offL) <= 14) {
+      playedEnd = thumb;
+      barStart = 0;
+      return true;
+    }
     if (playedLen < 6) return false;                  // 已播段为空（刚开播）不认
     // 取样点必须紧贴分界左侧：已播段内部是渐变，从左边取会和背景混在一起
     // （实测绿色主题左端 (41,53,33) 与未播段 (37,49,30) 只差 4）。
@@ -723,22 +780,80 @@ public static class IslandBarClick {
     // 无饱和度（hover 灰度态）时退化判据：已播段明显亮于未播段
     int lumOn = (on.R * 30 + on.G * 59 + on.B * 11) / 100;
     int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
-    return (lumOn - lumOff) >= 25;
+    if (lumOn - lumOff >= 25) return true;
+    return ThumbRow(b, y, w, off);
   }
-  // 给候选行打分：越宽、越靠下、已播段越有色相，越可能是真进度条。
+  // 滑块法（第四种定位方式，专治「已播段与背景同色」的主题）：
+  // 绿色/橄榄色主题下已播段是 (145,159,48) 而背景 (53,56,22)，只有极小一段，
+  // 真正的定位靠贴着分界的**白色小滑块**（实测宽 4px、颜色 (235,236,232)、
+  // 亮度比未播段高 180+）。判据：在未播段里找到一段 2~8px 宽、亮度远超未播段的
+  // 窄亮块，且它左右两侧都是未播段同色——那就是滑块，滑块中心即当前进度。
+  static bool ThumbRow(Bitmap b, int y, int w, Color off) {
+    return ThumbX(b, y, off) > 0;
+  }
+  // 滑块中心 x（读不到返回 -1）。
+  // 实测「颜色 / Gareth.T」橄榄绿主题 y=837 的一行：
+  //   762=(53,56,23) 763=(204,205,196) 764..766=(235,236,232) 767=(70,73,41) 768=(53,56,22)
+  // 滑块本体 3~4px、亮度比未播段高 180+，但它左右各有 1~2px 抗锯齿过渡
+  // （763 和 767 都不是纯未播段色），所以左右两侧都要允许跳过 1~3px 再比对，
+  // 否则每行都会因为过渡色被判失败（实测就是这样：runLen=4 但右侧 767 差 52 被拒）。
+  static int ThumbX(Bitmap b, int y, Color off) {
+    int w = b.Width;
+    int lumOff = (off.R * 30 + off.G * 59 + off.B * 11) / 100;
+    int x = 0, runStart = -1, bestX = -1, bestLen = 0;
+    while (x < w) {
+      Color c = b.GetPixel(x, y);
+      int lum = (c.R * 30 + c.G * 59 + c.B * 11) / 100;
+      if ((lum - lumOff) >= 90) {
+        if (runStart < 0) runStart = x;
+      } else if (runStart >= 0) {
+        int runLen = x - runStart;                    // 亮度块 [runStart, x-1]
+        if (runLen >= 2 && runLen <= 10 && runStart > 0 && NearOff(b, y, runStart - 1, -1, off)
+            && NearOff(b, y, x, 1, off)) {
+          if (runLen > bestLen) { bestLen = runLen; bestX = (runStart + x - 1) / 2; }
+        }
+        runStart = -1;
+      }
+      x++;
+    }
+    return bestX;
+  }
+  // 从 x0 起沿 dir 方向最多看 3px，只要有一格回到未播段色就认为这一侧是「干净边界」。
+  // 为的是跨过滑块自己的抗锯齿过渡像素，而不是把它们当成别的图形。
+  static bool NearOff(Bitmap b, int y, int x0, int dir, Color off) {
+    int w = b.Width;
+    for (int k = 0; k < 3; k++) {
+      int x = x0 + dir * k;
+      if (x < 0 || x >= w) return false;
+      if (Df(b.GetPixel(x, y), off) <= 12) return true;
+    }
+    return false;
+  }
+  // 给候选行打分。判据必须避开「底部控制条上的图标/文字行」：实测那些行也能通过
+  // Row（off=(27,27,27)、offL≈84、playedLen 只有 11~17px），而且因为它们的 barStart
+  // 比真进度条的 barStart 更靠左（真条已播段左端与背景同色，实测扫出 x=95），
+  // 若按「条带宽度占比」打分反而会让假行胜出（12160 > 11980，抓到 y=903）。
+  // 真正的区分点是**已播段长度**：真条 423px≈32% 窗宽，假行只有 1%。
   static int ScoreRow(Bitmap b, int y, int hh, out int s, out int p, out int e) {
     s = -1; p = -1; e = -1;
     if (!Row(b, y, out s, out p, out e)) return -1;
     int w = b.Width;
-    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
-    if (!(f > 0.02 && f < 0.98)) return -1;           // 已播/未播都得有，排除整行同色
-    double widthRatio = (double)(e - s + 1) / (double)w;
-    if (widthRatio < 0.35) return -1;                 // 真进度条横贯窗口大半
-    Color on = b.GetPixel(Math.Max(s + 1, p - Math.Min(12, Math.Max(1, (p - s) / 2))), y);
+    // 滑块优先：见到贴着分界的白色小滑块就用它当分界（实测绿色主题已播段与背景
+    // 几乎同色，靠颜色扫出来的 playedEnd 只能到 5px，完全反映不了真实进度）。
     Color off = b.GetPixel(w - 1, y);
+    int tx = ThumbX(b, y, off);
+    if (tx > 0) p = tx;
+    double f = (double)(p + 1) / (double)w;           // 全宽锚定：网易云进度条铺满整窗宽
+    if (!(f > 0.002 && f < 0.995)) return -1;         // 排除整行同色（Row 已挡大部分）
+    // 已播段按「从窗口左缘到分界」算，不按 barStart 算：绿色主题已播段左端与背景
+    // 同色，barStart 会落到分界左边几像素处，按它算 playedLen 恒为 4，整条作废。
+    int playedLen = p + 1;
+    if (playedLen * 50 < w) return -1;                // 已播段不足窗宽 2%：是图标/文字，不是进度条
+    Color on = b.GetPixel(Math.Max(1, p - Math.Min(12, Math.Max(1, playedLen / 2))), y);
     bool warm = on.R > 110 && (on.R - on.B) > 20;
     bool bright = (on.R + on.G + on.B) > (off.R + off.G + off.B);
-    return (int)(widthRatio * 10000) + Sat(on) * 20 + (warm ? 2500 : 0)
+    // 已播段越长越可能是真进度条（占比 0..100 分），其余项只做小幅加权。
+    return (int)(playedLen * 100.0 / (double)w) + Sat(on) * 20 + (warm ? 2500 : 0)
       + (bright ? 1200 : 0) + (y > hh * 55 / 100 ? 1500 : 0);
   }
   // "pct|yInWin|winW|winH|barStart|barEnd"，追加两个字段是为了让点击落在条带内而不是整窗宽
@@ -766,11 +881,16 @@ public static class IslandBarClick {
         // 那里有成片的渐变和文字边缘，放进来只会制造假目标。
         int yTop = hh * 3 / 4;
         // 从下往上扫；进度条高度 2~12 行（含抗锯齿），超出的连续段一定是别的东西。
+        // 注意：超过 12 行时**不能**把 ch 归零再继续——底部控制条的图标/按钮有几十行
+        // 都满足 Row，归零会在这一大段中间重新起一个 2~12 行的假段，于是抓到控制条上的
+        // 某个 mid 行（实测回报 y=903、pct=0.0643，而真进度条在 y=836）。改成「毒化」：
+        // 一旦超长就置 -1，直到这一大段结束（出现 Row 不通过的行）才允许重新起段。
         for (int y = hh - 1; y >= yTop; y--) {
           int s, p, e;
           int sc = ScoreRow(bmp, y, hh, out s, out p, out e);
           if (sc > 0) {
             if (ch == 0) { cys = y; cs = s; ce = e; ch = 1; }
+            else if (ch < 0) { /* 已在超长段内，继续吞掉 */ }
             else if (Math.Abs(e - ce) <= 4 && Math.Abs(s - cs) <= 4) { ch++; }
             else {
               if (ch >= 2 && ch <= 12) {
@@ -780,6 +900,7 @@ public static class IslandBarClick {
               }
               cys = y; cs = s; ce = e; ch = 1;
             }
+            if (ch > 12) ch = -1;
           } else {
             if (ch >= 2 && ch <= 12) {
               int mid = cys - ch / 2; int s2, p2, e2;
@@ -788,7 +909,6 @@ public static class IslandBarClick {
             }
             ch = 0;
           }
-          if (ch > 12) ch = 0;
         }
         if (ch >= 2 && ch <= 12) {
           int mid = cys - ch / 2; int s2, p2, e2;
@@ -810,6 +930,11 @@ public static class IslandBarClick {
   }
   // 点进度条 pct 处，返回 "x,y"；读不到进度条返回空串
   public static string ClickPct(IntPtr h, double pct) {
+    // 最小化时 GetWindowRect 只回一个 159x27 的图标位，Probe 必然失败。
+    // 点击本来就需要窗口可见（鼠标事件落在屏幕坐标上），所以这里先还原。
+    // 只在这一条路径上还原：poll 每秒都调 Probe，若也在那里还原，用户把网易云收起来
+    // 听歌时窗口会被每秒弹出来一次，比不显示进度更烦人。
+    try { if (IsIconic(h)) { ShowWindow(h, 9); System.Threading.Thread.Sleep(320); } } catch { }
     string info = Probe(h);
     if (info.Length == 0) return "";
     string[] parts = info.Split('|');
@@ -953,33 +1078,65 @@ function GetAppVolume($app) {
 $script:fbExe = ""
 $script:fbPct = -1.0
 $script:fbPlaying = $false
+# 把上次认到的播放器记到脚本旁边的小文件里。
+# 为什么要落盘：程序冷启动时若网易云正好处于暂停态（音频会话已被它自己撤掉），
+# 第一帧 ActiveList 就是空的，$fbExe 也是空的，界面会闪一下「现在没有在放歌」。
+# 记住上次的进程名就能让冷启动第一帧直接认出它（实测重启后首帧 active=false 即此因）。
+$script:fbStateFile = [System.IO.Path]::Combine($PSScriptRoot, "last-player.txt")
+try {
+  if ([System.IO.File]::Exists($script:fbStateFile)) {
+    $saved = ([System.IO.File]::ReadAllText($script:fbStateFile)).Trim()
+    if (-not [string]::IsNullOrEmpty($saved)) { $script:fbExe = $saved }
+  }
+} catch { }
+
+function SaveFbExe($exe) {
+  try {
+    if ([string]::IsNullOrEmpty($exe)) { return }
+    if ($exe -eq $script:fbSavedExe) { return }
+    [System.IO.File]::WriteAllText($script:fbStateFile, $exe)
+    $script:fbSavedExe = $exe
+  } catch { }
+}
+$script:fbSavedExe = $script:fbExe
 
 function GetFallback() {
   try { $list = [IslandAppVol.AppVol]::ActiveList() } catch { $list = "" }
-  if ([string]::IsNullOrEmpty($list)) { return $null }
   $best = $null
   $bestScore = -1
-  foreach ($item in $list.Split(';')) {
-    $f = $item.Split(',')
-    if ($f.Length -lt 3) { continue }
-    $exe = [string]$f[0]
-    # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
-    $procId = 0
-    [void][int]::TryParse([string]$f[1], [ref]$procId)
-    $st = 0
-    [void][int]::TryParse([string]$f[2], [ref]$st)
-    $t = ""
-    try { $t = [IslandBarClick]::TitleOf($exe) } catch { $t = "" }
-    # 没有主窗口的会话（系统音效、后台更新进程）不能用：抓进度条和点击都靠窗口
-    if ([string]::IsNullOrEmpty($t)) { continue }
-    # 打分：正在出声 > 标题带「 - 」（说明在放歌）> 上次认过的那个
-    $score = 0
-    if ($st -eq 1) { $score += 100 }
-    if ($t.Contains(" - ")) { $score += 50 }
-    if ($exe -eq $script:fbExe) { $score += 30 }
-    if ($score -gt $bestScore) {
-      $bestScore = $score
-      $best = @{ exe = $exe; procId = $procId; state = $st; title = $t }
+  if (-not [string]::IsNullOrEmpty($list)) {
+    foreach ($item in $list.Split(';')) {
+      $f = $item.Split(',')
+      if ($f.Length -lt 3) { continue }
+      $exe = [string]$f[0]
+      # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
+      $procId = 0
+      [void][int]::TryParse([string]$f[1], [ref]$procId)
+      $st = 0
+      [void][int]::TryParse([string]$f[2], [ref]$st)
+      $t = ""
+      try { $t = [IslandBarClick]::TitleOf($exe) } catch { $t = "" }
+      # 没有主窗口的会话（系统音效、后台更新进程）不能用：抓进度条和点击都靠窗口
+      if ([string]::IsNullOrEmpty($t)) { continue }
+      # 打分：正在出声 > 标题带「 - 」（说明在放歌）> 上次认过的那个
+      $score = 0
+      if ($st -eq 1) { $score += 100 }
+      if ($t.Contains(" - ")) { $score += 50 }
+      if ($exe -eq $script:fbExe) { $score += 30 }
+      if ($score -gt $bestScore) {
+        $bestScore = $score
+        $best = @{ exe = $exe; procId = $procId; state = $st; title = $t; live = $true }
+      }
+    }
+  }
+  # 网易云一暂停就把音频会话整条撤掉（实测：暂停后 persess 里 cloudmusic 直接消失），
+  # 只靠 ActiveList 会让界面在「按暂停」的瞬间变成空态——用户看到的是「按钮没反应」。
+  # 所以会话消失后仍认上次那个播放器，只要它的窗口还在（标题还能读到）。
+  if ($null -eq $best -and $script:fbExe -ne "") {
+    $t2 = ""
+    try { $t2 = [IslandBarClick]::TitleOf($script:fbExe) } catch { $t2 = "" }
+    if (-not [string]::IsNullOrEmpty($t2)) {
+      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $t2; live = $false }
     }
   }
   if ($null -eq $best) { return $null }
@@ -996,19 +1153,28 @@ function GetFallback() {
   $pct = GetBarPct $title $exe
   $peak = -1.0
   try { $peak = [double][IslandAppVol.AppVol]::Peak($exe) } catch { $peak = -1.0 }
-  # 判「在播/暂停」：峰值 > 阈值算在播；进度的确在走也算在播（安静段落峰值会很低）；
-  # 峰值归零且进度一动不动才算暂停。宁可多判一帧在播，也不要让歌词突然冻住。
+  # 判「在播/暂停」：以**音频峰值**为准（实测这台机器上它极其干净：在播 0.002~0.005，
+  # 暂停恒为 0.00000，相差三个数量级）。
+  # 不能再用「进度在前进」当在播证据：网易云暂停时不会立刻把音频会话撤掉（state 仍为 1），
+  # 而进度条的读数在两帧之间可能刚好前进了 0.005（暂停发生在两次采样之间），
+  # 那样会把「已经暂停」误判成「在播」，界面按钮就一直显示暂停图标。
+  # 峰值取不到（<0，说明没匹配到会话）时才退回进度判据。
   $playing = $script:fbPlaying
-  if ($peak -gt 0.0008) {
+  if (-not [bool]$best.live) {
+    # 会话都不在了 = 播放器自己撤了音频流 = 暂停。这时不能沿用上一帧的 true，
+    # 否则歌词会一直滚（实测过：暂停后歌词还在走，比不放歌更迷惑）。
+    $playing = $false
+  } elseif ($peak -gt 0.0008) {
     $playing = $true
+  } elseif ($peak -ge 0 -and $peak -le 0.0002) {
+    $playing = $false
   } elseif ($pct -ge 0 -and $script:fbPct -ge 0 -and ($pct - $script:fbPct) -gt 0.0008) {
     $playing = $true
-  } elseif ($peak -ge 0 -and $peak -lt 0.0002 -and $pct -ge 0 -and $script:fbPct -ge 0 -and [math]::Abs($pct - $script:fbPct) -lt 0.0005) {
-    $playing = $false
   }
   $script:fbExe = $exe
   $script:fbPct = $pct
   $script:fbPlaying = $playing
+  SaveFbExe $exe
   return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct }
 }
 
@@ -1255,8 +1421,9 @@ while ($true) {
         try {
           $h = [IslandBarClick]::FindByExe($fb.exe)
           if ($h -ne [IntPtr]::Zero) {
-            # 先置前台：媒体键本身不需要，但如果该进程有前台锁，keybd_event 也会被吞
-            [void][IslandBarClick]::Activate($h)
+            # 先置前台：媒体键本身不需要，但如果该进程有前台锁，keybd_event 也会被吞。
+            # useKey=false：这里马上要自己发一次媒体键，Activate 不能再发。
+            [void][IslandBarClick]::Activate($h, $false)
           }
           [IslandBarClick]::MediaKey($vk)
           $ok = $true
