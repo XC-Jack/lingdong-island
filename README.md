@@ -100,3 +100,7 @@ Electron 45 + React 19 + TypeScript + electron-vite，打包用 electron-builder
 - 产品事实只写进 `docs/facts/`，同一项事实只在一个文件里维护，其他位置用链接引用。
 - 每次开发的规格写进 `docs/Spec/`，开发与验收都用同一份。
 - 工程规则只写在 `docs/工程规则.md`，其它入口引用它。
+
+## 许可证
+
+[PolyForm Noncommercial License 1.0.0](LICENSE.md)：个人、学习、研究等非商业用途可自由使用、修改和分发；**商业使用需要另行获得授权**。完整条款见 [`LICENSE.md`](LICENSE.md)。
