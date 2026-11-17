@@ -45,6 +45,6 @@
 
 - 单仓库单工作树，`src/` 是普通目录，**没有**嵌套 Git 仓库（博主模板里的 `src/.git/` 不适用于本项目）。
 - 版本回溯靠 Git 标签，标签清单见 `docs/facts/版本历史.md`；未打标签的轮次用 `git log --oneline` 检索。
-- **当前没有配置远端仓库**，只在本地管理，不 push。
+- 远端仓库：`https://github.com/XC-Jack/lingdong-island`（公开，2026-11-17 首次推送）。`origin` 已配置；是否 push 仍按当次用户指示，不默认推送。
 - 项目根 `D:/Users/honor/Documents/Project/灵动岛`；安装版在 `D:\软件\灵动岛\`；运行数据在 `%APPDATA%\lingdong-island\`。
 - `.backups/` 是本地快照（Git 忽略），`.tmp/` 是可再生成的辅助文件，都不算备份。
