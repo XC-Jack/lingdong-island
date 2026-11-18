@@ -80,6 +80,7 @@
 - 静默安装 `/S` 不复用上次目录，必须带 `/D=` 才能落到 `D:\软件\灵动岛\`。
 - 自定义 NSIS 文案的符号名**不带 UN 前缀**：`MUI_WELCOMEPAGE_TITLE/TEXT`、`MUI_FINISHPAGE_TITLE/TEXT`，不是 `MUI_UNWELCOMEPAGE_*`（`UN` 只出现在语言字符串 ID 里）。写错会静默失效、不报错。
 - [实测] 卸载器结束（进程已退、注册表项已删）后，`resources\app.asar` 仍被一个不可见句柄锁住，`DeleteFile` / `MoveFileEx(…, DELAY_UNTIL_REBOOT)` / `Remove-Item` 全部报 `being used by another process`，无法在本次会话内清掉；但对该目录直接「覆盖安装」可以成功（新 asar 覆盖旧 asar），功能不受影响，只是目录清理不彻底。用户侧表现 = 卸载后安装目录里剩一个 `resources` 文件夹。疑似火绒（`HipsDaemon`）或系统索引器持有句柄，未验证。
+- [实测] **2026-11-18 复测（v0.1.9）：未复现。** 应用运行中（4 进程、asar 被自身独占）执行 `Uninstall 灵动岛.exe /S`，结束后进程 0、`Test-Path 'D:\软件\灵动岛'` = False、无 `app.asar` 残留、卸载注册项已删；userData 的 `todos.json` / `schedule.json` / `shelf.json` 均完好。结合本文件下方与 `SPEC-us-037-task-list-growth` 的 Restart Manager 现场（DSH 开发工具宿主持有旧 asar 句柄），判断历史残留由**外部进程持有句柄**造成，不是产品删除逻辑的问题。**副作用**：卸载会移除 `com.xcjack.lingdong-island` 自启项，重装不会自动恢复，需重新打开开关。
 - [实测] 卸载向导**没有任何勾选项** —— 数据说明是欢迎页的正文段落，不是复选框。用户反馈「没看到有不动你的数据这个选项」符合设计：这一版只做说明文案，不提供选项。
 
 ## 八、验收记录
