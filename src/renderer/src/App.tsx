@@ -50,7 +50,8 @@ const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五
 /**
  * 时钟文本（SPEC-clock-date-format）。顺序固定：日期 → 星期 → 时间
  * （用户 2026-11-18「日期第一位，其次星期，然后时间」）。
- * 日期用 M/D 不带年份：收起态胶囊只有一行，年份没人看还占宽度。
+ * 日期用「M月D日」不带年份：收起态胶囊只有一行，年份没人看还占宽度；
+ * 用户 2026-11-18 明确不要斜杠（「我不要斜杠，给我月日」）。
  * 不带格式参数时保持原来的 `HH:mm`，待办/日程的「已过期」比较继续用它。
  */
 function formatClock(d: Date, fmt: ClockFormat = 'time'): string {
@@ -58,7 +59,7 @@ function formatClock(d: Date, fmt: ClockFormat = 'time'): string {
   const mm = String(d.getMinutes()).padStart(2, '0')
   const hm = `${hh}:${mm}`
   if (fmt === 'time') return hm
-  const md = `${d.getMonth() + 1}/${d.getDate()}`
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`
   return fmt === 'date' ? `${md} ${hm}` : `${md} ${WEEKDAY_NAMES[d.getDay()]} ${hm}`
 }
 

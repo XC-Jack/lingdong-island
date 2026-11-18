@@ -152,11 +152,11 @@ const CLOCK_META: Record<ClockFormat, { label: string; desc: string }> = {
   },
   date: {
     label: '日期 + 时间',
-    desc: '显示 11/18 17:54，月份日期在前、时间在后。'
+    desc: '显示 11月18日 17:54，月份日期在前、时间在后。'
   },
   dateWeek: {
     label: '日期 + 星期 + 时间',
-    desc: '显示 11/18 周二 17:54，最完整的一档。'
+    desc: '显示 11月18日 周二 17:54，最完整的一档。'
   }
 }
 
