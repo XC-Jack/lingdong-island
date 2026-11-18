@@ -18,7 +18,8 @@
  * 端口会消失——界面会给出「一键重启开启」的入口（见 enableNeteaseDebugPort）。
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 
 const CDP_PORT = 9222
 /** 单条 CDP 命令的超时；页面卡住时别把整轮轮询拖死 */
@@ -344,10 +345,10 @@ let runningCache = { at: 0, value: false }
 /**
  * 网易云进程在不在（用于在界面上给出「开启后台控制」入口）。
  * 用 tasklist 而不是 WMI：win11 上 WMI 查询经常卡 1~2 秒，tasklist 实测 30~60ms。
- * 4 秒缓存，避免每秒 spawn 一次。
+ * 2 秒缓存：自动开启靠它发现「刚被普通方式拉起」的网易云，缓存太长会白等。
  */
 export async function isNeteaseRunning(): Promise<boolean> {
-  if (Date.now() - runningCache.at < 4000) return runningCache.value
+  if (Date.now() - runningCache.at < 2000) return runningCache.value
   let value = false
   try {
     const out = await new Promise<string>((resolve, reject) => {
@@ -366,40 +367,93 @@ export async function isNeteaseRunning(): Promise<boolean> {
   return value
 }
 
+/** 上一次解析到的网易云 exe 路径；避免每次重启都起一次 PowerShell 查路径 */
+let neteaseExePath = ''
+
+/**
+ * 取网易云 exe 路径：只在第一次自动开启时用 PowerShell 查一次，之后走缓存。
+ *
+ * 路径必须用 Base64 传回来：powershell.exe 的 stdout 默认是系统 ANSI 代码页
+ * （中文机器是 936），Node 按 UTF-8 解码会把「软件\网易云音乐」变成乱码，
+ * spawn 就成了 ENOENT（2026-11-18 实测踩过）。
+ */
+async function resolveNeteaseExe(): Promise<string> {
+  if (neteaseExePath) return neteaseExePath
+  try {
+    const out = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-Command',
+          '$p=(Get-Process cloudmusic -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1).Path;' +
+            ' if ($p) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($p)) }'
+        ],
+        { windowsHide: true, timeout: 5000 },
+        (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim()))
+      )
+    })
+    const exe = out ? Buffer.from(out, 'base64').toString('utf8') : ''
+    // 解码后必须真的存在，否则宁可当作「没查到」，别拿坏路径去 spawn
+    if (exe && existsSync(exe)) {
+      neteaseExePath = exe
+      return exe
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+/** taskkill 失败一律吞掉：进程可能已经退出、或网易云托盘行为导致正常关闭无效 */
+function runTaskkill(args: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('taskkill.exe', args, { windowsHide: true, timeout: 5000 }, () => resolve())
+  })
+}
+
 /**
  * 重启网易云并带上调试端口。
  * 这是开启精确控制的唯一方法：Chromium 的调试端口只能在进程启动时打开。
- * 先 CloseMainWindow 再强制结束（网易云的关闭按钮只是收进托盘），然后用原路径重启。
- * 返回 true 表示端口已就绪。
+ *
+ * 2026-11-18 提速：原来整套走 PowerShell（启动 ~0.5s + 600ms + 900ms 固定等待），
+ * 现在改成 taskkill + Node 直接 spawn，固定等待压到 400ms；路径解析只做一次。
+ * 先正常关一次（让网易云有机会存会话），再强制结束（它的关闭按钮只收进托盘）。
+ * 返回 true 表示端口/页面已就绪。
  */
 export async function enableNeteaseDebugPort(): Promise<boolean> {
   if (await isNeteaseCdpReady()) return true
-  const script = [
-    "$ErrorActionPreference='SilentlyContinue'",
-    '$p = Get-Process cloudmusic | Where-Object { $_.Path } | Select-Object -First 1',
-    'if (-not $p) { exit 2 }',
-    '$exe = $p.Path',
-    '$null = $p.CloseMainWindow()',
-    'Start-Sleep -Milliseconds 600',
-    'Get-Process cloudmusic | Stop-Process -Force',
-    'Start-Sleep -Milliseconds 900',
-    "$null = Start-Process -FilePath $exe -ArgumentList '--remote-debugging-port=9222'",
-    'exit 0'
-  ].join('; ')
-  try {
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { windowsHide: true, timeout: 15000 },
-        (err) => (err ? reject(err) : resolve())
-      )
-    })
-  } catch {
+  const exe = await resolveNeteaseExe()
+  if (!exe) return false
+  // 缓存的路径可能已被卸载/移动，用之前再确认一次
+  if (!existsSync(exe)) {
+    neteaseExePath = ''
     return false
   }
+  await runTaskkill(['/IM', 'cloudmusic.exe'])
+  await sleep(250)
+  await runTaskkill(['/F', '/IM', 'cloudmusic.exe'])
+  await sleep(150)
+  try {
+    const child = spawn(exe, ['--remote-debugging-port=9222'], { detached: true, stdio: 'ignore' })
+    // spawn 失败（如 ENOENT）是异步 'error' 事件，同步 try/catch 捕不到；
+    // 不挂监听会升级成 uncaughtException，把整个岛带崩（2026-11-18 实测踩过）。
+    child.on('error', (err) => {
+      neteaseExePath = ''
+      console.warn('[music] 启动网易云失败:', err instanceof Error ? err.message : String(err))
+    })
+    child.unref()
+  } catch {
+    neteaseExePath = ''
+    return false
+  }
+  // 进程刚起来，下一轮 isNeteaseRunning 必须重新确认（别用旧缓存说「没在跑」）
+  runningCache = { at: 0, value: true }
   for (let i = 0; i < 50; i += 1) {
-    await sleep(500)
+    await sleep(200)
     if (await isNeteaseCdpReady()) return true
   }
   return false
