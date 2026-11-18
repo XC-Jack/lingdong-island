@@ -1931,10 +1931,13 @@ function ensureClockWatcher(): void {
 }
 
 function MusicPanel({
-  onLyricOpenChange
+  onLyricOpenChange,
+  desktopLyricEnabled = true
 }: {
   /** 歌词面板开合上报（SPEC-music-lyric-pin）：开着时岛不按下鼠标离开定时收起 */
   onLyricOpenChange?: (open: boolean) => void
+  /** 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting），设置页可关 */
+  desktopLyricEnabled?: boolean
 }): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
@@ -1971,8 +1974,10 @@ function MusicPanel({
   const [desktopBusy, setDesktopBusy] = useState(false)
   // 桌面歌词状态以网易云页面为准（music.desktopLyric，每秒轮询带回）。
   // 没有后台控制（CDP）时这项恒为 null，按钮降级成纯面板开合。
-  const desktopLyricOn = music?.desktopLyric === true
-  const canDesktopLyric = music?.neteaseCdp === true
+  // 设置里关掉第二态后，按钮回到「纯面板开合」：既不发请求，也不因网易云那边开着而高亮
+  // （SPEC-desktop-lyric-setting：岛不擅自关用户已经开着的桌面歌词）。
+  const desktopLyricOn = desktopLyricEnabled && music?.desktopLyric === true
+  const canDesktopLyric = desktopLyricEnabled && music?.neteaseCdp === true
   /**
    * 「词」按钮三态循环（SPEC-music-desktop-lyric，用户 2026-11-18）：
    * 关 → 岛内歌词面板 → 关面板 + 开网易云桌面歌词 → 关桌面歌词。
@@ -2840,6 +2845,8 @@ export default function App(): React.JSX.Element {
   const [petMode, setPetMode] = useState<string>('island')
   // 时钟显示档位（SPEC-clock-date-format）：默认仅时间，mount 后从 prefs 回填
   const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
+  // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
+  const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
   const [page, setPage] = useState(0)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
@@ -2858,6 +2865,7 @@ export default function App(): React.JSX.Element {
         if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
+        if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -3282,6 +3290,7 @@ export default function App(): React.JSX.Element {
       // 出现模式：切到独立小窗口后岛里那只立刻消失（宠物窗口由主进程开）
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
+      if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -3572,7 +3581,10 @@ export default function App(): React.JSX.Element {
                 ) : page === 3 ? (
                   <SchedulePanel />
                 ) : (
-                  <MusicPanel onLyricOpenChange={onLyricOpenChange} />
+                  <MusicPanel
+                    onLyricOpenChange={onLyricOpenChange}
+                    desktopLyricEnabled={desktopLyricEnabled}
+                  />
                 )}
               </div>
             </div>

@@ -429,6 +429,8 @@ export interface PrefsShape {
   neteaseCdpMode?: NeteaseCdpMode
   /** 时钟显示档位（SPEC-clock-date-format）；缺失=time（仅时间） */
   clockFormat?: ClockFormat
+  /** 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）；缺失=true */
+  desktopLyricEnabled?: boolean
 }
 contextBridge.exposeInMainWorld('island', api)
 

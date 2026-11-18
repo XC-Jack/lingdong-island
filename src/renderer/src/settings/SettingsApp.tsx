@@ -179,6 +179,9 @@ export default function SettingsApp(): ReactElement {
   // 时钟显示档位（SPEC-clock-date-format）：默认与主进程一致 = time
   const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
   const clockFormatDirty = useRef(false)
+  // 「词」第二下召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开
+  const [desktopLyric, setDesktopLyric] = useState(true)
+  const desktopLyricDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
@@ -195,6 +198,7 @@ export default function SettingsApp(): ReactElement {
         if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
         if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
         if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
+        if (!desktopLyricDirty.current) setDesktopLyric(prefs.desktopLyricEnabled ?? true)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -211,6 +215,7 @@ export default function SettingsApp(): ReactElement {
       if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
       if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
       if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
+      if (!desktopLyricDirty.current) setDesktopLyric(prefs.desktopLyricEnabled ?? true)
     })
     return () => {
       alive = false
@@ -281,6 +286,16 @@ export default function SettingsApp(): ReactElement {
     clockFormatDirty.current = true
     setClockFormat(f)
     window.island.prefsSet({ clockFormat: f }).catch(() => {
+      /* 写失败下次还是旧值，不打扰用户 */
+    })
+  }
+
+  /** 「词」第二下召唤桌面歌词：乐观切换 + 写主进程（岛经 prefs:changed 当场生效） */
+  const toggleDesktopLyric = (): void => {
+    const next = !desktopLyric
+    desktopLyricDirty.current = true
+    setDesktopLyric(next)
+    window.island.prefsSet({ desktopLyricEnabled: next }).catch(() => {
       /* 写失败下次还是旧值，不打扰用户 */
     })
   }
@@ -455,6 +470,23 @@ export default function SettingsApp(): ReactElement {
                     <span className="pet-set-radio" aria-hidden="true" />
                   </button>
                 ))}
+              </div>
+              <div className="set-card">
+                <Row
+                  label="点「词」第二下打开桌面歌词"
+                  hint="关掉后，「词」只在岛内开合歌词面板，不会去开网易云的桌面歌词。"
+                >
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={desktopLyric}
+                    aria-label="点词第二下打开桌面歌词"
+                    className={`set-switch ${desktopLyric ? 'on' : ''}`}
+                    onClick={toggleDesktopLyric}
+                  >
+                    <span className="set-knob" />
+                  </button>
+                </Row>
               </div>
               {exportNote ? <div className="set-note">{exportNote}</div> : null}
             </section>

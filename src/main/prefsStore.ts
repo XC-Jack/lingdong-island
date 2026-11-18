@@ -55,6 +55,11 @@ interface PrefsShape {
    * 与引入该字段之前的行为一致。
    */
   clockFormat?: ClockFormat
+  /**
+   * 「词」按钮第二下是否召唤网易云桌面歌词（SPEC-desktop-lyric-setting）。
+   * 缺失 = true（保持刚做完的三态行为）。
+   */
+  desktopLyricEnabled?: boolean
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -255,6 +260,9 @@ function load(): PrefsShape {
     if (nm) out.neteaseCdpMode = nm
     const cf = normalizeClockFormat(parsed.clockFormat)
     if (cf) out.clockFormat = cf
+    if (typeof parsed.desktopLyricEnabled === 'boolean') {
+      out.desktopLyricEnabled = parsed.desktopLyricEnabled
+    }
     return out
   } catch {
     return { ...EMPTY }
@@ -342,7 +350,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat } =
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, desktopLyricEnabled } =
     (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
@@ -353,6 +361,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
       avoidMode?: unknown
       neteaseCdpMode?: unknown
       clockFormat?: unknown
+      desktopLyricEnabled?: unknown
     }
   const pc = normalizePagesCustom(pagesCustom)
   if (pc) data.pagesCustom = pc
@@ -382,6 +391,8 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const cf = normalizeClockFormat(clockFormat)
   if (cf) data.clockFormat = cf
   else if (clockFormat !== undefined) delete data.clockFormat
+  if (typeof desktopLyricEnabled === 'boolean') data.desktopLyricEnabled = desktopLyricEnabled
+  else if (desktopLyricEnabled !== undefined) delete data.desktopLyricEnabled
   save(data)
   return JSON.stringify(before) !== JSON.stringify(data) ? data : null
 }
