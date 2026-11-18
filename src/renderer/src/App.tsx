@@ -213,13 +213,15 @@ const IcoWifi = (): React.JSX.Element => (
   </IconSvg>
 )
 
-/** 网线（收起态 US-005 插网线时）：RJ45 水晶头插口图标，与 Wi-Fi 弧线区分开 */
+/**
+ * 网线（收起态 US-005 插网线时）：直接用 Windows 系统图标字体里的以太网字形（U+E839）。
+ *
+ * 2026-11-18 用户「原图标太丑了，换成系统自带的」：原来手绘的 RJ45 插口在 18px 下
+ * 糊成一团，看不出是网线。系统字形本身就是「显示器 + 网线插头」，与 Windows 设置页的
+ * 以太网图标一致；Win10 的 Segoe MDL2 Assets 也带同一码位，字体链里做了回落。
+ */
 const IcoEthernet = (): React.JSX.Element => (
-  <IconSvg>
-    <path d="M7.5 9.5v-3a1.5 1.5 0 0 1 1.5-1.5h6a1.5 1.5 0 0 1 1.5 1.5v3" />
-    <path d="M7.5 9.5h-2a1.5 1.5 0 0 0-1.5 1.5v4a1.5 1.5 0 0 0 1.5 1.5h13a1.5 1.5 0 0 0 1.5-1.5v-4a1.5 1.5 0 0 0-1.5-1.5h-2" />
-    <path d="M9.5 16.5v2M12 16.5v2M14.5 16.5v2" />
-  </IconSvg>
+  <span className="fluent-ico" aria-hidden="true">&#xE839;</span>
 )
 
 /** 日历（日程页） */

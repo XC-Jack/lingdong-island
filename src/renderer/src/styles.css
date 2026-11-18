@@ -377,6 +377,22 @@ body {
   width: 18px;
   height: 18px;
 }
+
+/* 系统图标字形（Segoe Fluent Icons；Win10 回落到 Segoe MDL2 Assets）。
+   2026-11-18 起网线图标改用系统自带的 U+E839（显示器 + 网线插头），
+   尺寸与旁边手绘的 Wi-Fi/铃铛 SVG 对齐到 18px。 */
+.fluent-ico {
+  font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets', sans-serif;
+  font-size: 18px;
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+}
 .collapsed-wifi.offline {
   color: #ffb74d;
 }
