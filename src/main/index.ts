@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
 import { setupStatus, stopStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
@@ -16,6 +16,7 @@ import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
 import { setupLocalFileProtocol } from './localFileProtocol'
+import { startupLog } from './startupLog'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
@@ -296,16 +297,6 @@ function createWindow(): void {
  * 注意：日志写入失败绝不能影响启动（整段 try/catch）。日志文件放在数据目录里，
  * 设置窗口的「打开数据文件夹」就能直达。
  */
-function startupLog(line: string): void {
-  try {
-    const dir = app.getPath('userData')
-    mkdirSync(dir, { recursive: true })
-    appendFileSync(join(dir, 'startup.log'), `[${new Date().toISOString()}] ${line}\n`, 'utf8')
-  } catch {
-    /* 写不了日志（只读盘/权限）就算了，不能因此挡住启动 */
-  }
-}
-
 function describeEnv(): string {
   const parts = [
     'version=' + app.getVersion(),
