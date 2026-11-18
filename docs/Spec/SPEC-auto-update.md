@@ -60,6 +60,19 @@
 - 开发版 CDP 探针（`.tmp/probe-update-ui.mjs`，端口 9321）：设置页「常规」出现「更新」行，hint = 「开发版不检查更新，安装版才会自动检查」，按钮文案「检查更新」且 `disabled=true`（stage = `unsupported`）。截图 `.tmp/update-settings-dev.png`。
 - **未验证**：装机版的自动检查、发现新版本、下载进度、静默安装全链路——需要先发一个带更新器的 Release 并在真机上跑到下一版。
 
+**第二轮（2026-11-18，装机版 0.1.11 → 0.1.12 全链路，[已实测]）**
+
+- 装机：`/S /D=D:\软件\灵动岛`；装机 asar 与 `release\win-unpacked` 同 SHA `3558B27D…`，`FileVersion=0.1.11`。
+- 首次自动检查：启动 60 秒后 `[updater] Checking for update` → `Update for version 0.1.11 is not available` → `update: none (latest 0.1.11)`。
+- 发布 v0.1.12（同代码、版本号 +1）后，设置页点「检查更新」：3 秒内显示「新版本 0.1.12 可用」。
+- 点「下载 0.1.12」：进度 0→100%，124 MB 分块下载约 63 秒；日志 `New version 0.1.12 has been downloaded to …\pending\Lingdong-Island-Setup-0.1.12.exe`。
+- 点「重启并安装」：`quitAndInstall` → 以 `--updated,/S,--force-run` 执行安装器 → 约 14 秒后 `=== 启动 version=0.1.12`。
+- 升级后：`灵动岛.exe` `FileVersion=0.1.12`；装机 asar 与 0.1.12 的 `win-unpacked` 同 SHA `6DD59377…`；`prefs.json`（19:06）、`schedule.json`（11-17）修改时间未变，数据未被覆盖。
+- 新版首次自动检查：`Update for version 0.1.12 is not available (latest version: 0.1.12)`。
+- 已知的探针问题：`.tmp/probe-auto-update.mjs` 最后以 exit 13 结束——应用退出时 WebSocket 断开，脚本尾部等待的 promise 不再 resolve。点击动作与主进程日志均已发生，属脚本自身缺陷，与更新功能无关。
+
+**仍未验证**：用户主观观感；另一台电脑上的更新链路；弱网/断电等异常中断后的重试体验；升级瞬间正在写数据的极端情况。
+
 ## 八、验收记录
 
 （独立验收后填写）
