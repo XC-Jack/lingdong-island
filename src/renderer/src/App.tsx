@@ -2498,7 +2498,8 @@ function MusicPanel(): React.JSX.Element {
           2026-11-16 用户 m03368 指出进度条不该横穿整页）：
           上下两块并排 —— 左栏＝封面+曲名/歌手 + 进度条 + 左右时间，整栏宽度即进度条宽度；
           中间一条竖分隔线；右栏＝歌词位，独占右侧、上下居中。
-          歌词文本仍只放诚实占位「暂无歌词」（真歌词在用户 m02341 实测否决过，未重新授权） */}
+          歌词文本来自 SPEC-music-lyric（2026-11-16 用户 m04986 重新授权；11-15 否决的是
+          `a474ed5` 那版 LRCLIB 双源实现），查不到时只放诚实占位「暂无歌词」+ 原因，绝不编造 */}
       <div className="music-main">
         <div className="music-side">
           <div className="music-id">
@@ -2643,8 +2644,8 @@ function MusicPanel(): React.JSX.Element {
                 还有就是歌词ui放切上一首的旁边」：
                 整行两段 —— .music-ctl-mid（「词」+ 三按钮，居中）/ .music-extra（喇叭，贴最右）。
                 中间那组 flex:1 吃掉剩余宽度，「词」贴着「上一首」左边，两端不再留黑边。
-                歌词功能已由用户 m02341 否决、不实现，这枚按钮只负责开合右侧占位歌词栏。
-                类名刻意不叫 .music-lyric-* 以免撞 e2e U4 的「不许偷偷接歌词」探测 */}
+                歌词后来由用户 m04986（2026-11-16）重新授权并实现（SPEC-music-lyric），
+                这枚按钮开合右侧真实歌词栏；类名沿用 `.music-word` 是历史命名，不为改名动 e2e。 */}
             <div className="music-ctl-mid">
               <button
                 type="button"
