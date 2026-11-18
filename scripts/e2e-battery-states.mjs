@@ -92,7 +92,7 @@ const DOM_Q = `(() => {
 
 const GREEN = 'rgba(75, 214, 130, 0.9)'
 const RED = 'rgba(255, 107, 107, 0.9)'
-const WHITE = 'rgba(255, 255, 255, 0.85)'
+const WHITE = 'rgba(255, 255, 255, 0.98)' // 与 styles.css `.head-battery-ring .ring-fg` 同步（2026-11-16 美化轮提亮）
 const REDNUM = 'rgba(255, 107, 107, 0.95)'
 
 const scenarios = [

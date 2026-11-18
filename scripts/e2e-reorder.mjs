@@ -1,13 +1,32 @@
-// 临时 e2e：文件夹图标 + 连续两次网格内拖动换位
-// 启动带 9225 调试端口的实例由外部脚本负责；本脚本只连 CDP。
+// e2e：文件夹图标 + 连续两次网格内拖动换位
+// 本脚本只连 CDP（9225）。没有实例时自动交给 e2e-reorder-run.mjs 起隔离实例后重跑，
+// 所以可以直接单独执行；包装脚本会带 E2E_REORDER_WRAPPED=1，防止递归委派。
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
+
+const CDP_PORT = 9225
 
 const main = async () => {
-  const r = await fetch('http://127.0.0.1:9225/json')
-  const list = await r.json()
+  let list
+  try {
+    const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json`)
+    list = await r.json()
+  } catch {
+    if (process.env.E2E_REORDER_WRAPPED) {
+      throw new Error(`CDP ${CDP_PORT} 未就绪（包装脚本已负责起实例，仍连不上）`)
+    }
+    console.log(`[bootstrap] ${CDP_PORT} 端口无实例，交给 e2e-reorder-run.mjs 起实例后重跑`)
+    const wrapper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'e2e-reorder-run.mjs')
+    const res = spawnSync(process.execPath, [wrapper], {
+      stdio: 'inherit',
+      env: { ...process.env, E2E_REORDER_WRAPPED: '1' }
+    })
+    process.exit(res.status ?? 1)
+  }
   const page = list.find((t) => t.type === 'page')
   if (!page) throw new Error('no page target on 9225')
   const ws = new WebSocket(page.webSocketDebuggerUrl)

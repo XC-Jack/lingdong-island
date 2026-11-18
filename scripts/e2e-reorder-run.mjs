@@ -32,7 +32,10 @@ try {
   await waitCdp()
   await sleep(1000)
   await new Promise((resolve, reject) => {
-    const p = spawn(process.execPath, [join(ROOT, 'scripts', 'e2e-reorder.mjs')], { stdio: 'inherit' })
+    const p = spawn(process.execPath, [join(ROOT, 'scripts', 'e2e-reorder.mjs')], {
+      stdio: 'inherit',
+      env: { ...process.env, E2E_REORDER_WRAPPED: '1' }
+    })
     p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`e2e-reorder exit ${code}`))))
   })
   console.log('E2E REORDER WRAPPER PASS')
