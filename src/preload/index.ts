@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo } from '../shared/types'
+import type { AppInfo, AvoidMode, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -99,6 +99,34 @@ const api = {
   /** 用资源管理器打开用户数据目录（%APPDATA%\lingdong-island） */
   openUserData(): Promise<boolean> {
     return ipcRenderer.invoke('settings:open-user-data')
+  },
+  /** 自动更新（SPEC-auto-update）：当前状态快照 */
+  updateGetState(): Promise<UpdateState> {
+    return ipcRenderer.invoke('update:get-state')
+  },
+  /** 手动检查一次更新；返回检查后的状态 */
+  updateCheck(): Promise<UpdateState> {
+    return ipcRenderer.invoke('update:check')
+  },
+  /** 用户确认后下载新版本；返回状态（进度走 onUpdateState 广播） */
+  updateDownload(): Promise<UpdateState> {
+    return ipcRenderer.invoke('update:download')
+  },
+  /** 退出并静默安装已下载的版本 */
+  updateInstall(): Promise<boolean> {
+    return ipcRenderer.invoke('update:install')
+  },
+  /** 降级出口：打开发布页让用户自己下载 */
+  updateOpenPage(): Promise<boolean> {
+    return ipcRenderer.invoke('update:open-page')
+  },
+  /** 更新状态变化广播（检查/下载/安装各阶段）。返回取消订阅函数 */
+  onUpdateState(cb: (s: UpdateState) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, s: UpdateState): void => cb(s)
+    ipcRenderer.on('update:state', h)
+    return () => {
+      ipcRenderer.removeListener('update:state', h)
+    }
   },
   /** 诊断日志（US-036 探针）：渲染层把收起判定写进 userData/collapse-log.txt */
   logDiag(line: string): void {

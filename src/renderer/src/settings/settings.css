@@ -299,6 +299,17 @@ body {
   cursor: default;
 }
 
+/* 自动更新（SPEC-auto-update）：主按钮 + 失败时的「发布页」降级出口并排 */
+.set-update-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.set-btn-quiet {
+  background: transparent;
+  color: rgba(242, 243, 245, 0.72);
+}
+
 /* 卡片下方的结果提示（导出成功给路径、失败给原因）；路径很长，允许断行 */
 .set-note {
   margin-top: 6px;

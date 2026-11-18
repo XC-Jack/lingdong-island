@@ -17,6 +17,7 @@ import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
 import { setupLocalFileProtocol } from './localFileProtocol'
 import { startupLog } from './startupLog'
+import { setupUpdater } from './updater'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
 /**
@@ -388,6 +389,8 @@ app.whenReady().then(() => {
   // 歌词（SPEC-music-lyric）：只注册 IPC，真正联网只在渲染层来问时才发生
   setupLyricStore()
   setupSettingsWindow()
+  // 自动更新（SPEC-auto-update）：注册 IPC 与定时检查；开发版只登记「不支持」状态
+  setupUpdater()
   // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。
   // 必须在 createWindow 之前——偏好里可能已经是 window 模式，启动时就该把它开出来。
   setupPetWindow({ onQuit: () => quitApp() })

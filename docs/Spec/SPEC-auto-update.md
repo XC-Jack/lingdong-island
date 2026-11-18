@@ -54,7 +54,11 @@
 
 ## 七、自检记录
 
-（实现后填写：命令、结果、未验证范围）
+**第一轮（2026-11-18，开发版）**
+
+- `npm run typecheck` EXIT=0；`npm run build` EXIT=0。
+- 开发版 CDP 探针（`.tmp/probe-update-ui.mjs`，端口 9321）：设置页「常规」出现「更新」行，hint = 「开发版不检查更新，安装版才会自动检查」，按钮文案「检查更新」且 `disabled=true`（stage = `unsupported`）。截图 `.tmp/update-settings-dev.png`。
+- **未验证**：装机版的自动检查、发现新版本、下载进度、静默安装全链路——需要先发一个带更新器的 Release 并在真机上跑到下一版。
 
 ## 八、验收记录
 

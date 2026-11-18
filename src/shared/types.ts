@@ -263,3 +263,43 @@ export interface LyricQuery {
   /** 总时长（秒）；用来排除同名不同版本（差 8 秒以上基本不是同一版） */
   duration: number
 }
+
+/**
+ * 自动更新状态（SPEC-auto-update）。主进程维护唯一一份，设置页订阅广播。
+ *
+ * 设计要点：只有一个单向状态机，渲染层不自己推断「有没有新版」，
+ * 避免「按钮说能更、实际没有下载文件」这类状态漂移。
+ */
+export type UpdateStage =
+  /** 还没检查过 */
+  | 'idle'
+  /** 正在检查 */
+  | 'checking'
+  /** 已是最新 */
+  | 'none'
+  /** 发现新版本，等用户点下载 */
+  | 'available'
+  /** 正在下载 */
+  | 'downloading'
+  /** 下载完成，等用户点重启安装 */
+  | 'ready'
+  /** 检查或下载失败 */
+  | 'error'
+  /** 当前形态不支持（开发版未打包） */
+  | 'unsupported'
+
+export interface UpdateState {
+  stage: UpdateStage
+  /** 当前已安装版本（app.getVersion()） */
+  current: string
+  /** 可用的新版本号（stage=available/downloading/ready 时有值） */
+  version?: string
+  /** 下载进度 0–100（stage=downloading/ready 时有值） */
+  percent?: number
+  /** 最近一次完成检查的时间戳（毫秒），用于显示「几点检查的」 */
+  checkedAt?: number
+  /** 失败或不可用原因（中文短语，界面直接显示） */
+  message?: string
+  /** 原始错误文本，只用于排查 */
+  detail?: string
+}

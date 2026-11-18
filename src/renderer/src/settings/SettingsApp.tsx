@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import type { AvoidMode, ClockFormat, NeteaseCdpMode, SettingsSection } from '../../../shared/types'
+import type { AvoidMode, ClockFormat, NeteaseCdpMode, SettingsSection, UpdateState } from '../../../shared/types'
 import { AVOID_MODES, CLOCK_FORMATS } from '../../../shared/types'
 import PageManagerSection, {
   defaultPagesCustom,
@@ -184,6 +184,8 @@ export default function SettingsApp(): ReactElement {
   const desktopLyricDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
+  // 自动更新状态（SPEC-auto-update）：null = 还没取到，按钮先不显示假状态
+  const [update, setUpdate] = useState<UpdateState | null>(null)
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
   const [exporting, setExporting] = useState(false)
   const [exportNote, setExportNote] = useState('')
@@ -262,6 +264,24 @@ export default function SettingsApp(): ReactElement {
 
   // 自启状态被另一处改了（岛头部那枚胶囊）也要跟上（SPEC-settings-shell 阻断项 B2）
   useEffect(() => window.island.onAutostartChanged((on) => setAutoStart(on)), [])
+
+  // 自动更新：先取一次快照，再订阅主进程广播（检查/下载进度/下载完成都走这一条）
+  useEffect(() => {
+    let alive = true
+    void window.island
+      .updateGetState()
+      .then((s) => {
+        if (alive) setUpdate(s)
+      })
+      .catch(() => {
+        /* 取不到就不显示更新行，不影响其它设置 */
+      })
+    const off = window.island.onUpdateState((s) => setUpdate(s))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
 
   /** 避让策略：立即生效 + 写主进程，不等「保存」（与桌宠/页面管理同一套模式） */
   const pickAvoidMode = (m: AvoidMode): void => {
@@ -343,6 +363,68 @@ export default function SettingsApp(): ReactElement {
       })
   }
 
+  /** 更新按钮文案：同一个按钮按状态换动作（检查 → 下载 → 重启安装） */
+  const updateLabel = ((): string => {
+    if (!update) return '检查更新'
+    switch (update.stage) {
+      case 'checking':
+        return '检查中…'
+      case 'downloading':
+        return `下载中 ${update.percent ?? 0}%`
+      case 'available':
+        return update.version ? `下载 ${update.version}` : '下载'
+      case 'ready':
+        return '重启并安装'
+      case 'error':
+        return '重试'
+      default:
+        return '检查更新'
+    }
+  })()
+
+  /** 更新行说明：把状态写清楚，失败给原因而不是只变红 */
+  const updateHint = ((): string | undefined => {
+    if (!update) return undefined
+    switch (update.stage) {
+      case 'checking':
+        return '正在向 GitHub 查询最新版本'
+      case 'none':
+        return update.checkedAt
+          ? `已是最新 · ${new Date(update.checkedAt).toLocaleTimeString('zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit'
+            })} 检查`
+          : '已是最新'
+      case 'available':
+        return `新版本 ${update.version ?? ''} 可用，确认后才会下载`
+      case 'downloading':
+        return `正在下载 ${update.percent ?? 0}%`
+      case 'ready':
+        return `已下载 ${update.version ?? ''}，重启后生效`
+      case 'error':
+        return update.message ?? '检查更新失败'
+      case 'unsupported':
+        return update.message ?? '开发版不检查更新'
+      default:
+        return '启动后会自动检查，也可以现在手动检查'
+    }
+  })()
+
+  const updateBusy = update?.stage === 'checking' || update?.stage === 'downloading'
+
+  const onUpdateAction = (): void => {
+    if (!update || updateBusy) return
+    if (update.stage === 'available') {
+      void window.island.updateDownload()
+      return
+    }
+    if (update.stage === 'ready') {
+      void window.island.updateInstall()
+      return
+    }
+    void window.island.updateCheck()
+  }
+
   return (
     <div className="set-root">
       <header className="set-titlebar">
@@ -392,6 +474,29 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
                 <Row label="版本">{info ? info.version : '—'}</Row>
+                <Row label="更新" hint={updateHint}>
+                  <div className="set-update-ctl">
+                    <button
+                      type="button"
+                      className="set-btn"
+                      disabled={!update || updateBusy || update.stage === 'unsupported'}
+                      onClick={onUpdateAction}
+                    >
+                      {updateLabel}
+                    </button>
+                    {update?.stage === 'error' ? (
+                      <button
+                        type="button"
+                        className="set-btn set-btn-quiet"
+                        onClick={() => {
+                          void window.island.updateOpenPage()
+                        }}
+                      >
+                        发布页
+                      </button>
+                    ) : null}
+                  </div>
+                </Row>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
                     type="button"
