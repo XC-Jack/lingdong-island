@@ -403,6 +403,27 @@ try {
   const avoidDelta = countAvoidLines() - avoidBefore
   ok('M9 光标停在顶部边缘不反复唤回/收起（闩锁生效）', avoidDelta <= 3, `新增 ${avoidDelta} 条 avoid 事件`)
 
+  // M10 真全屏（F）时不得「光标到顶自动唤回」（SPEC-no-reveal-in-fullscreen，2026-11-18）
+  // 用户实测根因：三角洲里视角往上一抬，光标顶到屏幕最上边 → 摸边唤回 → 岛出现 →
+  // 独占全屏的游戏立刻最小化/切到桌面。所以 F 状态下摸边这条必须失效。
+  await setMode('maximized')
+  await parkCursor()
+  const fsWin = makeWindow('full')
+  wins.push(fsWin)
+  await sleep(2500)
+  const fsHidden = await waitVisible(false, 3000)
+  const avoidBeforeF = countAvoidLines()
+  await moveCursorTo(768, 0) // 光标顶到屏幕最上边（模拟游戏里视角上移）
+  await sleep(4000)
+  const fsStillHidden = await islandVisible()
+  const avoidDeltaF = countAvoidLines() - avoidBeforeF
+  ok('M10 真全屏时光标到顶不会唤回岛（游戏不会被最小化）',
+    fsHidden.value === false && fsStillHidden === false && avoidDeltaF === 0,
+    `先隐藏=${fsHidden.value} 之后仍隐藏=${fsStillHidden} 新增avoid事件=${avoidDeltaF}`)
+  await parkCursor()
+  fsWin.kill()
+  await sleep(1200)
+
   // M7 辅助进程运行期间 DevTools 必须仍然秒回（旧事故：长驻子进程 + 管道把 HTTP 拖死）
   const lat = []
   for (let i = 0; i < 5; i++) {
