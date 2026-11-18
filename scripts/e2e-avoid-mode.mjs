@@ -168,6 +168,28 @@ function makeWindow(kind) {
   return spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', enc], { stdio: 'ignore' })
 }
 
+/** 把光标移到指定坐标。 */
+async function moveCursorTo(x, y) {
+  await ps(
+    'Add-Type "using System; System.Runtime.InteropServices; public class MCT { [DllImport(' +
+      TICK + 'user32.dll' + TICK + ')] public static extern bool SetCursorPos(int x, int y); }" -ErrorAction SilentlyContinue; ' +
+      'Add-Type "using System; using System.Runtime.InteropServices; public class MCT2 { [DllImport(' +
+      TICK + 'user32.dll' + TICK + ')] public static extern bool SetCursorPos(int x, int y); }"; ' +
+      '[void][MCT2]::SetCursorPos(' + x + ', ' + y + '); "ok"'
+  )
+}
+
+/** 统计 startup.log 里 [avoid] 事件的条数（隐藏/现身归因日志）。 */
+function countAvoidLines() {
+  try {
+    const raw = readFileSync(join(USER_DATA, 'startup.log'), 'utf8')
+    return raw.split('[avoid]').length - 1
+
+  } catch {
+    return 0
+  }
+}
+
 /** 把光标放到顶部 4px 感应带上（触发摸边临时现身）。 */
 async function hoverTopEdge() {
   await ps(
@@ -371,6 +393,15 @@ try {
   fullWin3.kill()
   staleWin.kill()
   await sleep(1200)
+
+  // M9 摸边闩锁（2026-11-18 修）：光标停在屏幕最顶边、但横向在岛之外时，
+  // 不得反复「唤回 → 收起」——在独占全屏游戏里这种循环等于反复把游戏踢出全屏
+  // （用户实测「玩几分钟突然切到桌面」的嫌疑之一）。判据：5 秒内新增的 [avoid] 事件 ≤ 3 条。
+  const avoidBefore = countAvoidLines()
+  await moveCursorTo(1500, 0)
+  await sleep(5000)
+  const avoidDelta = countAvoidLines() - avoidBefore
+  ok('M9 光标停在顶部边缘不反复唤回/收起（闩锁生效）', avoidDelta <= 3, `新增 ${avoidDelta} 条 avoid 事件`)
 
   // M7 辅助进程运行期间 DevTools 必须仍然秒回（旧事故：长驻子进程 + 管道把 HTTP 拖死）
   const lat = []

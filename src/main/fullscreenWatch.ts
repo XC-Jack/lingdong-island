@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { spawn } from 'node:child_process'
 import { readFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
+import { startupLog } from './startupLog'
 import type { AvoidMode } from '../shared/types'
 
 /**
@@ -54,9 +55,23 @@ import type { AvoidMode } from '../shared/types'
 /** 光标到这个 y 就临时唤回（原来是靠一个 4px 高的透明感应窗接 mouseenter，
  * 2026-11-18 改成直接读光标坐标 —— 见下面 REVEAL 的说明） */
 const REVEAL_Y = 2
-/** 判定的去抖延迟：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁。
+/** 光标必须回到这个 y 以下才重新「上膛」，允许下一次摸边唤回。
+ *
+ * 为什么需要闩锁：唤回的条件是「光标在顶部（y≤2）」，而收起的条件是「光标离开岛的矩形」。
+ * 光标停在顶部但**横向在岛之外**（比如最右边）时，两个条件会互相触发，形成
+ * show→hide→show 的闪烁循环（[实测] 2026-11-18 日志里 200ms 一轮的 cursor-left/cursor-top 循环）。
+ * 在独占全屏游戏里这种循环等于反复把游戏踢出全屏。加上闩锁后：摸边唤回一次 → 收起 →
+ * 必须先把光标移开顶部再回来，才会再次唤回。 */
+const REVEAL_REARM_Y = 8
+/** 「隐藏」方向的去抖：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁。
  * SPEC-avoid-mode-and-latency：300→150ms（用户要求 0.75 秒内隐藏，去抖不能吃掉太多预算） */
 const DEBOUNCE_MS = 150
+/** 「现身」方向的去抖（SPEC-avoid-show-attribution，2026-11-18）。
+ *
+ * 比隐藏方向长得多，因为两个方向代价不对称：晚藏 1 秒只是岛多挡一下；
+ * 但**在独占全屏游戏上把岛叫出来一下，游戏就会被踢出全屏/切到桌面**（用户实测每几分钟被切一次）。
+ * 所以要「非全屏状态持续 1.2 秒」才允许现身，把一闪而过的前台变化全过滤掉。 */
+const SHOW_STABLE_MS = 1200
 /** 辅助进程内部判定间隔（ms）：决定隐藏延迟的下限 */
 const HELPER_TICK_MS = 120
 /** 主进程读心跳文件的间隔（ms）：纯本地小文件读，成本可忽略 */
@@ -70,6 +85,19 @@ const FALLBACK_POLL_MS = 1000
 const HELPER_RETRY_MS = 15000
 /** 心跳文件名（放在 userData 下，可随时删除，不是用户数据） */
 const BEAT_FILE = 'avoid-mode-beat.txt'
+
+/** 记录一次「岛为什么要隐藏/现身」——用户反馈过「玩几分钟突然切到桌面」，
+ * 只有把触发原因（judge / banner / cursor / manual）写进日志才能定位到底是谁叫出来的。 */
+function avoidLog(action: 'hide' | 'show', reason: string): void {
+  const win = getMainForLog?.()
+  startupLog(
+    '[avoid] ' + action + ' reason=' + reason + ' judge=' + judge + ' mode=' + getMode() +
+      ' visible=' + (win ? win.isVisible() : 'no-win') + ' temp=' + tempVisible + ' banner=' + bannerHold
+  )
+}
+
+/** init 里注入的取窗口函数（avoidLog 在 init 外，只用于日志，拿不到窗口不影响日志） */
+let getMainForLog: (() => BrowserWindow | null) | null = null
 
 /** 判定码：F=真全屏 / Z=最大化（盖住工作区） / N=都不算 */
 type JudgeCode = 'F' | 'Z' | 'N'
@@ -87,6 +115,12 @@ let bannerHoldAt = 0
 let wantHidden: boolean | null = null
 /** 最近一次判定码 */
 let judge: JudgeCode = 'N'
+/** 摸边唤回的闩锁：true=可以唤回；false=已经唤回过且还没把光标移离顶部 */
+let revealArmed = true
+/** 上一次「因为什么被判成全屏」而隐藏 —— F=真全屏（F11/独占全屏游戏）、Z=最大化。
+ * 现身方向用它选去抖：从**真全屏**回来时要求的稳定期长得多（见 SHOW_STABLE_MS），
+ * 从普通最大化回来还是原来的 150ms，日常用不会变迟钝。 */
+let lastAvoidJudge: JudgeCode = 'N'
 /** 期望值去抖用的定时器 */
 let debounceTimer: NodeJS.Timeout | null = null
 /** 摸边探测 interval 集合（退出时统一清） */
@@ -245,6 +279,8 @@ export function initFullscreenWatch(
    * show 会把 alwaysOnTop 级别重置回 floating，岛沉到全屏 TopMost 窗口下面
    * （Chrome occlusion 判定被完全遮挡 → 渲染层 visibilityState=hidden，用户也看不见）。
    * 必须 showInactive + moveTop + 重设 setAlwaysOnTop('screen-saver') 三连。 */
+  getMainForLog = getMain
+
   const revealWindow = (): void => {
     const win = getMain()
     if (!win || win.isDestroyed()) return
@@ -253,9 +289,10 @@ export function initFullscreenWatch(
     win.setAlwaysOnTop(true, 'screen-saver')
   }
 
-  const apply = (hidden: boolean): void => {
+  const apply = (hidden: boolean, reason = 'unspecified'): void => {
     const win = getMain()
     if (!win || win.isDestroyed()) return
+    avoidLog(hidden ? 'hide' : 'show', reason)
     if (hidden) {
       // 隐藏前如果展开着，先收起（不做展开记忆，SPEC 三.5）
       if (win.isVisible()) onStateChange(hidden)
@@ -267,6 +304,7 @@ export function initFullscreenWatch(
       }
       tempVisible = false
       stopCursorWatch()
+      revealArmed = true
     }
   }
 
@@ -287,19 +325,23 @@ export function initFullscreenWatch(
       clearTimeout(debounceTimer)
       debounceTimer = null
     }
+    // 两个方向代价不对称：藏晚 1 秒无所谓，但在独占全屏上把岛叫出来一下就会把游戏踢出全屏。
+    // 只对「从真全屏回来」用长稳定期；从普通最大化回来仍走 150ms，日常手感不变。
+    const wait = fullscreen ? DEBOUNCE_MS : lastAvoidJudge === 'F' ? SHOW_STABLE_MS : DEBOUNCE_MS
     debounceTimer = setTimeout(() => {
       debounceTimer = null
       if (state === 'manual') return // 手动隐藏不受策略/判定变化影响
       if (fullscreen) {
         if (state === 'normal') {
           state = 'avoided'
-          apply(true)
+          lastAvoidJudge = judge
+          apply(true, 'judge:' + judge)
         }
       } else if (state === 'avoided' && !tempVisible && !bannerHold) {
         state = 'normal'
-        apply(false)
+        apply(false, 'judge:' + judge)
       }
-    }, DEBOUNCE_MS)
+    }, wait)
   }
 
   /** 把「窗口实际可见性」与期望对齐（自愈）。
@@ -318,10 +360,10 @@ export function initFullscreenWatch(
     const visible = win.isVisible()
     if (want) {
       if (state === 'normal') state = 'avoided'
-      if (visible) apply(true)
+      if (visible) apply(true, 'reconcile:' + judge)
     } else if (!visible) {
       if (state === 'avoided') state = 'normal'
-      apply(false)
+      apply(false, 'reconcile:' + judge)
     }
   }
 
@@ -556,7 +598,8 @@ export function initFullscreenWatch(
     // 连续 2 次在岛外 → 真移开，回隐
     stopCursorWatch()
     tempVisible = false
-    if (decision(judge)) apply(true)
+    revealArmed = false // 见 REVEAL_REARM_Y：要么把光标移离顶部，要么等岛因别的原因再次现身
+    if (decision(judge)) apply(true, 'cursor-left')
   }
 
   /** 摸边唤回（2026-11-18 改）：不再创建任何窗口，直接看光标坐标。
@@ -572,8 +615,14 @@ export function initFullscreenWatch(
     if (state !== 'avoided' || tempVisible || bannerHold) return
     // 坐标太旧（辅助进程刚重启/走了回退路径）就先不判，免得拿旧坐标误唤回
     if (Date.now() - lastCursor.at > 800) return
+    // 闩锁：上一次就是因为「光标还在顶部但已离开岛」而收起的话，先把光标移离顶部再重新上膛，
+    // 否则会 show→hide→show 无限闪烁（在独占全屏游戏里等于反复踢游戏）
+    if (!revealArmed) {
+      if (lastCursor.y > REVEAL_REARM_Y) revealArmed = true
+      return
+    }
     if (lastCursor.y > REVEAL_Y) return
-    apply(false) // 现身
+    apply(false, 'cursor-top')
     tempVisible = true
     startCursorWatch()
   }
@@ -595,20 +644,20 @@ export function initFullscreenWatch(
       const inIsland = p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y - REVEAL_Y - 2 && p.y <= b.y + b.height
       if (inIsland) return // 误报（岛现身遮挡感应窗的迟到 leave）
       tempVisible = false
-      if (decision(judge)) apply(true)
+      if (decision(judge)) apply(true, 'edge-leave')
     }, 400)
   })
 
   // 手动隐藏（右键/托盘菜单）
   ipcMain.on('island:manual-hide', () => {
     state = 'manual'
-    apply(true)
+    apply(true, 'manual-hide')
   })
   // 托盘左键唤回（清手动标志）
   ipcMain.on('island:manual-restore', () => {
     if (state !== 'manual') return
     state = 'normal'
-    apply(false)
+    apply(false, 'manual-restore')
     // 手动隐藏期间期望值可能已经翻成 true 但没落地（commit 里 manual 直接 return），
     // 这里清掉缓存让它按当前判定重新算一次，否则岛会「恢复了却再也不自动避让」
     // （[实测] 2026-11-17：A7 横幅结束不回隐就是这么挂的）。
@@ -620,9 +669,9 @@ export function initFullscreenWatch(
   ipcMain.on('island:temp-show', (_e, on: unknown) => {
     bannerHold = on === true
     bannerHoldAt = bannerHold ? Date.now() : 0
-    if (bannerHold && !getMain()?.isVisible()) apply(false)
-    if (!bannerHold && state === 'avoided' && !tempVisible && decision(judge)) apply(true)
-    if (!bannerHold && state === 'manual' && getMain()?.isVisible()) apply(true)
+    if (bannerHold && !getMain()?.isVisible()) apply(false, 'banner-on')
+    if (!bannerHold && state === 'avoided' && !tempVisible && decision(judge)) apply(true, 'banner-off')
+    if (!bannerHold && state === 'manual' && getMain()?.isVisible()) apply(true, 'banner-off')
   })
 
   // ⚠ 启动计时器/首轮读心跳必须放在这个函数的**最末尾**：`readBeat()` 会立刻跑一轮，
