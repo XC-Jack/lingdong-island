@@ -40,10 +40,18 @@ async function main() {
 
   // 预置一条日程（旧版数据结构直接写盘，主进程 load 时正常读）
   mkdirSync(USER_DATA, { recursive: true })
+  // ⚠ day 必须用**运行时的今天**：日程页只显示选中那一天，写死成某个历史日期后，
+  // 隔天再跑就一条都看不到（A1 会报 count=0）。[实测] 2026-11-18 验收时就是它——
+  // 脚本里写死 `2026-11-05`，那天之后一直是红的，跟功能无关。
+  const today = (() => {
+    const d = new Date()
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  })()
   const seed = {
     items: [
-      { id: 'us036-a', text: '原始名称甲', day: '2026-11-05', time: null, done: false, reminded: false, createdAt: 1 },
-      { id: 'us036-b', text: '原始名称乙', day: '2026-11-05', time: '09:30', done: false, reminded: false, createdAt: 2 },
+      { id: 'us036-a', text: '原始名称甲', day: today, time: null, done: false, reminded: false, createdAt: 1 },
+      { id: 'us036-b', text: '原始名称乙', day: today, time: '09:30', done: false, reminded: false, createdAt: 2 },
     ],
   }
   writeFileSync(SCHED, JSON.stringify(seed, null, 2), 'utf8')
@@ -73,6 +81,13 @@ async function main() {
   const evalJs = (expr) => cdp(wsUrl, expr)
 
   // 展开岛 → 切日程页（第 4 个点）
+  // 同样别固定 sleep：等 .island 真的挂上再点（见 e2e-schedule.mjs 的说明）
+  for (let i = 0; i < 40; i++) {
+    const mounted = await evalJs(`!!document.querySelector('.island')`)
+    if (mounted === true) break
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  await new Promise((r) => setTimeout(r, 300))
   await evalJs(`document.querySelector('.island').click()`)
   await new Promise((r) => setTimeout(r, 400))
   await evalJs(`document.querySelectorAll('.dot')[3].click()`)

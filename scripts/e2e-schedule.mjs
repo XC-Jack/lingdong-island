@@ -53,10 +53,19 @@ function cdp(wsUrl) {
 
 const main = async () => {
   await ensureInstance()
-  await sleep(2000)
   const wsUrl = await connect()
   const { ws, send } = cdp(wsUrl)
   await new Promise((res) => { ws.onopen = res })
+
+  // ⚠ 不能固定 sleep 就点：本机实测「起进程 → .island 挂载」要 4.7 秒左右
+  // （见 docs/facts/本机约束与踩坑.md）。固定等 2 秒会在慢机/首次构建后拿到 null，
+  // 报成「click fail / title undefined」，看起来像功能坏了。[实测] 2026-11-18 验收时就是它。
+  for (let i = 0; i < 40; i++) {
+    const ok = await send(`!!document.querySelector('.island')`)
+    if (ok === true) break
+    await sleep(300)
+  }
+  await sleep(300)
 
   // 展开岛（收起态点一下）
   await send(`document.querySelector('.island').click()`)
