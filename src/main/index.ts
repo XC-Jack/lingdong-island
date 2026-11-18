@@ -1,7 +1,7 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
 import { setupStatus, stopStatus } from './statusStore'
 import { setupShelfStore } from './shelfStore'
@@ -283,6 +283,71 @@ function createWindow(): void {
 }
 
 /**
+ * 启动诊断日志（2026-11-18 加，起因见 docs/Spec/SPEC-startup-diagnostics.md）。
+ *
+ * 用户反馈「同学的机器上双击打不开，界面上什么都没有」。打包版默认不写任何日志，
+ * 双击失败时用户/我们两边都只能猜（杀软拦截？系统太旧？初始化抛异常？）。
+ * 这里做两件事：
+ *  1. 每次启动往 `userData/startup.log` 追一行（版本、Electron 版本、系统版本、可疑环境变量）；
+ *  2. 捕获未处理异常/未处理 Promise 拒绝，既写日志，也用原生对话框把「为什么打不开」显示出来
+ *     —— 安装包未签名、缺运行环境、磁盘只读之类的问题都能第一时间看到原因，
+ *     而不是双击后一片安静。
+ *
+ * 注意：日志写入失败绝不能影响启动（整段 try/catch）。日志文件放在数据目录里，
+ * 设置窗口的「打开数据文件夹」就能直达。
+ */
+function startupLog(line: string): void {
+  try {
+    const dir = app.getPath('userData')
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(join(dir, 'startup.log'), `[${new Date().toISOString()}] ${line}\n`, 'utf8')
+  } catch {
+    /* 写不了日志（只读盘/权限）就算了，不能因此挡住启动 */
+  }
+}
+
+function describeEnv(): string {
+  const parts = [
+    'version=' + app.getVersion(),
+    'electron=' + process.versions.electron,
+    'chrome=' + process.versions.chrome,
+    'packaged=' + app.isPackaged,
+    'argv=' + JSON.stringify(process.argv.slice(1)),
+    'exe=' + process.execPath,
+    'cwd=' + process.cwd()
+  ]
+  // 已知会让打包版「双击没反应」的环境变量：设了它 Electron 会以纯 Node 方式跑，
+  // 主进程逻辑根本不执行（[实测] 见 docs/facts/本机约束与踩坑.md）
+  if (process.env['ELECTRON_RUN_AS_NODE']) parts.push('WARN:ELECTRON_RUN_AS_NODE=' + process.env['ELECTRON_RUN_AS_NODE'])
+  if (process.env['ELECTRON_NO_ATTACH_CONSOLE']) parts.push('WARN:ELECTRON_NO_ATTACH_CONSOLE=1')
+  return parts.join(' ')
+}
+
+process.on('uncaughtException', (err) => {
+  const detail = err && err.stack ? err.stack : String(err)
+  startupLog('FATAL uncaughtException: ' + detail)
+  try {
+    dialog.showErrorBox(
+      '灵动岛启动失败',
+      '程序遇到错误，没能正常启动。\n\n' +
+        String((err && err.message) || err) +
+        '\n\n日志：' +
+        join(app.getPath('userData'), 'startup.log')
+    )
+  } catch {
+    /* 连对话框都弹不出来（极端情况）就只剩日志 */
+  }
+  app.exit(1)
+})
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const detail = reason instanceof Error ? reason.stack ?? reason.message : String(reason)
+  startupLog('WARN unhandledRejection: ' + detail)
+})
+
+startupLog('=== 启动 ' + describeEnv())
+
+/**
  * 单实例锁（2026-11-17 加）。
  *
  * 为什么需要：用户机器重启后同时出现了**两个岛**。原因是注册表 HKCU\...\Run 里有两条自启：
@@ -311,6 +376,7 @@ if (!hasSingleInstanceLock) {
 app.whenReady().then(() => {
   // 拿不到锁的实例已经 quit 了，别再往下初始化（否则会建第二个岛、起第二个辅助进程）
   if (!hasSingleInstanceLock) return
+  startupLog('whenReady ok, creating window')
   // 通知归属（US-029 反馈修复）：Windows 上不设 AppUserModelId，系统通知可能
   // 归不到本应用而不弹出。id 必须与打包配置的 appId 一致才能对上快捷方式。
   if (process.platform === 'win32') {
