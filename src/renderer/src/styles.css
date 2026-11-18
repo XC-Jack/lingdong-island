@@ -465,32 +465,39 @@ body {
 
 /* ---------- 展开态 ---------- */
 
+/* 展开态头部：2026-11-18 起改成上下两行（SPEC-expanded-head-two-rows）。
+   原来「标题 + 岛仔 + 状态区」全挤在一行，状态区用绝对定位居中且宽度被 50% 卡住，
+   dateWeek 档时钟因此折成三行并压住标题。现在第一行是页面身份（徽章/标题/岛仔/完成度），
+   第二行是状态区，整行独占宽度居中，标题再长也不抢空间。 */
 .panel-head {
-  position: relative; /* head-status 绝对居中的定位锚 */
+  position: relative; /* .head-pet 绝对居中的定位锚 */
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
   padding-bottom: 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  /* 2026-11-16 用户 m01634「里面的要和外面的统一一下，还可以再大一点，字体粗一点」：
-     展开态状态区改成与收起态同一套尺寸（岛仔 28 + 间距 2 + 信息行 27 = 57 布局 px），
-     而 .head-status 是绝对定位不占流，所以这里给头部撑出足够高度，否则会压到下方内容。 */
   min-height: 58px;
 }
 
-/* 展开态头部常驻状态区：绝对定位真正居中（margin:0 auto 会被 flex:1 的 spacer
-   抢光剩余空间，auto margin 拿到 0，状态区就贴在标题后面——用户看到的「还在左上角」）。
-   美化-03 起改成上下两层：岛仔一层、信息行一层，整体仍水平+垂直居中。 */
-.head-status {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+/* 头部第一行：徽章 + 标题 + 岛仔（绝对居中，不占流）+ 右侧完成度 */
+.head-top {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+/* 头部第二行：常驻状态区（电量环/时钟/网络/待办/铃铛）。
+   不再绝对定位：在列向头部里按正常流排在标题行下面，整行居中。 */
+.head-status {
+  display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 0;
+  margin-top: 8px;
+  min-height: 27px;
   flex: none;
   pointer-events: none; /* 让点击穿透到下层，避免挡住头部控件 */
 }
@@ -509,17 +516,22 @@ body {
   pointer-events: auto;
 }
 
-.head-status .collapsed-pet {
+.head-pet .collapsed-pet {
   /* 2026-11-16 用户 m01634：16→28，与收起态岛仔同一套尺寸（收起态 24，这里再大一档） */
   width: 28px;
   height: 28px;
 }
 
-/* 岛仔独占上层（美化-03：不参与顺序排列，永远在信息行之上） */
+/* 岛仔独占第一行（美化-03：不参与顺序排列；两行头部起绝对居中在标题行上沿） */
 .head-pet {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  transform: translateX(-50%);
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 2;
 }
 
 /* 信息行：按 pagesCustom.order 排的时钟/电量/网络/待办/铃铛。

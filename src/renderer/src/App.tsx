@@ -3524,43 +3524,47 @@ export default function App(): React.JSX.Element {
         )}        {expanded ? (
           <>
             <div className="panel-head">
-              <span className="panel-badge" style={{ ['--accent' as never]: '#9aa0a6' }}>
-                <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
-              </span>
-              <span className="panel-title">{PAGE_META[page].label}</span>
-              {/* 顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）。
-                  美化-03：与收起态共用同一套 pagesCustom（显隐 + 顺序）——
-                  岛仔不参与排序，单独占上面一层；其余组件按 order 排在下面一行。 */}
-              <span className="head-status">
+              {/* 第一行：页面身份（徽章 + 标题）+ 岛仔 + 右侧完成度。
+                  2026-11-18（SPEC-expanded-head-two-rows）：状态区原来和标题挤在同一行，
+                  dateWeek 档时钟被 50% 宽的绝对居中盒压成三行并压住标题；改成上下两行后
+                  状态行独占整宽居中，标题再长也不会和它抢横向空间。 */}
+              <div className="head-top">
+                <span className="panel-badge" style={{ ['--accent' as never]: '#9aa0a6' }}>
+                  <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
+                </span>
+                <span className="panel-title">{PAGE_META[page].label}</span>
                 {pagesCustom.collapsed.pet && <span className="head-pet">{renderStatusItem('pet')}</span>}
+                <span className="panel-head-spacer" />
+                {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
+                    右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
+                    e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}
+                {page === 0 && (
+                  <span className="todo-stat">
+                    <svg className="todo-ring" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle className="todo-ring-bg" cx="12" cy="12" r="9" />
+                      <circle
+                        className={`todo-ring-fg ${todoStats.total > 0 && todoStats.done >= todoStats.total ? 'full' : ''}`}
+                        cx="12"
+                        cy="12"
+                        r="9"
+                        strokeDasharray={RING_CIRC}
+                        strokeDashoffset={RING_CIRC * (1 - (todoStats.total > 0 ? todoStats.done / todoStats.total : 0))}
+                      />
+                    </svg>
+                    <b className="todo-count">
+                      {todoStats.done}/{todoStats.total}
+                    </b>
+                  </span>
+                )}
+              </div>
+              {/* 第二行：顶部常驻信息（对照参考工具：展开后收起态的信息 UI 不消失）。
+                  美化-03：与收起态共用同一套 pagesCustom（显隐 + 顺序）——
+                  岛仔不参与排序，放在第一行；其余组件按 order 在这一行居中。 */}
+              <span className="head-status">
                 <span className="head-info">
                   {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
                 </span>
               </span>
-              {/* 状态区已绝对定位不占流：flex:1 spacer 恢复，把完成度推到右侧，
-                  与中间状态区天然分离（之前 marginLeft:auto 双 auto 均分空间导致完成度卡在中间） */}
-              <span className="panel-head-spacer" />
-              {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
-                  右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
-                  e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}
-              {page === 0 && (
-                <span className="todo-stat">
-                  <svg className="todo-ring" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle className="todo-ring-bg" cx="12" cy="12" r="9" />
-                    <circle
-                      className={`todo-ring-fg ${todoStats.total > 0 && todoStats.done >= todoStats.total ? 'full' : ''}`}
-                      cx="12"
-                      cy="12"
-                      r="9"
-                      strokeDasharray={RING_CIRC}
-                      strokeDashoffset={RING_CIRC * (1 - (todoStats.total > 0 ? todoStats.done / todoStats.total : 0))}
-                    />
-                  </svg>
-                  <b className="todo-count">
-                    {todoStats.done}/{todoStats.total}
-                  </b>
-                </span>
-              )}
             </div>
             <div className="panel-body">
               {/* 点面板主体不再整体收起：stopPropagation 由内部控件自理 */}
