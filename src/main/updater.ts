@@ -1,6 +1,8 @@
-import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, net, Notification, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateInfo, ProgressInfo } from 'electron-updater'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { UpdateState } from '../shared/types'
 import { openSettings } from './settingsWindow'
 import { startupLog } from './startupLog'
@@ -21,17 +23,36 @@ import { startupLog } from './startupLog'
 
 /** 启动后多久做第一次静默检查（避开启动时的窗口/托盘初始化） */
 const FIRST_CHECK_DELAY_MS = 60_000
-/** 自动检查间隔 */
-const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 /** 降级出口：打不开更新器时让用户自己下 */
 const RELEASE_PAGE = 'https://github.com/XC-Jack/lingdong-island/releases/latest'
+/**
+ * 已提示过的版本（2026-11-18 用户要求「每次启动给一次提示即可」）。
+ * 存在 userData 里而不是内存：否则每次启动都会对同一个新版本再弹一次通知。
+ */
+const NOTIFY_STATE_FILE = 'update-notified.json'
 
 let state: UpdateState = { stage: 'idle', current: '0.0.0' }
 let checking = false
 let firstCheckTimer: NodeJS.Timeout | null = null
-let intervalTimer: NodeJS.Timeout | null = null
 /** 系统通知必须留引用，否则会被 GC 提前回收导致 click 收不到 */
 let updateNotification: Notification | null = null
+
+function notifiedVersion(): string {
+  try {
+    const raw = JSON.parse(readFileSync(join(app.getPath('userData'), NOTIFY_STATE_FILE), 'utf8'))
+    return typeof raw?.version === 'string' ? raw.version : ''
+  } catch {
+    return ''
+  }
+}
+
+function markNotified(version: string): void {
+  try {
+    writeFileSync(join(app.getPath('userData'), NOTIFY_STATE_FILE), JSON.stringify({ version }), 'utf8')
+  } catch {
+    /* 写不了就下次再提示，不影响更新本身 */
+  }
+}
 
 function broadcast(): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -64,9 +85,18 @@ function fail(e: unknown): void {
   setState({ stage: 'error', message: describeError(raw), detail: raw })
 }
 
-/** 发现新版本时发一条系统通知；点了直接落到设置页「常规」 */
+/**
+ * 发现新版本时发一条系统通知；点了直接落到设置页「常规」。
+ * 同一个版本只提示一次（记在 userData\update-notified.json），
+ * 避免用户没装之前每次开机都被弹一次。
+ */
 function notifyAvailable(version: string): void {
   if (!Notification.isSupported()) return
+  if (notifiedVersion() === version) {
+    startupLog(`update: already notified ${version}, skip`)
+    return
+  }
+  markNotified(version)
   updateNotification = new Notification({
     title: `灵动岛 ${version} 可以更新`,
     body: '点这里打开设置，确认后下载',
@@ -82,6 +112,12 @@ async function check(): Promise<void> {
     return
   }
   if (checking || state.stage === 'downloading') return
+  // 没网就直接跳过，不写「检查失败」——用户 2026-11-18 要求连不上时安静
+  if (!net.isOnline()) {
+    startupLog('update: offline, skip check')
+    if (state.stage !== 'none') setState({ stage: 'error', message: '当前没有网络，未检查更新' })
+    return
+  }
   checking = true
   setState({ stage: 'checking', message: undefined })
   try {
@@ -199,17 +235,14 @@ export function setupUpdater(): void {
 
   attachEvents()
   startupLog(`update: armed, version ${app.getVersion()}`)
+  // 每次启动只查一次（用户 2026-11-18：「不要老在后台扫」，启动时给一次提示即可）。
+  // 不再有周期定时器；运行期间要再查只能在设置页手动点。
   firstCheckTimer = setTimeout(() => {
     void check()
   }, FIRST_CHECK_DELAY_MS)
-  intervalTimer = setInterval(() => {
-    void check()
-  }, CHECK_INTERVAL_MS)
 
   app.on('before-quit', () => {
     if (firstCheckTimer) clearTimeout(firstCheckTimer)
-    if (intervalTimer) clearInterval(intervalTimer)
     firstCheckTimer = null
-    intervalTimer = null
   })
 }
