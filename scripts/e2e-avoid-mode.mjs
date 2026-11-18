@@ -392,6 +392,12 @@ try {
   const noWinForms = !/-AssemblyName System\.Windows\.Forms/.test(watchSrc)
   const noCursorSpawn = !/CURSOR_WATCH_INTERVAL_MS/.test(watchSrc) && !/cursorScript/.test(watchSrc)
   ok('M8a 判断路径不再加载 System.Windows.Forms', noWinForms, noWinForms ? '' : '仍有 WinForms 引用')
+  // M8d 避让路径上不创建任何窗口（2026-11-18：用户实测三角洲独占全屏下，隐藏岛会闪退——
+  // 差别就是隐藏时多创建了一个 4px 置顶透明感应窗，把游戏踢出独占模式。已删掉该窗口，
+  // 摸边唤回改成直接看心跳里的光标坐标。）
+  const noEdgeWindow = !/new BrowserWindow/.test(watchSrc) && !/ensureEdgeWindow/.test(watchSrc)
+  ok('M8d 避让路径不再创建任何窗口（独占全屏不被打扰）', noEdgeWindow,
+    noEdgeWindow ? '' : '仍会 new BrowserWindow')
   ok('M8b 摸边不再每 400ms spawn 一个 PowerShell', noCursorSpawn, noCursorSpawn ? '' : '仍存在光标轮询 spawn')
 
   // M8c 心跳文件必须带光标坐标：码|毫秒|x,y

@@ -352,7 +352,9 @@ const api = {
   requestTempShow(on: boolean): void {
     ipcRenderer.send('island:temp-show', on)
   },
-  /** US-041 鼠标离开岛根（避让临时现身期间上报，主进程决定回隐） */
+  /** US-041 鼠标离开岛根（避让临时现身期间上报，主进程决定回隐）。
+   * 注意：2026-11-18 起「摸边唤回」不再靠 4px 感应窗，主进程自己看光标坐标；
+   * 这条只用于「鼠标离开岛 → 收起」。 */
   edgeLeave(): void {
     ipcRenderer.send('island:edge-leave')
   },

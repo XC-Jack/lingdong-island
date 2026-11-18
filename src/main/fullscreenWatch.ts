@@ -41,16 +41,19 @@ import type { AvoidMode } from '../shared/types'
  *  这里改成 stdio 全 ignore、零管道、只走一个文件，并且带心跳超时回退：辅助进程 3 秒没有
  *  心跳就自动切回「单发短命 PowerShell」的旧路径（1 秒一次），绝不因为辅助进程挂了而失效。
  *
- * 摸边唤回：隐藏期间在主屏顶部放一条 4px 高的隐形感应窗（不可聚焦、不进
- * 任务栏、鼠标穿透关不掉也无所谓——它只有 4px，盖在岛平时待的位置），
- * mouseenter 时临时显示岛；鼠标离开岛窗口区域（且仍全屏）再隐藏。
+ * 摸边唤回（2026-11-18 改）：不再创建感应窗，改看常驻辅助进程报上来的光标坐标——
+ * 光标到屏幕最顶边（y ≤ 2）就临时显示岛，光标离开岛区域（且仍全屏）再隐藏。
+ * 为什么改：用户实测三角洲在**独占全屏**下切到会隐藏岛的档位就闪退，差别正是隐藏时
+ * 多创建了一个置顶透明感应窗（独占全屏交换链上叠/摘 topmost 窗口极易踢出独占模式）。
+ * 现在这条路径上零窗口创建、零额外进程。
  *
  * 通知优先：横幅/验证码弹出时渲染层调 requestTempShow()，岛临时现身
  * （即使正在避让），横幅结束后渲染层调 requestTempShow(false) 回隐。
  */
 
-/** 感应窗高度（px）：太薄摸不到、太厚挡内容，4px 是任务栏类产品的通行值 */
-const EDGE_HEIGHT = 4
+/** 光标到这个 y 就临时唤回（原来是靠一个 4px 高的透明感应窗接 mouseenter，
+ * 2026-11-18 改成直接读光标坐标 —— 见下面 REVEAL 的说明） */
+const REVEAL_Y = 2
 /** 判定的去抖延迟：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁。
  * SPEC-avoid-mode-and-latency：300→150ms（用户要求 0.75 秒内隐藏，去抖不能吃掉太多预算） */
 const DEBOUNCE_MS = 150
@@ -65,11 +68,6 @@ const HEARTBEAT_STALE_MS = 5000
 const FALLBACK_POLL_MS = 1000
 /** 回退期间多久尝试重启一次辅助进程 */
 const HELPER_RETRY_MS = 15000
-/** 感应窗实际高度：Windows 对顶层窗口有最小尺寸约束（SM_CXMINTRACK/SM_CYMINTRACK），
- * 请求 4px 会被强制放大到 ~40px（[实测] .tmp/mini-edge2.cjs：height:4 → getBounds 40）。
- * 解决：窗口整体上移、主体悬在屏幕外，屏内只露 EDGE_HEIGHT 像素——命中带仅 4px，
- * 不遮挡全屏应用顶部交互。 */
-const EDGE_WIN_HEIGHT = 40
 /** 心跳文件名（放在 userData 下，可随时删除，不是用户数据） */
 const BEAT_FILE = 'avoid-mode-beat.txt'
 
@@ -85,7 +83,6 @@ let tempVisible = false
 let bannerHold = false
 /** bannerHold 置 true 的时刻（看门狗用：横幅最长 8 秒，超时说明结束事件丢了） */
 let bannerHoldAt = 0
-let edgeWindow: BrowserWindow | null = null
 /** 当前「按策略应该避让」的期望值；-1 表示还没算过 */
 let wantHidden: boolean | null = null
 /** 最近一次判定码 */
@@ -263,15 +260,11 @@ export function initFullscreenWatch(
       // 隐藏前如果展开着，先收起（不做展开记忆，SPEC 三.5）
       if (win.isVisible()) onStateChange(hidden)
       win.hide()
-      ensureEdgeWindow()
     } else {
       if (!win.isVisible()) {
         revealWindow()
         onStateChange(hidden)
       }
-      // 先现身再销毁感应窗：岛 showInactive 重绘会盖住感应条并触发其 mouseleave，
-      // 若先 destroy 再现身，迟到的 leave 事件仍会进入 IPC 队列误触发回隐（[实测] 竞态）。
-      destroyEdgeWindow()
       tempVisible = false
       stopCursorWatch()
     }
@@ -377,8 +370,9 @@ export function initFullscreenWatch(
       bannerHold = false
       bannerHoldAt = 0
     }
-    // 摸边现身后的「光标移开就回隐」检查：数据来自心跳文件（见上），不额外起进程
+    // 摸边唤回 / 移开回隐：都只看心跳文件里的光标坐标，不创建窗口、不额外起进程
     if (tempVisible) checkCursor()
+    else maybeRevealByCursor()
     // 每轮都评估一次：策略（avoidMode）改了不会产生新的心跳，靠这里在 150ms 内跟上
     evaluate()
     if (fresh) {
@@ -517,11 +511,6 @@ export function initFullscreenWatch(
     })
   }
 
-  startHelper()
-  beatTimer = setInterval(readBeat, BEAT_READ_MS)
-  probeTimers.add(beatTimer)
-  readBeat()
-
   /** 现身期间的「光标移开就回隐」（A5 修复）+ 摸边检查。
    *
    * 实测踩坑（US-041）：岛 showInactive 现身后 Chromium 不认为光标在窗口内（未注册
@@ -570,19 +559,25 @@ export function initFullscreenWatch(
     if (decision(judge)) apply(true)
   }
 
-  // 摸边唤回：感应窗 mouseenter 上报。岛现身会盖住感应条（岛就在顶部），
-  // 所以现身即销毁感应窗，把「离开检测」移交给岛自身的 mouseleave（App.tsx）。
-  ipcMain.on('island:edge-hover', (_e, entered: unknown) => {
-    if (entered !== true) return
-    if (state === 'manual') return
-    if (state === 'avoided' && !tempVisible) {
-      apply(false) // apply(false) 内部已 destroyEdgeWindow + revealWindow
-      // apply(false) 会把 tempVisible 重置为 false（恢复/现身共用入口），
-      // 摸边现身必须在 apply 之后再置 true，否则「临时现身中」标志被吞（[实测] A5 踩坑）。
-      tempVisible = true
-      startCursorWatch()
-    }
-  })
+  /** 摸边唤回（2026-11-18 改）：不再创建任何窗口，直接看光标坐标。
+   *
+   * 历史做法是隐藏期间在屏幕顶部放一条 4px 高的透明感应窗接 mouseenter。但用户实测：
+   * 三角洲在**独占全屏**下，前两档（会隐藏岛的档）一切换就闪退 —— 而「不隐藏」档不闪退。
+   * 差别正是「隐藏时多创建了一个置顶透明窗口」：在独占全屏交换链上叠/摘一个 topmost 窗口，
+   * 很容易把游戏踢出独占模式（叠加反作弊后通常直接崩）。
+   * 现在光标坐标已经由常驻辅助进程 120ms 报一次（心跳文件第三段），判定「光标是否到顶」
+   * 完全不需要窗口，于是这条路径上**零窗口创建**。
+   */
+  const maybeRevealByCursor = (): void => {
+    if (state !== 'avoided' || tempVisible || bannerHold) return
+    // 坐标太旧（辅助进程刚重启/走了回退路径）就先不判，免得拿旧坐标误唤回
+    if (Date.now() - lastCursor.at > 800) return
+    if (lastCursor.y > REVEAL_Y) return
+    apply(false) // 现身
+    tempVisible = true
+    startCursorWatch()
+  }
+
   // 鼠标离开岛：渲染层 mouseleave 岛根元素时上报，仍全屏则回隐。
   // 实测竞态兜底：岛现身瞬间会遮挡感应窗触发其迟到 mouseleave（IPC 排队后到达），
   // 事件本身无法与「用户真的移开」区分 → 延迟 400ms 用光标实测确认：
@@ -597,7 +592,7 @@ export function initFullscreenWatch(
       // 用 OS 层 GetCursorPos 的结果（心跳文件里带的），不用 screen.getCursorScreenPoint()：
       // 后者在本机实测与真实光标位置不一致（[实测] US-041 排障记录）
       const p = Date.now() - lastCursor.at < 2000 ? lastCursor : { x: screen.getCursorScreenPoint().x, y: screen.getCursorScreenPoint().y }
-      const inIsland = p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y - EDGE_HEIGHT && p.y <= b.y + b.height
+      const inIsland = p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y - REVEAL_Y - 2 && p.y <= b.y + b.height
       if (inIsland) return // 误报（岛现身遮挡感应窗的迟到 leave）
       tempVisible = false
       if (decision(judge)) apply(true)
@@ -629,59 +624,19 @@ export function initFullscreenWatch(
     if (!bannerHold && state === 'avoided' && !tempVisible && decision(judge)) apply(true)
     if (!bannerHold && state === 'manual' && getMain()?.isVisible()) apply(true)
   })
+
+  // ⚠ 启动计时器/首轮读心跳必须放在这个函数的**最末尾**：`readBeat()` 会立刻跑一轮，
+  // 而它要调用的 `checkCursor` / `maybeRevealByCursor` 都是下面才定义的 const，
+  // 放前面会踩 TDZ（`Cannot access 'maybeRevealByCursor' before initialization`）。
+  // [实测] 2026-11-18：这条就是靠新加的启动诊断日志抓到的（startup.log 里一条 FATAL，
+  // 打包版还会弹错误框）—— 正是当初加它的目的。
+  startHelper()
+  beatTimer = setInterval(readBeat, BEAT_READ_MS)
+  probeTimers.add(beatTimer)
+  readBeat()
 }
 
-/** 顶部 4px 隐形感应窗（仅 avoided 状态存在）。
- * 实测踩坑（US-041 排障）：不能用「轮询 screen.getCursorScreenPoint()」做摸边探测——
- * 本机实测该 API 与外部进程的 SetCursorPos 结果严重不一致（e2e 光标已 settled 到 (768,0)，
- * 主进程 probe 恒读到旧位置），无法可靠命中。改为感应窗自身的 mouseenter/mouseleave 事件
- * （Chromium 按物理光标触发，无坐标换算歧义）。感应窗用 nodeIntegration 直连 ipcRenderer
- * （4px 透明空窗、无远程内容，风险可控）。 */
-function ensureEdgeWindow(): void {
-  if (edgeWindow && !edgeWindow.isDestroyed()) return
-  const { workArea } = screen.getPrimaryDisplay()
-  edgeWindow = new BrowserWindow({
-    x: workArea.x,
-    // 屏外衬底：窗口 40px 高（系统最小尺寸约束，见 EDGE_WIN_HEIGHT 注释），
-    // 上移 36px 使屏内只露底部 4px 命中带。
-    y: workArea.y - (EDGE_WIN_HEIGHT - EDGE_HEIGHT),
-    width: workArea.width,
-    height: EDGE_WIN_HEIGHT,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    focusable: false,
-    alwaysOnTop: true,
-    show: false,
-    webPreferences: { sandbox: false, nodeIntegration: true, contextIsolation: false }
-  })
-  edgeWindow.setAlwaysOnTop(true, 'screen-saver')
-  edgeWindow.loadURL(
-    'data:text/html,<body style="margin:0;background:transparent"></body>' +
-      '<div style="position:fixed;bottom:0;left:0;width:100%;height:4px;background:rgba(0,0,0,0.05)"></div>' +
-      '<script>const { ipcRenderer } = require("electron");' +
-      'document.addEventListener("mouseenter", () => { ipcRenderer.send("island:edge-hover", true) });' +
-      'document.addEventListener("mouseleave", () => { ipcRenderer.send("island:edge-leave") });' +
-      '</script>'
-  )
-  edgeWindow.once('ready-to-show', () => edgeWindow?.showInactive())
-  // 感应窗上关闭时清引用
-  edgeWindow.on('closed', () => {
-    edgeWindow = null
-  })
-}
-
-function destroyEdgeWindow(): void {
-  if (edgeWindow && !edgeWindow.isDestroyed()) edgeWindow.destroy()
-  edgeWindow = null
-}
-
-/** 退出时停掉辅助进程/回退轮询与感应窗 */
+/** 退出时停掉辅助进程/回退轮询 */
 export function stopFullscreenWatch(): void {
   stopped = true
   if (beatTimer) {
@@ -719,7 +674,6 @@ export function stopFullscreenWatch(): void {
     clearInterval(helperRetryTimer)
     helperRetryTimer = null
   }
-  destroyEdgeWindow()
   try {
     unlinkSync(beatFile)
   } catch {
