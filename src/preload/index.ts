@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, LyricQuery, LyricResult, MusicCommand, MusicState, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo } from '../shared/types'
+import type { AppInfo, AvoidMode, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo } from '../shared/types'
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult }
 
@@ -418,6 +418,8 @@ export interface PrefsShape {
   petWindowPos?: PetWindowPos
   /** 全屏避让策略（SPEC-avoid-mode-and-latency）；缺失=maximized（最大化与真全屏都避让） */
   avoidMode?: AvoidMode
+  /** 网易云后台控制三档（SPEC-netease-cdp-mode）；缺失=auto */
+  neteaseCdpMode?: NeteaseCdpMode
 }
 contextBridge.exposeInMainWorld('island', api)
 

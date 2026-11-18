@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { AVOID_MODES, PET_MODES, PET_SKIN_IDS } from '../shared/types'
-import type { AvoidMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
+import type { AvoidMode, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -45,6 +45,11 @@ interface PrefsShape {
    * （最大化与真全屏都避让，等于引入本字段之前的既有行为）。
    */
   avoidMode?: AvoidMode
+  /**
+   * 网易云后台控制策略（SPEC-netease-cdp-mode）。缺失 = `auto`（自动重启，
+   * 与引入该字段之前的行为一致）。
+   */
+  neteaseCdpMode?: NeteaseCdpMode
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -132,6 +137,14 @@ function normalizePetMode(v: unknown): PetMode | undefined {
 /** 校验避让策略；非法/缺失一律返回 undefined（调用方回落默认 maximized） */
 function normalizeAvoidMode(v: unknown): AvoidMode | undefined {
   return typeof v === 'string' && (AVOID_MODES as readonly string[]).includes(v) ? (v as AvoidMode) : undefined
+}
+
+/** 网易云后台控制档位（SPEC-netease-cdp-mode）：白名单，手改坏了按缺失处理（= auto） */
+const NETEASE_CDP_MODES: NeteaseCdpMode[] = ['auto', 'manual', 'off']
+function normalizeNeteaseCdpMode(v: unknown): NeteaseCdpMode | undefined {
+  return typeof v === 'string' && (NETEASE_CDP_MODES as readonly string[]).includes(v)
+    ? (v as NeteaseCdpMode)
+    : undefined
 }
 
 /**
@@ -226,6 +239,8 @@ function load(): PrefsShape {
     if (pw) out.petWindowPos = pw
     const am = normalizeAvoidMode(parsed.avoidMode)
     if (am) out.avoidMode = am
+    const nm = normalizeNeteaseCdpMode(parsed.neteaseCdpMode)
+    if (nm) out.neteaseCdpMode = nm
     return out
   } catch {
     return { ...EMPTY }
@@ -313,15 +328,17 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode } = (payload ?? {}) as {
-    pagesCustom?: unknown
-    shelfView?: unknown
-    musicIntro?: unknown
-    petSkin?: unknown
-    petMode?: unknown
-    petWindowPos?: unknown
-    avoidMode?: unknown
-  }
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode } =
+    (payload ?? {}) as {
+      pagesCustom?: unknown
+      shelfView?: unknown
+      musicIntro?: unknown
+      petSkin?: unknown
+      petMode?: unknown
+      petWindowPos?: unknown
+      avoidMode?: unknown
+      neteaseCdpMode?: unknown
+    }
   const pc = normalizePagesCustom(pagesCustom)
   if (pc) data.pagesCustom = pc
   else if (pagesCustom !== undefined) delete data.pagesCustom // 显式传 pagesCustom 才动它，未传保持原值
@@ -344,6 +361,9 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const am = normalizeAvoidMode(avoidMode)
   if (am) data.avoidMode = am
   else if (avoidMode !== undefined) delete data.avoidMode
+  const nm = normalizeNeteaseCdpMode(neteaseCdpMode)
+  if (nm) data.neteaseCdpMode = nm
+  else if (neteaseCdpMode !== undefined) delete data.neteaseCdpMode
   save(data)
   return JSON.stringify(before) !== JSON.stringify(data) ? data : null
 }

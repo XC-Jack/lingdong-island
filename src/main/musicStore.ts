@@ -14,7 +14,8 @@ import {
   type NeteaseCdpState
 } from './neteaseCdp'
 import { startupLog } from './startupLog'
-import type { MusicCommand, MusicState } from '../shared/types'
+import { getPrefs, onPrefsWritten } from './prefsStore'
+import type { MusicCommand, MusicState, NeteaseCdpMode } from '../shared/types'
 
 /**
  * 音乐页数据源（SPEC-music-page / US-031）。
@@ -72,7 +73,8 @@ const EMPTY_STATE: MusicState = {
   barOk: false,
   neteaseCdp: false,
   neteaseCdpBusy: false,
-  neteaseRunning: false
+  neteaseRunning: false,
+  neteaseCdpMode: 'auto'
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -90,6 +92,11 @@ let cdpTimer: ReturnType<typeof setInterval> | null = null
 let cdpPolling = false
 let cdpBusy = false
 let neteaseRunning = false
+/**
+ * 网易云后台控制档位（SPEC-netease-cdp-mode）：auto=自动重启 / manual=只提示 /
+ * off=不重启也不提示。启动时从 prefs 读，设置窗口改动经 onPrefsWritten 热更新。
+ */
+let cdpMode: NeteaseCdpMode = 'auto'
 /** 自动开启状态机：首次发现「在跑但没端口」的时间；0 = 条件不成立 */
 let autoCdpNoPortSince = 0
 /** 最近一次自动尝试的时间（冷却用） */
@@ -157,6 +164,7 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.neteaseCdp === b.neteaseCdp &&
     a.neteaseCdpBusy === b.neteaseCdpBusy &&
     a.neteaseRunning === b.neteaseRunning &&
+    a.neteaseCdpMode === b.neteaseCdpMode &&
     // 只比 barOk（以及两档精度下的 barPct），不比逐位 barPct：正常播放器 barPct 恒 -1，
     // 比对是空操作；只有降级路径（播放器不报时间轴、position 恒 0）才靠 barPct 变化
     // 触发广播——那种情况若也不广播，界面就永远拿不到新的进度，钟也就没法校准。
@@ -232,7 +240,8 @@ function handleLine(text: string): void {
     // 桥接原始状态不带这两个字段，合并时由 recompute() 统一决定
     neteaseCdp: false,
     neteaseCdpBusy: false,
-    neteaseRunning: false
+    neteaseRunning: false,
+    neteaseCdpMode: cdpMode
   }
   bridgeState = next
   recompute()
@@ -278,10 +287,11 @@ function recompute(): void {
       barOk: false,
       neteaseCdp: true,
       neteaseCdpBusy: cdpBusy,
-      neteaseRunning: true
+      neteaseRunning: true,
+      neteaseCdpMode: cdpMode
     }
   } else {
-    next = { ...bridgeState, neteaseCdp: false, neteaseCdpBusy: cdpBusy, neteaseRunning }
+    next = { ...bridgeState, neteaseCdp: false, neteaseCdpBusy: cdpBusy, neteaseRunning, neteaseCdpMode: cdpMode }
   }
   if (sameState(cache, next)) return
   cache = next
@@ -358,8 +368,11 @@ async function pollCdp(): Promise<void> {
         resetAutoCdp()
       } else if (await isNeteaseCdpReady()) {
         autoCdpNoPortSince = 0
-      } else {
+      } else if (cdpMode === 'auto') {
         maybeAutoEnableCdp()
+      } else {
+        // manual / off：不自动重启。清零计时，免得从关闭切回自动时立刻触发一次
+        autoCdpNoPortSince = 0
       }
     }
     // 最小化后网易云没有 SMTC 会话 / 主窗口标题，桥接的降级识别认不出它；
@@ -639,6 +652,17 @@ function startBridge(): void {
 }
 
 export function setupMusicStore(): void {
+  // 网易云后台控制档位（SPEC-netease-cdp-mode）：启动读一次，之后跟着 prefs 广播热更新。
+  cdpMode = getPrefs().neteaseCdpMode ?? 'auto'
+  onPrefsWritten((p) => {
+    const next = p.neteaseCdpMode ?? 'auto'
+    if (next === cdpMode) return
+    cdpMode = next
+    autoCdpNoPortSince = 0
+    // 档位决定音乐页显不显示「开启入口」，立刻推一帧，不用等下一次轮询
+    recompute()
+  })
+
   // CDP 轮询从启动就跑：自动开启网易云调试端口（SPEC-netease-auto-cdp）需要
   // 「进程在跑但没开端口」这个条件持续可见，不能等用户翻到音乐页才开始看。
   // 它只挂 1 秒定时器（tasklist 有 4 秒缓存、端口没开时 fetch 立即失败），

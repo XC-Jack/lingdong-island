@@ -2480,7 +2480,8 @@ function MusicPanel(): React.JSX.Element {
       {/* 网易云后台精确控制（用户 m0xxxx「必须把网易云显示出来才能控进度，那还不如不要」）：
           调试端口只能在网易云启动时打开，所以这里给一键重启入口。开启后进度/seek 直接
           操作它的页面，窗口最小化也有效，不再依赖抓像素和把窗口顶到前台。 */}
-      {music?.neteaseRunning === true && !music.neteaseCdp && (
+      {/* 档位为「关闭」时连这个入口都不给（SPEC-netease-cdp-mode）：用户明确不想让岛碰网易云 */}
+      {music?.neteaseRunning === true && !music.neteaseCdp && music.neteaseCdpMode !== 'off' && (
         <button
           type="button"
           className={`music-cdp-tip ${music.neteaseCdpBusy ? 'busy' : ''}`}

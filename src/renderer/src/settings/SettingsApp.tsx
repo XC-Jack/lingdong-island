@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import type { AvoidMode, SettingsSection } from '../../../shared/types'
+import type { AvoidMode, NeteaseCdpMode, SettingsSection } from '../../../shared/types'
 import { AVOID_MODES } from '../../../shared/types'
 import PageManagerSection, {
   defaultPagesCustom,
@@ -121,6 +121,26 @@ const AVOID_META: Record<AvoidMode, { label: string; desc: string }> = {
   }
 }
 
+/**
+ * 网易云后台控制三档（SPEC-netease-cdp-mode，用户 2026-11-18 要求「再加一个自动和半自动的」）。
+ * 自动＝现状（发现端口缺失就重启）；半自动＝只保留音乐页的「点此开启」入口；关闭＝连入口也不显示。
+ */
+const CDP_MODES: NeteaseCdpMode[] = ['auto', 'manual', 'off']
+const CDP_MODE_META: Record<NeteaseCdpMode, { label: string; desc: string }> = {
+  auto: {
+    label: '自动',
+    desc: '发现网易云没开后台控制端口时，自动重启它一次（约 4 秒），之后最小化也能拖进度。'
+  },
+  manual: {
+    label: '半自动',
+    desc: '不自动重启，只在音乐页显示「点此开启后台精确控制」入口，你点了才重启。'
+  },
+  off: {
+    label: '关闭',
+    desc: '不自动重启，也不显示入口；灵动岛不会碰网易云。'
+  }
+}
+
 export default function SettingsApp(): ReactElement {
   // 首帧就落在菜单要求的分区（模块级订阅可能在 render 之前已经收到一条）
   const [section, setSection] = useState<SettingsSection>(pendingSection ?? 'general')
@@ -134,6 +154,9 @@ export default function SettingsApp(): ReactElement {
   const [avoidMode, setAvoidMode] = useState<AvoidMode>('maximized')
   // 用户点过就不再接受启动回填（与桌宠分区同一个防覆盖思路）
   const avoidDirty = useRef(false)
+  // 网易云后台控制档位（SPEC-netease-cdp-mode）：默认与主进程一致 = auto
+  const [cdpMode, setCdpMode] = useState<NeteaseCdpMode>('auto')
+  const cdpModeDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
@@ -148,6 +171,7 @@ export default function SettingsApp(): ReactElement {
       .then((prefs) => {
         if (!alive) return
         if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
+        if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -162,6 +186,7 @@ export default function SettingsApp(): ReactElement {
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (v) setPagesCustom(v)
       if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
+      if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
     })
     return () => {
       alive = false
@@ -214,6 +239,15 @@ export default function SettingsApp(): ReactElement {
     avoidDirty.current = true
     setAvoidMode(m)
     window.island.prefsSet({ avoidMode: m }).catch(() => {
+      /* 写失败下次还是旧值，不打扰用户 */
+    })
+  }
+
+  /** 网易云后台控制档位：立即生效 + 写主进程（主进程经 onPrefsWritten 热更新） */
+  const pickCdpMode = (m: NeteaseCdpMode): void => {
+    cdpModeDirty.current = true
+    setCdpMode(m)
+    window.island.prefsSet({ neteaseCdpMode: m }).catch(() => {
       /* 写失败下次还是旧值，不打扰用户 */
     })
   }
@@ -346,6 +380,25 @@ export default function SettingsApp(): ReactElement {
                     <span className="pet-set-mode-text">
                       <span className="pet-set-mode-name">{AVOID_META[m].label}</span>
                       <span className="pet-set-mode-desc">{AVOID_META[m].desc}</span>
+                    </span>
+                    <span className="pet-set-radio" aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+              <div className="set-card">
+                <div className="pet-set-head">网易云后台控制</div>
+                {CDP_MODES.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`pet-set-mode ${cdpMode === m ? 'on' : ''}`}
+                    data-cdp-mode={m}
+                    aria-pressed={cdpMode === m}
+                    onClick={() => pickCdpMode(m)}
+                  >
+                    <span className="pet-set-mode-text">
+                      <span className="pet-set-mode-name">{CDP_MODE_META[m].label}</span>
+                      <span className="pet-set-mode-desc">{CDP_MODE_META[m].desc}</span>
                     </span>
                     <span className="pet-set-radio" aria-hidden="true" />
                   </button>
