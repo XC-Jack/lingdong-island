@@ -50,7 +50,7 @@
 | D2 | 第二个实例（单实例锁命中）也会留一行「启动」 | 同一 userData 连起两次，日志出现 3 行且第二次没有 `whenReady ok` |
 | D3 | 未捕获异常会写 FATAL + 弹框 | **不单独构造**（构造需要注入崩溃代码），以源码审查为准；[未验证] |
 | D4 | 类型检查/构建 | `npm run typecheck`、`npm run build` EXIT=0 |
-| D5 | 既有功能不回归 | `e2e-avoid-mode` / `e2e-fullscreen-avoid` / `e2e-fullscreen-misjudge` 全绿 |
+| D5 | 既有功能不回归 | `e2e-avoid-mode` / `e2e-fullscreen-avoid` / `e2e-fullscreen-misjudge` 全绿（实测见自检：misjudge 的 F3 因**外部应用抢前台**失败，与本改动无关） |
 
 ## 六、不做什么
 
@@ -66,4 +66,7 @@
 | 2026-11-18 | [实测] `npm run typecheck` / `npm run build` | EXIT=0 | — |
 | 2026-11-18 | [实测] 隔离 userData 起 dev 实例后读 `startup.log` | 两行齐全：`=== 启动 version=0.1.5 electron=45.2.1 chrome=156.0.8078.75 packaged=false argv=[...] exe=... cwd=...` 与 `whenReady ok, creating window` | — |
 | 2026-11-18 | [实测] 同一 userData 再起一次（单实例锁命中） | 追加第三行「=== 启动 …」且没有 `whenReady ok`（正好是「重复启动被拦」的取证） | — |
+| 2026-11-18 | [实测] `e2e-avoid-mode`（跑两次） | 第一次 10/2（M2 与 M5 有一轮超时），第二次 **12/0** —— 差异来自外部应用抢前台（同一轮里 misjudge 的 F3 抓到 `WailsWebviewWindow` 反复抢焦点），与本改动无关 | M2/M5 的偶发性仍未彻底消除（环境侧抢焦点无解，只能重跑） |
+| 2026-11-18 | [实测] `e2e-fullscreen-avoid` | **8/0** | — |
+| 2026-11-18 | [实测] `e2e-fullscreen-misjudge` | 6/1：F3「桌面 Progman→岛保持可见」失败，但 `FG=False FGCLS=WailsWebviewWindow` —— 前台被某个 Wails 应用反复抢走，测试根本没把桌面置前（断言前置不成立），**不是判定回归** | F3 在「有外部应用抢前台」的机器上会稳定报这个失败；是否改用「拿不到前台就 skip（带 FGCLS 证据）」另开一轮决定 |
 | — | 未做 | — | `uncaughtException` 的弹框路径没有实际触发过（需要人为注入崩溃）；Windows 7/8.1、32 位系统、杀软拦截这三种「打不开」的真实原因均未复现 |
