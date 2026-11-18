@@ -12,15 +12,16 @@
 
 | 文件 | 改动 |
 |---|---|
-| `src/main/musicStore.ts` | 在 CDP 轮询里加自动开启状态机（条件持续 5 秒 → 触发；失败冷却 60 秒、连续最多 3 次；成功/网易云退出后重置）；写 `startup.log` 记录触发与结果 |
+| `src/main/musicStore.ts` | 在 CDP 轮询里加自动开启状态机（条件持续 1.5 秒 → 触发；失败冷却 60 秒、连续最多 3 次；成功/网易云退出后重置）；`enableCdp()` 改为返回布尔且不再在重启后死等 20 秒；写 `startup.log` 记录触发与结果 |
+| `src/main/neteaseCdp.ts` | 重启提速：`enableNeteaseDebugPort()` 由 PowerShell 脚本改为 `taskkill` + Node `spawn`，固定等待 400ms 降到 250+150ms；网易云 exe 路径只解析一次并缓存；`isNeteaseRunning` 缓存 4s → 2s |
 | `scripts/isolate-userdata.mjs` | 顶层设置 `ISLAND_NO_NETEASE_AUTO=1`，让全部 e2e 不触发自动重启（e2e 连的是真实网易云） |
 
-**不改**：`src/main/neteaseCdp.ts`（重启逻辑已是现成且验证过的）、渲染层 UI、端口号 9222、手动按钮（保留作兜底）。
+**不改**：渲染层 UI、端口号 9222、手动按钮（保留作兜底）。
 
 ## 三、预期行为
 
-1. **触发条件**：`cloudmusic.exe` 在运行 **且** 9222 上没有 `orpheus://` 页面（`isNeteaseCdpReady() === false`），并且这个状态**连续保持 5 秒**。5 秒是给网易云自身启动/更新后加载页面留的窗口。
-2. **执行**：调用现有 `enableCdp()`（关闭 → 强制结束 → 带参数重启 → 最多等 20 秒页面就绪 → 原来在播就恢复播放）。期间 `neteaseCdpBusy=true`，音乐页沿用现有「正在重启网易云…」文案。
+1. **触发条件**：`cloudmusic.exe` 在运行 **且** 9222 上没有 `orpheus://` 页面（`isNeteaseCdpReady() === false`），并且这个状态**连续保持 1.5 秒**。1.5 秒只用来滤掉端口闪断的瞬态；普通方式启动的网易云永远不会有页面，不需要等更久（原为 5 秒、实现中放宽到 8 秒，提速轮压回 1.5 秒）。
+2. **执行**：调用现有 `enableCdp()`（关闭 → 强制结束 → 带参数重启 → 最多等 10 秒页面就绪 → 原来在播就恢复播放）。成功后只读一次状态（400ms 后重试一次）就返回，不再为等「真在播」而空转 20 秒。期间 `neteaseCdpBusy=true`，音乐页沿用现有「正在重启网易云…」文案。
 3. **成功**：`cdpState` 读到 → 重置计时与失败计数，不再重复重启。
 4. **失败**：60 秒内不重试；连续失败 3 次后停止自动尝试，等网易云退出重启或用户手动点按钮。网易云退出（`!neteaseRunning`）或 CDP 恢复时，计数清零。
 5. **不触发**：网易云没运行（不主动拉起）；端口已开但页面还没加载完（`isNeteaseCdpReady()===true`，避免「刚重启又被重启」的死循环）；e2e 环境（`ISLAND_NO_NETEASE_AUTO=1`）。
@@ -35,7 +36,7 @@
 | 编号 | 条件 |
 |---|---|
 | A1 | `npm run typecheck`、`npm run build` 均 EXIT=0 |
-| A2 | 网易云以普通方式运行（无调试端口）时启动预览版：约 5~10 秒内网易云被带 `--remote-debugging-port=9222` 重启，`startup.log` 出现自动开启记录 |
+| A2 | 网易云以普通方式运行（无调试端口）时启动预览版：约 4~7 秒内网易云被带 `--remote-debugging-port=9222` 重启，`startup.log` 出现自动开启记录 |
 | A3 | 自动开启成功后 60 秒内不再出现新的重启记录（无循环） |
 | A4 | 网易云未运行时，岛不启动它、`startup.log` 无自动开启记录 |
 | A5 | `e2e-music` 仍全过（e2e 带 `ISLAND_NO_NETEASE_AUTO=1`，不会动真实网易云） |
@@ -60,10 +61,22 @@
 | A5 `node scripts/e2e-music.mjs` | **网易云关闭时 PASS（17 过 / 0 败 / 3 跳过）**；网易云播放中时两次运行各失败 1 条歌词断言（分别 U4b、U4c），两次失败点不同，改用例随实时播放抖动；关掉网易云即全过 ⇒ 判定为既有「实时歌词对齐」环境的偶发，不是本改动路径 |
 | 隔离保护 | `scripts/isolate-userdata.mjs` 置 `ISLAND_NO_NETEASE_AUTO=1`，e2e 不会重启真实网易云 |
 
+**提速轮（同日，用户要求缩短「重开网易云 → 岛可控制」的等待）**：
+
+| 项 | 改法 | 实测 |
+|---|---|---|
+| 检测加速 | `isNeteaseRunning` 缓存 4s → 2s；触发条件持续时长 8s → **1.5s** | 网易云普通启动后约 1.5~2 秒触发 |
+| 重启提速 | 原来整套走 PowerShell（脚本启动 ~0.5s + 600ms + 900ms 固定等待）；改为 `taskkill` + Node `spawn`，等待 250ms + 150ms；exe 路径只解析一次并缓存 | 触发 → 成功 **2.13s**（07:16:57.556 → 07:16:59.690） |
+| 成功判定提前 | `enableCdp()` 原来成功后再循环等「读到在播」最多 20 秒；改为只读一次（400ms 重试一次）即返回 | 不再拖尾 |
+| 端到端 | 从「普通方式启动网易云」计时到 `9222` 出现 `orpheus://` 页面 | **4.08 秒**（改造前约 12 秒） |
+
+提速轮后 A3 复测：成功后再观察 **75 秒**，`cloudmusic` 3 进程、`electron` 4 进程、端口持续 200 且含 orpheus 页面，`startup.log` 无新 `[music]` 自动开启记录。
+
 **实现中发现并修掉的问题（记录过程）**：
 
 1. 第一版只在 `music:get`（打开音乐页）时启动 CDP 轮询，实机验证「自动开启完全没触发」——根因是轮询是懒启动的。改为 `setupMusicStore()` 里无条件 `startCdp()`（只挂定时器，不拉起 50MB 桥接子进程）。
 2. 第一版在成功后会清零「上次尝试时间」，实机观察到网易云自身重启导致端口闪断时 12 秒内又触发一次重启。改为**成功也遵守 60 秒硬性间隔**，并把触发等待从 5 秒放宽到 8 秒。
+3. 提速轮第一版用 PowerShell 取网易云 exe 路径直接走 stdout，中文路径按 ANSI 代码页输出、Node 按 UTF-8 解码成了乱码 → `spawn … ENOENT`；且 `spawn` 的失败是异步 `'error'` 事件，同步 `try/catch` 捕不到，升级成 `uncaughtException`（`startup.log` 出现 `FATAL uncaughtException`）。修法：路径用 **Base64（UTF-8 字节）** 传回并 `existsSync` 校验；给 `child.on('error')` 挂监听、失败时清空路径缓存；用前再校验一次缓存路径是否存在。
 
 **未验证**：
 

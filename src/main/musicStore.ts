@@ -43,7 +43,7 @@ const STALE_MS = 5000
  * 调试端口只能在进程启动时打开，用户普通重开/更新网易云后端口就没了；
  * 这里在「网易云在跑但端口没开」持续一小段时间后自动重启一次，省掉手动点按钮。
  */
-const AUTO_CDP_DELAY_MS = 8000
+const AUTO_CDP_DELAY_MS = 1500
 /** 两次自动尝试之间的硬性间隔（成功也算）：网易云自身重启时端口会短暂消失，避免连续重启它 */
 const AUTO_CDP_RETRY_MS = 60_000
 /** 连续失败上限；超过后不再自动尝试，等网易云重启或用户手动点 */
@@ -383,11 +383,12 @@ function startCdp(): void {
 }
 
 /**
- * 重启网易云并开启调试端口，然后等播放栏加载出来。
+ * 重启网易云并开启调试端口。
  * 重启前正在播就恢复播放（网易云重启后会停在同一首歌的暂停态）。
+ * 返回 true 表示端口/页面已就绪（不要求立刻读到最后一次播放状态）。
  */
-async function enableCdp(): Promise<void> {
-  if (cdpBusy) return
+async function enableCdp(): Promise<boolean> {
+  if (cdpBusy) return false
   const wasPlaying = cdpState ? cdpState.playing : cache.playing
   cdpBusy = true
   recompute()
@@ -395,15 +396,17 @@ async function enableCdp(): Promise<void> {
   try {
     ok = await enableNeteaseDebugPort()
     if (ok) {
-      for (let i = 0; i < 40; i += 1) {
-        await new Promise((r) => setTimeout(r, 500))
-        const s = await readNeteaseState()
-        if (s) {
-          cdpState = s
-          break
-        }
+      // 端口/页面就绪即算成功；进度控件可能晚几百毫秒，交给常规轮询补，
+      // 避免网易云停在首页 / 没放歌时白等到 20 秒。
+      let s = await readNeteaseState()
+      if (!s) {
+        await new Promise((r) => setTimeout(r, 400))
+        s = await readNeteaseState()
       }
-      if (wasPlaying && cdpState && !cdpState.playing) await clickNetease('play')
+      if (s) {
+        cdpState = s
+        if (wasPlaying && !s.playing) await clickNetease('play')
+      }
     }
   } catch (err) {
     console.warn('[music] 开启网易云精确控制失败：', err)
@@ -412,6 +415,7 @@ async function enableCdp(): Promise<void> {
     await pollCdp()
   }
   if (!ok) console.warn('[music] 网易云调试端口未就绪（可能没在运行）')
+  return ok
 }
 
 /**
@@ -444,8 +448,8 @@ function maybeAutoEnableCdp(): void {
 
 async function autoEnableCdp(): Promise<void> {
   startupLog(`[music] 自动开启网易云后台控制（第 ${autoCdpFails + 1} 次）：进程在跑但 9222 无页面`)
-  await enableCdp()
-  if (cdpState !== null) {
+  const ok = await enableCdp()
+  if (ok) {
     autoCdpFails = 0
     autoCdpNoPortSince = 0
     startupLog('[music] 自动开启成功')
