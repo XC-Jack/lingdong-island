@@ -93,4 +93,4 @@ Exception Processing Message 0xc0000005 - Unexpected parameters
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
 |---|---|---|---|---|
 | 2026-11-18 | 实现方（机械复测，**非独立验收**） | `5b532a8` | 见 `docs/验收清单-0.1.9.md`：自动核验 44 个 e2e（40 通过，4 个失败均与本批无关）；本 SPEC 条目状态见该页第二节 | 复测通过（待独立验收复核） |
-| — | 待独立验收 | — | — | — |
+| 2026-11-18 | 独立验收会话 | `cf16e16`（产品代码=`5b532a8`） | **R1 通过**：源码与构建产物（`out/main/index.js`）均无 `Add-Type -AssemblyName System.Windows.Forms`（仅注释提到），e2e M8a；**R2 通过**：源码无 `CURSOR_WATCH_INTERVAL_MS`/`cursorScript`，`checkCursor` 由读心跳驱动，e2e M8b；**R3 通过**：心跳实拍 `N|1794980625209|400,500` / `Z|1794980309747|300,700`，匹配 `^[FZN]\|\d+\|-?\d+,-?\d+$`，e2e M8c；**R4 通过**：`e2e-avoid-mode` 15/0（超集）；**R5 通过**：`e2e-fullscreen-avoid` 9/0（超集）；**R6 通过**：`e2e-fullscreen-misjudge` 7/0；**R7 通过**：typecheck/build EXIT=0，装机版 `FileVersion=0.1.9` 存在（本轮独立验收未亲自打包装机）；**R8 需人工**（独占全屏游戏，用户 2026-11-18 已确认） | 通过（R8 需人工，用户已确认） |

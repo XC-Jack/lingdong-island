@@ -113,4 +113,4 @@
 | 日期 | 验收人/会话 | 针对提交 | 逐条结论 | 总体 |
 |---|---|---|---|---|
 | 2026-11-18 | 实现方（机械复测，**非独立验收**） | `5b532a8` | 见 `docs/验收清单-0.1.9.md`：自动核验 44 个 e2e（40 通过，4 个失败均与本批无关）；本 SPEC 条目状态见该页第二节 | 复测通过（待独立验收复核） |
-| — | 待独立验收 | — | — | — |
+| 2026-11-18 | 独立验收会话 | `cf16e16`（产品代码=`5b532a8`） | **M1 通过**：`SettingsApp.tsx:336「全屏时怎么办」+ AVOID_MODES.map`；探针 seed `off`→读回 `off`、`prefsSet fullscreen`→`prefs.json` 落盘 `{"avoidMode":"fullscreen"}`、重启读回 `fullscreen`；**M2 通过** 302ms；**M3 通过** 最大化保持可见(show=307ms)/真全屏隐藏(306ms)；**M4 通过** `island=true`；**M5 通过** hide avg 310ms / show avg 314ms（≤1000）；**M6 通过** 313ms；**M6b 通过** misjudge 7/0 + fullscreen-avoid 9/0；**M7 通过** `/json/list` latency 3,2,4,3,2ms；**M8 通过** helper 10s CPU 增 0.062s≈0.62% 单核（旧方案 340~516ms/s）；**M9 通过** 本轮起的实例 helper 随父进程退出，余下 helper 父=存活安装版（非孤儿）；**M10 通过** typecheck/build EXIT=0，本轮按批未打包 | 通过 |
