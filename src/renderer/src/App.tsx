@@ -1464,6 +1464,11 @@ function MonthCalendar({
     setViewMonth(((m % 12) + 12) % 12)
   }
 
+  // 选中日的「日」并进月历标题（SPEC-calendar-date-in-title，用户 2026-11-18 指出右栏
+  // 「11月18日」与标题「2026年11月」月份重复）。翻到别的月份时不显示不属于该月的日号，
+  // 否则会出现「2026年12月 18日」这种误导。
+  const selectedInView = selected.startsWith(`${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-`)
+
   return (
     <div className="cal">
       <div className="cal-head">
@@ -1472,6 +1477,7 @@ function MonthCalendar({
         </button>
         <span className="cal-title">
           {viewYear}年{viewMonth + 1}月
+          {selectedInView ? ` ${Number(selected.slice(8, 10))}日` : ''}
         </span>
         <button type="button" className="cal-nav" title="下个月" aria-label="下个月" onClick={() => shiftMonth(1)}>
           ›
@@ -1597,7 +1603,6 @@ function SchedulePanel(): React.JSX.Element {
   const showTodos = selDay === todayKey
   const todoSorted = showTodos ? [...todos].sort((a, b) => Number(a.done) - Number(b.done)) : []
   const hm = formatClock(new Date())
-  const dayLabel = `${Number(selDay.slice(5, 7))}月${Number(selDay.slice(8, 10))}日`
 
   return (
     <div className="sched-split">
@@ -1606,7 +1611,6 @@ function SchedulePanel(): React.JSX.Element {
       {/* 右栏：当日安排 */}
       <div className="sched-day">
         <div className="sched-day-head">
-          <span className="sched-day-title">{dayLabel}</span>
           <span className="sched-day-sub">
             {dayItems.length} 条日程 · {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
           </span>

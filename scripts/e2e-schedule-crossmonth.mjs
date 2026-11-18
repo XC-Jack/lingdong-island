@@ -100,9 +100,14 @@ try {
   // 点选下月 10 日 → 右栏显示「下月跨月日程」
   await cdpEval(`Array.from(document.querySelectorAll('.cal-day')).find(b => b.textContent.trim().startsWith('10')).click()`)
   await new Promise((r) => setTimeout(r, 500))
-  const dayTitle = await cdpEval(`document.querySelector('.sched-day-title').textContent`)
+  // 日期已并进月历标题（SPEC-calendar-date-in-title），右栏不再有 .sched-day-title
+  const dayTitle = await cdpEval(`document.querySelector('.cal-title')?.textContent ?? 'MISSING'`)
   const hasNext = await cdpEval(`Array.from(document.querySelectorAll('.sched-list .todo-item')).some(el => el.textContent.includes('下月跨月日程'))`)
-  ok('B5 选中下月10日右栏显示该日程', hasNext === true, `dayTitle=${dayTitle}`)
+  ok(
+    'B5 选中下月10日：月历标题带「10日」且右栏显示该日程',
+    hasNext === true && dayTitle.includes('10日'),
+    `dayTitle=${dayTitle}`
+  )
 
   // ---- 翻上月：上月 15 日蓝点 + 选日期显示上月日程 ----
   await cdpEval(`document.querySelector('.cal-nav[title="上个月"]').click()`)

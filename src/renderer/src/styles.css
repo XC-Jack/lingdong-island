@@ -1631,13 +1631,6 @@ body {
   padding: 2px 4px 6px;
 }
 
-.sched-day-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: #f2f3f5;
-  font-variant-numeric: tabular-nums;
-}
-
 .sched-day-sub {
   font-size: 11px;
   color: rgba(242, 243, 245, 0.35);
@@ -1667,6 +1660,10 @@ body {
   font-size: 12.5px;
   font-weight: 600;
   color: #f2f3f5;
+  /* 选中日的「N日」会并进标题（SPEC-calendar-date-in-title）：等宽数字，
+     点不同日期时左右翻页按钮不跟着抖 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .cal-nav {
