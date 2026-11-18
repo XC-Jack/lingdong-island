@@ -45,6 +45,9 @@ mkdirSync(USER_DATA, { recursive: true })
 process.env.APPDATA = FAKE_ROAMING
 // 不让 e2e 触发「网易云自动开启调试端口」：测试机上跑的是用户真实的 cloudmusic.exe
 process.env.ISLAND_NO_NETEASE_AUTO = '1'
+// 同理：e2e 点「词」会走到桌面歌词切换，不能真去开用户网易云的桌面歌词条
+// （SPEC-music-desktop-lyric 的 e2e 隔离口）
+process.env.ISLAND_NO_DESKTOP_LYRIC = '1'
 
 /**
  * 包一层 spawn：只给「启动 dev electron」的那次调用追加 --user-data-dir，

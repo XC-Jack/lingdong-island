@@ -36,6 +36,8 @@ export interface NeteaseCdpState {
   artist: string
   /** 封面原地址（orpheus://cache/?https://...），由调用方决定是否转 data URL */
   coverUrl: string
+  /** 网易云桌面歌词（Ctrl+D）是否开着；页面上找不到可见按钮时为 null */
+  desktopLyric: boolean | null
 }
 
 interface Pending {
@@ -217,8 +219,14 @@ const STATE_EXPR = `(() => {
   const playing = !!icon && /cmd-icon-pause/.test(icon.className);
   const bar = document.querySelector('.default-bar-wrapper');
   const img = bar && bar.querySelector('img');
+  // 桌面歌词开关：播放栏那枚按钮（data-testid 稳定）。开=图标带 cmd-icon-lyric_on，
+  // 关=cmd-icon-lyric（无后缀）。实测 2026-11-18：页面里还有歌词页的同名按钮，按 testid 取不会错。
+  const dlBtn = document.querySelector('[data-testid=tid_playbar_lyric_btn]');
+  const dlIcon = dlBtn && dlBtn.querySelector('.cmd-icon');
+  const dl = dlIcon ? /lyric_on/.test(String(dlIcon.className)) : null;
   return { pos: pos, dur: dur, playing: playing, title: title, artist: artist,
-    coverUrl: img ? (img.getAttribute('src') || '') : '' };
+    coverUrl: img ? (img.getAttribute('src') || '') : '',
+    desktopLyric: dl };
 })()`
 
 export async function readNeteaseState(): Promise<NeteaseCdpState | null> {
@@ -238,7 +246,8 @@ export async function readNeteaseState(): Promise<NeteaseCdpState | null> {
       playing: v.playing === true,
       title: typeof v.title === 'string' ? v.title : '',
       artist: typeof v.artist === 'string' ? v.artist : '',
-      coverUrl: typeof v.coverUrl === 'string' ? v.coverUrl : ''
+      coverUrl: typeof v.coverUrl === 'string' ? v.coverUrl : '',
+      desktopLyric: typeof v.desktopLyric === 'boolean' ? v.desktopLyric : null
     }
   } catch (err) {
     warnCdp(err)
@@ -300,6 +309,48 @@ export async function clickNetease(which: 'play' | 'next' | 'prev'): Promise<boo
     return ok === true
   } catch {
     return false
+  }
+}
+
+/** 读桌面歌词开关；页面上没有可见按钮时返回 null */
+export async function readNeteaseDesktopLyric(): Promise<boolean | null> {
+  try {
+    const v = await evaluate(`(() => {
+      const b = document.querySelector('[data-testid=tid_playbar_lyric_btn]');
+      const icon = b && b.querySelector('.cmd-icon');
+      if (!icon) return null;
+      return /lyric_on/.test(String(icon.className));
+    })()`)
+    return typeof v === 'boolean' ? v : null
+  } catch (err) {
+    warnCdp(err)
+    return null
+  }
+}
+
+/**
+ * 开/关网易云桌面歌词（等价于它的 Ctrl+D）：点播放栏上那枚「桌面歌词」按钮。
+ * 返回操作后的实际状态；按钮找不到 / 点了没反应都返回 null，由调用方决定怎么提示。
+ */
+export async function setNeteaseDesktopLyric(on: boolean): Promise<boolean | null> {
+  try {
+    const cur = await readNeteaseDesktopLyric()
+    if (cur === null) return null
+    if (cur !== on) {
+      const ok = await evaluate(`(() => {
+        const b = document.querySelector('[data-testid=tid_playbar_lyric_btn]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`)
+      if (ok !== true) return null
+      // 给它一点时间把窗开出来、把图标类名切过去
+      await sleep(250)
+    }
+    return await readNeteaseDesktopLyric()
+  } catch (err) {
+    warnCdp(err)
+    return null
   }
 }
 

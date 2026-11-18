@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat } from '../../shared/types'
 import Pet from './pet/Pet'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -45,10 +45,21 @@ interface WifiSnapshot {
   kind: 'wifi' | 'ethernet'
 }
 
-function formatClock(d: Date): string {
+const WEEKDAY_NAMES = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+/**
+ * 时钟文本（SPEC-clock-date-format）。顺序固定：日期 → 星期 → 时间
+ * （用户 2026-11-18「日期第一位，其次星期，然后时间」）。
+ * 日期用 M/D 不带年份：收起态胶囊只有一行，年份没人看还占宽度。
+ * 不带格式参数时保持原来的 `HH:mm`，待办/日程的「已过期」比较继续用它。
+ */
+function formatClock(d: Date, fmt: ClockFormat = 'time'): string {
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
-  return `${hh}:${mm}`
+  const hm = `${hh}:${mm}`
+  if (fmt === 'time') return hm
+  const md = `${d.getMonth() + 1}/${d.getDate()}`
+  return fmt === 'date' ? `${md} ${hm}` : `${md} ${WEEKDAY_NAMES[d.getDay()]} ${hm}`
 }
 
 /** 本地日期键 'YYYY-MM-DD'。不能用 toISOString：那是 UTC，东八区凌晨会差一天 */
@@ -1919,7 +1930,15 @@ function ensureClockWatcher(): void {
   api.onMusicState(apply)
 }
 
-function MusicPanel(): React.JSX.Element {
+function MusicPanel({
+  onLyricOpenChange,
+  desktopLyricEnabled = true
+}: {
+  /** 歌词面板开合上报（SPEC-music-lyric-pin）：开着时岛不按下鼠标离开定时收起 */
+  onLyricOpenChange?: (open: boolean) => void
+  /** 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting），设置页可关 */
+  desktopLyricEnabled?: boolean
+}): React.JSX.Element {
   const [music, setMusic] = useState<MusicState | null>(null)
   // 本地插值出来的播放位置（秒）：两次主进程采样之间自己往前走，暂停时冻结
   const [live, setLive] = useState(0)
@@ -1951,6 +1970,48 @@ function MusicPanel(): React.JSX.Element {
   // 歌词页是否展开（用户 m03579「当我点击歌词这个ui的时候，就会跳出右边的歌词页，不然则消失，不显示」）。
   // 点「词」开、再点一次关；面板右上角 × 也能关。默认关＝「不然则消失，不显示」。
   const [lyricOpen, setLyricOpen] = useState(false)
+  // 桌面歌词切换中（第二次点「词」要走一趟 CDP，防连点）
+  const [desktopBusy, setDesktopBusy] = useState(false)
+  // 桌面歌词状态以网易云页面为准（music.desktopLyric，每秒轮询带回）。
+  // 没有后台控制（CDP）时这项恒为 null，按钮降级成纯面板开合。
+  // 设置里关掉第二态后，按钮回到「纯面板开合」：既不发请求，也不因网易云那边开着而高亮
+  // （SPEC-desktop-lyric-setting：岛不擅自关用户已经开着的桌面歌词）。
+  const desktopLyricOn = desktopLyricEnabled && music?.desktopLyric === true
+  const canDesktopLyric = desktopLyricEnabled && music?.neteaseCdp === true
+  /**
+   * 「词」按钮三态循环（SPEC-music-desktop-lyric，用户 2026-11-18）：
+   * 关 → 岛内歌词面板 → 关面板 + 开网易云桌面歌词 → 关桌面歌词。
+   * 没有 CDP 时第三态不存在，退回原来的「开/关面板」。
+   */
+  const onWordClick = (): void => {
+    if (desktopBusy) return
+    if (lyricOpen) {
+      setLyricOpen(false)
+      if (canDesktopLyric) {
+        setDesktopBusy(true)
+        void window.island
+          .musicDesktopLyric(true)
+          .catch(() => null)
+          .finally(() => setDesktopBusy(false))
+      }
+      return
+    }
+    if (desktopLyricOn) {
+      setDesktopBusy(true)
+      void window.island
+        .musicDesktopLyric(false)
+        .catch(() => null)
+        .finally(() => setDesktopBusy(false))
+      return
+    }
+    setLyricOpen(true)
+  }
+  // 把开合状态（含 × 关闭、切页卸载）同步给 App：面板开着时岛不自动收起
+  // （SPEC-music-lyric-pin，用户 2026-11-18「不动他过一会就自己缩回去」）。
+  useEffect(() => {
+    onLyricOpenChange?.(lyricOpen)
+    return () => onLyricOpenChange?.(false)
+  }, [lyricOpen, onLyricOpenChange])
   // 歌词（SPEC-music-lyric，用户 m04986「我们现在来开发歌词吧」+ m05013「可以按你的来」）：
   // null＝还没问；{ok:false,reason}＝问了但没拿到（照实显示原因，绝不编造）；{ok:true,lines}＝拿到带时间轴的行
   const [lyric, setLyric] = useState<LyricResult | null>(null)
@@ -2653,11 +2714,20 @@ function MusicPanel(): React.JSX.Element {
             <div className="music-ctl-mid">
               <button
                 type="button"
-                className={`music-word ${lyricOpen ? 'on' : ''}`}
-                title={lyricOpen ? '收起歌词栏' : '展开歌词栏'}
+                className={`music-word ${lyricOpen || desktopLyricOn ? 'on' : ''}`}
+                title={
+                  lyricOpen
+                    ? canDesktopLyric
+                      ? '关闭岛内歌词，打开网易云桌面歌词'
+                      : '收起歌词栏（需开启后台控制才能用桌面歌词）'
+                    : desktopLyricOn
+                      ? '关闭网易云桌面歌词'
+                      : '展开歌词栏；再点一次换成桌面歌词'
+                }
                 aria-label="歌词"
                 aria-expanded={lyricOpen}
-                onClick={() => setLyricOpen((v) => !v)}
+                aria-pressed={lyricOpen || desktopLyricOn}
+                onClick={onWordClick}
               >
                 词
               </button>
@@ -2773,6 +2843,10 @@ export default function App(): React.JSX.Element {
   // 桌宠出现模式（SPEC-deskpet-out）：'window' 时岛里不画桌宠——它出门了。
   // 与 petSkin 同一份 prefs，同样「先默认后异步回填」，同样不吃 dirty。
   const [petMode, setPetMode] = useState<string>('island')
+  // 时钟显示档位（SPEC-clock-date-format）：默认仅时间，mount 后从 prefs 回填
+  const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
+  // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
+  const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
   const [page, setPage] = useState(0)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
@@ -2790,6 +2864,8 @@ export default function App(): React.JSX.Element {
         // 皮肤不受 pagesCustomDirty 影响（是另一份偏好），先无条件应用
         if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
+        if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
+        if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -2809,6 +2885,12 @@ export default function App(): React.JSX.Element {
   const bannerTimer = useRef<number | null>(null)
   const bannerCountRef = useRef<number>(0)
   const hoverRef = useRef(false)
+  // 歌词面板开着（SPEC-music-lyric-pin）：定时收起到点时读它，开着就放弃这次收起。
+  // 用 ref 而不是 state 是刻意的——收起定时器回调不该因为面板开合而重建。
+  const lyricOpenRef = useRef(false)
+  const onLyricOpenChange = useCallback((open: boolean) => {
+    lyricOpenRef.current = open
+  }, [])
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
   expandedRef.current = expanded
@@ -3055,6 +3137,9 @@ export default function App(): React.JSX.Element {
       // 正在添加框打字（手不在鼠标上、没有 mousemove 来重新触发 mouseenter），岛就被收走了。
       // 之前用 document.hasFocus() 判断不行——中文输入法组合瞬间它也会抖成 false。
       // 点桌面/点其他窗口时输入框必然失焦（activeElement 回到 body），收起行为不受影响。
+      // 歌词面板开着就别按「鼠标离开」收：用户要求「除非点桌面或再点歌词 ui，否则一直展开」
+      // （SPEC-music-lyric-pin）。点桌面走的是失焦路径，不经过这里。
+      if (lyricOpenRef.current) return
       const el = document.activeElement
       if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
       setExpanded(false)
@@ -3204,6 +3289,8 @@ export default function App(): React.JSX.Element {
       if (typeof prefs.petSkin === 'string') setPetSkin(prefs.petSkin)
       // 出现模式：切到独立小窗口后岛里那只立刻消失（宠物窗口由主进程开）
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
+      if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
+      if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -3309,7 +3396,7 @@ export default function App(): React.JSX.Element {
       case 'clock':
         return (
           <span key="clock" className="collapsed-clock">
-            {formatClock(now)}
+            {formatClock(now, clockFormat)}
           </span>
         )
       case 'net':
@@ -3494,7 +3581,10 @@ export default function App(): React.JSX.Element {
                 ) : page === 3 ? (
                   <SchedulePanel />
                 ) : (
-                  <MusicPanel />
+                  <MusicPanel
+                    onLyricOpenChange={onLyricOpenChange}
+                    desktopLyricEnabled={desktopLyricEnabled}
+                  />
                 )}
               </div>
             </div>
