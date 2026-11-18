@@ -96,6 +96,15 @@ let autoCdpNoPortSince = 0
 let autoCdpLastAt = 0
 /** 连续失败次数 */
 let autoCdpFails = 0
+/**
+ * 最近一次从 CDP 读到的「是否在播」。
+ * 自动重启发生时 cdpState 已经被轮询置空，桥接又认不出网易云（它不注册 SMTC），
+ * 只靠 cache.playing 会丢掉「重启前在播」，导致重启后停在暂停态。
+ */
+let lastCdpPlaying = false
+let lastCdpPlayingAt = 0
+/** 重启后用它判断「重启前在播」；窗口太短会在慢机器上失效，太长会把很久前的状态当现在 */
+const AUTO_RESUME_WINDOW_MS = 60_000
 /** 网易云进程自己的音频会话音量（0..1）；null=没读到（界面置灰） */
 let neteaseVol: number | null = null
 /** 最近一次收到任何回包的时间（毫秒），用于判断子进程是不是挂了 */
@@ -338,6 +347,10 @@ async function pollCdp(): Promise<void> {
     neteaseRunning = await isNeteaseRunning()
     const s = await readNeteaseState()
     cdpState = s
+    if (s) {
+      lastCdpPlaying = s.playing
+      lastCdpPlayingAt = Date.now()
+    }
     // 自动开启调试端口：只在「进程在跑、端口确实没开」时考虑；
     // 端口已开但页面还没加载出来不算（避免刚重启又被重启的死循环）。
     if (!AUTO_CDP_DISABLED) {
@@ -389,7 +402,11 @@ function startCdp(): void {
  */
 async function enableCdp(): Promise<boolean> {
   if (cdpBusy) return false
-  const wasPlaying = cdpState ? cdpState.playing : cache.playing
+  // 重启前是否在播：cdpState 在自动触发时已被轮询置空，桥接又认不出网易云，
+  // 所以回落到最近一次 CDP 读数（60 秒内有效），最后才是桥接状态。
+  const wasPlaying =
+    cdpState?.playing ??
+    (Date.now() - lastCdpPlayingAt < AUTO_RESUME_WINDOW_MS ? lastCdpPlaying : cache.playing)
   cdpBusy = true
   recompute()
   let ok = false
@@ -403,9 +420,18 @@ async function enableCdp(): Promise<boolean> {
         await new Promise((r) => setTimeout(r, 400))
         s = await readNeteaseState()
       }
+      // 需要恢复播放时多等一会儿：页面刚出来时播放栏可能还没渲染，读不到状态就点不到按钮。
+      for (let i = 0; i < 10 && wasPlaying && !s; i += 1) {
+        await new Promise((r) => setTimeout(r, 300))
+        s = await readNeteaseState()
+      }
       if (s) {
         cdpState = s
-        if (wasPlaying && !s.playing) await clickNetease('play')
+        lastCdpPlaying = s.playing
+        lastCdpPlayingAt = Date.now()
+        if (wasPlaying && !s.playing && !(await clickNetease('play'))) {
+          startupLog('[music] 自动恢复播放失败：播放按钮没找到')
+        }
       }
     }
   } catch (err) {
