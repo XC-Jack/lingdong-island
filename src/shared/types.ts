@@ -170,7 +170,16 @@ export interface MusicState {
   neteaseCdpBusy: boolean
   /** 网易云进程是否在运行（不依赖它是不是当前播放器），用于决定是否显示开启入口 */
   neteaseRunning: boolean
+  /**
+   * 网易云后台控制策略（SPEC-netease-cdp-mode）：
+   * auto=端口缺失时自动重启；manual=只在音乐页提示、用户点了才重启；
+   * off=不重启也不提示。缺失按 auto 处理。
+   */
+  neteaseCdpMode: NeteaseCdpMode
 }
+
+/** 网易云后台控制的三档策略（SPEC-netease-cdp-mode） */
+export type NeteaseCdpMode = 'auto' | 'manual' | 'off'
 
 /**
  * 音乐控制命令（渲染层 → 主进程 → SMTC）。
