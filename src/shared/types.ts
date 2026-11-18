@@ -176,7 +176,16 @@ export interface MusicState {
    * off=不重启也不提示。缺失按 auto 处理。
    */
   neteaseCdpMode: NeteaseCdpMode
+  /**
+   * 网易云桌面歌词是否开着（读它页面里的 desktop-lyric 按钮状态）。
+   * null = 没有 CDP 或读不到（界面不据此做「关闭」动作）。
+   */
+  desktopLyric: boolean | null
 }
+
+/** 时钟显示档位（SPEC-clock-date-format）：仅时间 / 日期+时间 / 日期+星期+时间 */
+export type ClockFormat = 'time' | 'date' | 'dateWeek'
+export const CLOCK_FORMATS: ClockFormat[] = ['time', 'date', 'dateWeek']
 
 /** 网易云后台控制的三档策略（SPEC-netease-cdp-mode） */
 export type NeteaseCdpMode = 'auto' | 'manual' | 'off'

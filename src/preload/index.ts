@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo } from '../shared/types'
+import type { AppInfo, AvoidMode, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo } from '../shared/types'
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult }
 
@@ -188,6 +188,13 @@ const api = {
    */
   musicControl(cmd: MusicCommand): Promise<boolean> {
     return ipcRenderer.invoke('music:control', cmd)
+  },
+  /**
+   * 网易云桌面歌词开关（SPEC-music-desktop-lyric，等价于它的 Ctrl+D）。
+   * 返回操作后的实际状态；没有后台控制 / 页面上找不到按钮时返回 null。
+   */
+  musicDesktopLyric(on: boolean): Promise<boolean | null> {
+    return ipcRenderer.invoke('music:desktop-lyric', on)
   },
   /**
    * 歌词（SPEC-music-lyric）：按当前歌曲去查带时间轴的歌词。
@@ -420,6 +427,8 @@ export interface PrefsShape {
   avoidMode?: AvoidMode
   /** 网易云后台控制三档（SPEC-netease-cdp-mode）；缺失=auto */
   neteaseCdpMode?: NeteaseCdpMode
+  /** 时钟显示档位（SPEC-clock-date-format）；缺失=time（仅时间） */
+  clockFormat?: ClockFormat
 }
 contextBridge.exposeInMainWorld('island', api)
 

@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { AVOID_MODES, PET_MODES, PET_SKIN_IDS } from '../shared/types'
-import type { AvoidMode, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
+import { AVOID_MODES, CLOCK_FORMATS, PET_MODES, PET_SKIN_IDS } from '../shared/types'
+import type { AvoidMode, ClockFormat, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -50,6 +50,11 @@ interface PrefsShape {
    * 与引入该字段之前的行为一致）。
    */
   neteaseCdpMode?: NeteaseCdpMode
+  /**
+   * 时钟显示档位（SPEC-clock-date-format）。缺失 = `time`（仅时间），
+   * 与引入该字段之前的行为一致。
+   */
+  clockFormat?: ClockFormat
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -147,6 +152,13 @@ function normalizeNeteaseCdpMode(v: unknown): NeteaseCdpMode | undefined {
     : undefined
 }
 
+/** 时钟显示档位（SPEC-clock-date-format）：白名单，手改坏了按缺失处理（= 仅时间） */
+function normalizeClockFormat(v: unknown): ClockFormat | undefined {
+  return typeof v === 'string' && (CLOCK_FORMATS as readonly string[]).includes(v)
+    ? (v as ClockFormat)
+    : undefined
+}
+
 /**
  * 校验桌宠窗口位置（SPEC-deskpet-out）。
  *
@@ -241,6 +253,8 @@ function load(): PrefsShape {
     if (am) out.avoidMode = am
     const nm = normalizeNeteaseCdpMode(parsed.neteaseCdpMode)
     if (nm) out.neteaseCdpMode = nm
+    const cf = normalizeClockFormat(parsed.clockFormat)
+    if (cf) out.clockFormat = cf
     return out
   } catch {
     return { ...EMPTY }
@@ -328,7 +342,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode } =
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat } =
     (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
@@ -338,6 +352,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
       petWindowPos?: unknown
       avoidMode?: unknown
       neteaseCdpMode?: unknown
+      clockFormat?: unknown
     }
   const pc = normalizePagesCustom(pagesCustom)
   if (pc) data.pagesCustom = pc
@@ -364,6 +379,9 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const nm = normalizeNeteaseCdpMode(neteaseCdpMode)
   if (nm) data.neteaseCdpMode = nm
   else if (neteaseCdpMode !== undefined) delete data.neteaseCdpMode
+  const cf = normalizeClockFormat(clockFormat)
+  if (cf) data.clockFormat = cf
+  else if (clockFormat !== undefined) delete data.clockFormat
   save(data)
   return JSON.stringify(before) !== JSON.stringify(data) ? data : null
 }

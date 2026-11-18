@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import type { AvoidMode, NeteaseCdpMode, SettingsSection } from '../../../shared/types'
-import { AVOID_MODES } from '../../../shared/types'
+import type { AvoidMode, ClockFormat, NeteaseCdpMode, SettingsSection } from '../../../shared/types'
+import { AVOID_MODES, CLOCK_FORMATS } from '../../../shared/types'
 import PageManagerSection, {
   defaultPagesCustom,
   normalizePagesCustom,
@@ -141,6 +141,25 @@ const CDP_MODE_META: Record<NeteaseCdpMode, { label: string; desc: string }> = {
   }
 }
 
+/**
+ * 时钟显示三档（SPEC-clock-date-format，用户 2026-11-18「时间显示里面可以显示日期月份，
+ * 可以在设置里面选择挡位」）。顺序按用户要求：日期 → 星期 → 时间。
+ */
+const CLOCK_META: Record<ClockFormat, { label: string; desc: string }> = {
+  time: {
+    label: '仅时间',
+    desc: '收起态只显示 17:54，和现在一样。'
+  },
+  date: {
+    label: '日期 + 时间',
+    desc: '显示 11/18 17:54，月份日期在前、时间在后。'
+  },
+  dateWeek: {
+    label: '日期 + 星期 + 时间',
+    desc: '显示 11/18 周二 17:54，最完整的一档。'
+  }
+}
+
 export default function SettingsApp(): ReactElement {
   // 首帧就落在菜单要求的分区（模块级订阅可能在 render 之前已经收到一条）
   const [section, setSection] = useState<SettingsSection>(pendingSection ?? 'general')
@@ -157,6 +176,9 @@ export default function SettingsApp(): ReactElement {
   // 网易云后台控制档位（SPEC-netease-cdp-mode）：默认与主进程一致 = auto
   const [cdpMode, setCdpMode] = useState<NeteaseCdpMode>('auto')
   const cdpModeDirty = useRef(false)
+  // 时钟显示档位（SPEC-clock-date-format）：默认与主进程一致 = time
+  const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
+  const clockFormatDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
@@ -172,6 +194,7 @@ export default function SettingsApp(): ReactElement {
         if (!alive) return
         if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
         if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
+        if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -187,6 +210,7 @@ export default function SettingsApp(): ReactElement {
       if (v) setPagesCustom(v)
       if (!avoidDirty.current && prefs.avoidMode) setAvoidMode(prefs.avoidMode)
       if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
+      if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
     })
     return () => {
       alive = false
@@ -248,6 +272,15 @@ export default function SettingsApp(): ReactElement {
     cdpModeDirty.current = true
     setCdpMode(m)
     window.island.prefsSet({ neteaseCdpMode: m }).catch(() => {
+      /* 写失败下次还是旧值，不打扰用户 */
+    })
+  }
+
+  /** 时钟显示档位：立即生效 + 写主进程（岛经 prefs:changed 广播当场换格式） */
+  const pickClockFormat = (f: ClockFormat): void => {
+    clockFormatDirty.current = true
+    setClockFormat(f)
+    window.island.prefsSet({ clockFormat: f }).catch(() => {
       /* 写失败下次还是旧值，不打扰用户 */
     })
   }
@@ -380,6 +413,25 @@ export default function SettingsApp(): ReactElement {
                     <span className="pet-set-mode-text">
                       <span className="pet-set-mode-name">{AVOID_META[m].label}</span>
                       <span className="pet-set-mode-desc">{AVOID_META[m].desc}</span>
+                    </span>
+                    <span className="pet-set-radio" aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+              <div className="set-card">
+                <div className="pet-set-head">时钟显示</div>
+                {CLOCK_FORMATS.map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    className={`pet-set-mode ${clockFormat === f ? 'on' : ''}`}
+                    data-clock-format={f}
+                    aria-pressed={clockFormat === f}
+                    onClick={() => pickClockFormat(f)}
+                  >
+                    <span className="pet-set-mode-text">
+                      <span className="pet-set-mode-name">{CLOCK_META[f].label}</span>
+                      <span className="pet-set-mode-desc">{CLOCK_META[f].desc}</span>
                     </span>
                     <span className="pet-set-radio" aria-hidden="true" />
                   </button>

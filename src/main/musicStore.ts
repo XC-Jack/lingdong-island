@@ -11,6 +11,7 @@ import {
   isNeteaseRunning,
   readNeteaseState,
   seekNetease,
+  setNeteaseDesktopLyric,
   type NeteaseCdpState
 } from './neteaseCdp'
 import { startupLog } from './startupLog'
@@ -74,7 +75,8 @@ const EMPTY_STATE: MusicState = {
   neteaseCdp: false,
   neteaseCdpBusy: false,
   neteaseRunning: false,
-  neteaseCdpMode: 'auto'
+  neteaseCdpMode: 'auto',
+  desktopLyric: null
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -165,6 +167,7 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.neteaseCdpBusy === b.neteaseCdpBusy &&
     a.neteaseRunning === b.neteaseRunning &&
     a.neteaseCdpMode === b.neteaseCdpMode &&
+    a.desktopLyric === b.desktopLyric &&
     // 只比 barOk（以及两档精度下的 barPct），不比逐位 barPct：正常播放器 barPct 恒 -1，
     // 比对是空操作；只有降级路径（播放器不报时间轴、position 恒 0）才靠 barPct 变化
     // 触发广播——那种情况若也不广播，界面就永远拿不到新的进度，钟也就没法校准。
@@ -241,7 +244,8 @@ function handleLine(text: string): void {
     neteaseCdp: false,
     neteaseCdpBusy: false,
     neteaseRunning: false,
-    neteaseCdpMode: cdpMode
+    neteaseCdpMode: cdpMode,
+    desktopLyric: null
   }
   bridgeState = next
   recompute()
@@ -288,10 +292,18 @@ function recompute(): void {
       neteaseCdp: true,
       neteaseCdpBusy: cdpBusy,
       neteaseRunning: true,
-      neteaseCdpMode: cdpMode
+      neteaseCdpMode: cdpMode,
+      desktopLyric: c.desktopLyric
     }
   } else {
-    next = { ...bridgeState, neteaseCdp: false, neteaseCdpBusy: cdpBusy, neteaseRunning, neteaseCdpMode: cdpMode }
+    next = {
+      ...bridgeState,
+      neteaseCdp: false,
+      neteaseCdpBusy: cdpBusy,
+      neteaseRunning,
+      neteaseCdpMode: cdpMode,
+      desktopLyric: null
+    }
   }
   if (sameState(cache, next)) return
   cache = next
@@ -679,6 +691,23 @@ export function setupMusicStore(): void {
   ipcMain.handle('music:control', async (_e, cmd: unknown): Promise<boolean> => {
     if (!isValidCommand(cmd)) return false
     return applyControl(cmd)
+  })
+
+  // 桌面歌词（SPEC-music-desktop-lyric）：「词」按钮第二态。
+  // 没有 CDP 时返回 null，渲染层据此只做面板开合。
+  ipcMain.handle('music:desktop-lyric', async (_e, on: unknown): Promise<boolean | null> => {
+    // e2e 隔离：测试机上跑着用户真实的网易云，点「词」第二下不能真去开它的桌面歌词
+    // （isolate-userdata.mjs 设置该变量，与 ISLAND_NO_NETEASE_AUTO 同一思路）。
+    if (process.env.ISLAND_NO_DESKTOP_LYRIC === '1') return null
+    if (typeof on !== 'boolean') return null
+    const base = cdpState
+    if (base === null) return null
+    const v = await setNeteaseDesktopLyric(on)
+    if (v !== null) {
+      cdpState = { ...base, desktopLyric: v }
+      recompute()
+    }
+    return v
   })
 }
 
