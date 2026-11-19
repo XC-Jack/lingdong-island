@@ -393,8 +393,29 @@ body {
   width: 18px;
   height: 18px;
 }
+/* 无网（2026-11-19 用户参考图）：与其它状态图标同色，不再用橙色警示。 */
 .collapsed-wifi.offline {
-  color: #ffb74d;
+  color: rgba(242, 243, 245, 0.94);
+}
+
+/* 系统「地球 + 斜杠」：地球用 Segoe Fluent Icons 的 U+E774，斜杠用伪元素叠上去，
+   外面一圈深色描边留出缺口，贴近 Windows 任务栏的无 Internet 图标。 */
+.nonet-ico {
+  position: relative;
+  font-size: 17px;
+}
+.nonet-ico::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 21px;
+  margin: -10.5px 0 0 -1px;
+  border-radius: 1px;
+  background: currentColor;
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 2.5px #17171a;
 }
 
 .collapsed-label {
