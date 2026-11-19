@@ -76,6 +76,7 @@
 | 2026-11-19 | 观察：`ready` →「重启并安装」流程 | 本轮未执行安装（避免覆盖当前装机 0.1.15），代码路径未改动（`install()` / `quitAndInstall` 原样） | 端到端安装流程（此前 v0.1.12 全链路实测可参考） |
 | 2026-11-19 | 首轮 e2e 直接运行失败 | `TypeError: fetch failed`；本 shell 里 `ELECTRON_RUN_AS_NODE=1`，dev Electron 被当 Node 跑。`env -u ELECTRON_RUN_AS_NODE` 后通过 | — |
 | 2026-11-19 | 开发版（隔离 userData + CDP）打开设置「常规」 | `.set-update-fallback` 文本「GitHub 连不上或更新加载失败？去仓库下载最新版」，链接文字正确，计算色 `rgb(251, 191, 36)` | 点击后浏览器实际打开（没有在测试里点，避免弹外部窗口；复用已在用的 `update:open-page`） |
+| 2026-11-19 | 打包 0.1.19（含常驻链接） | 安装包 124,198,999 B / SHA256 `8F3E5A9B…3A9408B0`；asar 13,420,692 B / SHA256 `3820639B…89429CC8`；Release Latest、`latest.yml` 返回 0.1.19。本机不装机，留给 0.1.17 验证 | 装机后链接点击（待用户真机操作） |
 | 2026-11-19 | 打包 0.1.17 并静默装机 | 安装包 124,198,851 B；装机 asar 13,419,957 B / SHA256 `21BE325A…83214F`，与 `release\win-unpacked` 逐字节一致；`灵动岛.exe` FileVersion 0.1.17；启动日志 `update: armed, version 0.1.17` | 0.1.17 发现下一版本的真机链路（需等下次发版） |
 
 ## 七·补、2026-11-19 补充：更新行下方常驻仓库链接
