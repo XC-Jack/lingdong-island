@@ -50,8 +50,11 @@
 
 | 日期 | 执行内容 | 结果 | 未验证部分 |
 |---|---|---|---|
-| 2026-11-19 | 本机确认剪映进程名：`%LOCALAPPDATA%\JianyingPro\User Data\Log` 里 `JianyingLauncher.cpp` 记录 `realExePath=d:\Users\honor\Desktop\Jianying_Pro\6.0.1.11779\JianyingPro.exe` | 进程名为 `JianyingPro.exe`，小写无扩展名即 `jianyingpro` | 朋友机器上的实际会话/标题 |
-|  |  |  |  |
+| 2026-11-19 | 本机确认剪映进程名：`%LOCALAPPDATA%\JianyingPro\User Data\Log` 里 `JianyingLauncher.cpp` 记录 `realExePath=d:\Users\honor\Desktop\Jianying_Pro\6.0.1.11779\JianyingPro.exe` | 进程名为 `JianyingPro.exe`，小写无扩展名即 `jianyingpro` | 朋友机器上的实际会话/标题；本机无剪映程序，只有残留数据目录 |
+| 2026-11-19 | 改跳过表后 `npm run typecheck` / `npm run build` | EXIT=0 | — |
+| 2026-11-19 | 用临时 `--user-data-dir` 启动开发版、CDP 调 `window.island.musicGet()` 触发懒启动，读生成的桥接脚本 | `fbSkipExe = @("obs", "obs32", "obs64", "jianyingpro", "capcut")` | — |
+| 2026-11-19 | 在临时 userData 写 `last-player.txt=JianyingPro.exe` + 剪映版 `last-song.json` 后跑 `poll` | `active=false`、`app=""`。**注意**：用旧脚本对照同样返回 `false`（进程没在跑时记忆本就不生效），所以这一条只证明记忆路径无回归，**不能**单独证明跳过表生效 | 真实剪映进程挂着音频会话的候选路径 |
+| 2026-11-19 | 尝试用带窗口标题与音频会话的 PowerShell 进程模拟候选 | 控制台窗口取不到主窗口标题，无法构造候选，模拟放弃（临时进程与目录已删） | 同上，需用户/朋友实机复测 |
 
 ## 八、验收记录
 
