@@ -67,6 +67,7 @@
 | 2026-11-19 | 删除探针后正常启动 | `stage=unsupported`，无横幅，日志 `update: dev mode, checks disabled` | — |
 | 2026-11-19 | 观察：系统通知会被通知轮询镜像成一条「新消息」横幅 | 实测出现 `lingdong-island / 灵动岛 9.9.9 可以更新` 通知横幅，优先级高于更新横幅 | 系统通知被专注助手拦截时更新横幅的兜底表现 |
 | 2026-11-19 | `node scripts/e2e-music.mjs`（改用 `E2E_CDP_PORT=9326`：本机 9321 被一个已消失进程的残留监听占用，DevTools 绑定失败） | **PASS 48 过 / 0 败** | — |
+| 2026-11-19 | 打包 0.1.15（不升版本）静默装机并启动 | 装机 asar 与 win-unpacked 同 SHA `CA2C8D88…`；`packaged=true`，日志 `update: armed, version 0.1.15` / `update: periodic check every 4 h`；启动 60 秒后真实请求 GitHub，`update: none (latest 0.1.15)` | 4 小时周期与唤醒补查未等满；真实新版本触发的横幅未验（当前已是最新） |
 
 ## 八、验收记录
 
