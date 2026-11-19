@@ -15,8 +15,8 @@ import {
   type NeteaseCdpState
 } from './neteaseCdp'
 import { startupLog } from './startupLog'
-import { getPrefs, onPrefsWritten } from './prefsStore'
-import type { MusicCommand, MusicState, NeteaseCdpMode } from '../shared/types'
+import { getPrefs, normalizeExeName, onPrefsWritten, patchPrefs } from './prefsStore'
+import type { MusicCommand, MusicSource, MusicState, NeteaseCdpMode } from '../shared/types'
 
 /**
  * 音乐页数据源（SPEC-music-page / US-031）。
@@ -76,7 +76,10 @@ const EMPTY_STATE: MusicState = {
   neteaseCdpBusy: false,
   neteaseRunning: false,
   neteaseCdpMode: 'auto',
-  desktopLyric: null
+  desktopLyric: null,
+  sources: [],
+  pinnedExe: '',
+  pinnedMissing: false
 }
 
 let child: ChildProcessWithoutNullStreams | null = null
@@ -116,6 +119,15 @@ let lastCdpPlayingAt = 0
 const AUTO_RESUME_WINDOW_MS = 60_000
 /** 网易云进程自己的音频会话音量（0..1）；null=没读到（界面置灰） */
 let neteaseVol: number | null = null
+/**
+ * 用户锁定的音源（小写进程名、不带 .exe；SPEC-music-source-strategy）。
+ * '' = 自动跟随播放。启动时从 prefs 读，选择器改动经 onPrefsWritten 热更新。
+ */
+let pinExe = ''
+/** 用户在音源选择器里点选过的播放器（= prefs.musicKnownPlayers），同步给桥接当软白名单 */
+let knownPlayers: string[] = []
+/** 桥接报的「锁定目标进程还活着」；用来区分「未运行」和「在跑但没歌」 */
+let pinAlive = false
 /** 最近一次收到任何回包的时间（毫秒），用于判断子进程是不是挂了 */
 let lastAliveAt = 0
 /** 子进程正在启动（避免重复 spawn） */
@@ -147,6 +159,33 @@ function broadcast(s: MusicState): void {
   }
 }
 
+/** 收桥接回来的 sources（音源选择器数据）；坏条目直接丢，坏一条不影响其它 */
+function parseSources(raw: unknown): MusicSource[] {
+  if (!Array.isArray(raw)) return []
+  const out: MusicSource[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const r = item as Record<string, unknown>
+    const exe = typeof r.exe === 'string' ? r.exe : ''
+    if (!exe) continue
+    out.push({
+      exe,
+      name: typeof r.name === 'string' && r.name !== '' ? r.name : exe.replace(/\.exe$/i, ''),
+      playing: r.playing === true
+    })
+  }
+  return out
+}
+
+/** 音源列表按顺序逐项比（名字、在播状态都算变化），顺序由桥接固定，不会来回抖 */
+function sameSources(a: MusicSource[], b: MusicSource[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].exe !== b[i].exe || a[i].name !== b[i].name || a[i].playing !== b[i].playing) return false
+  }
+  return true
+}
+
 function sameState(a: MusicState, b: MusicState): boolean {
   return (
     a.active === b.active &&
@@ -168,6 +207,9 @@ function sameState(a: MusicState, b: MusicState): boolean {
     a.neteaseRunning === b.neteaseRunning &&
     a.neteaseCdpMode === b.neteaseCdpMode &&
     a.desktopLyric === b.desktopLyric &&
+    a.pinnedExe === b.pinnedExe &&
+    a.pinnedMissing === b.pinnedMissing &&
+    sameSources(a.sources, b.sources) &&
     // 只比 barOk（以及两档精度下的 barPct），不比逐位 barPct：正常播放器 barPct 恒 -1，
     // 比对是空操作；只有降级路径（播放器不报时间轴、position 恒 0）才靠 barPct 变化
     // 触发广播——那种情况若也不广播，界面就永远拿不到新的进度，钟也就没法校准。
@@ -188,6 +230,11 @@ function handleLine(text: string): void {
     return // 非 JSON 行（PS 的杂项输出）直接忽略
   }
   lastAliveAt = Date.now()
+  // 桥接脚本启动完（类型都加载好了）再同步「已知播放器 / 锁定」，避免命令打在初始化之前
+  if (msg.type === 'ready') {
+    syncBridgeConfig()
+    return
+  }
   if (msg.type === 'error') {
     // 桥接脚本里的异常（读媒体属性失败等）：打到控制台留证，界面这一轮不发空态以外的变化
     console.warn('[music] 桥接报错：', String(msg.msg ?? '').slice(0, 300))
@@ -204,6 +251,8 @@ function handleLine(text: string): void {
     return
   }
   if (msg.type !== 'state') return
+  // 锁定目标进程是否活着（桥接按 focus 算的）；空态回包里也会带
+  pinAlive = msg.pinAlive === true
   const next: MusicState = {
     active: Boolean(msg.active),
     title: String(msg.title ?? ''),
@@ -245,10 +294,35 @@ function handleLine(text: string): void {
     neteaseCdpBusy: false,
     neteaseRunning: false,
     neteaseCdpMode: cdpMode,
-    desktopLyric: null
+    desktopLyric: null,
+    // 音源列表由桥接每帧给全量；锁定字段由 recompute() 统一决定
+    sources: parseSources(msg.sources),
+    pinnedExe: pinExe,
+    pinnedMissing: false
   }
   bridgeState = next
   recompute()
+}
+
+/** 进程名归一：桥接/系统给的可能是 `cloudmusic.exe`，锁定值统一是小写无扩展名 */
+function exeOf(app: string): string {
+  return app.trim().toLowerCase().replace(/\.exe$/, '')
+}
+
+/** 音源显示名（与桥接 / 渲染层同一套）；未知进程直接用进程名 */
+const SOURCE_NAMES: Record<string, string> = {
+  cloudmusic: '网易云音乐',
+  qqmusic: 'QQ 音乐',
+  kugou: '酷狗音乐',
+  kuwo: '酷我音乐',
+  spotify: 'Spotify',
+  potplayermini64: 'PotPlayer',
+  potplayermini: 'PotPlayer'
+}
+
+function sourceLabel(app: string): string {
+  const key = exeOf(app)
+  return SOURCE_NAMES[key] ?? (key || app)
 }
 
 /**
@@ -260,12 +334,20 @@ function handleLine(text: string): void {
  */
 function recompute(): void {
   const c = cdpState
+  const pin = pinExe
+  const pinnedNetease = pin === 'cloudmusic'
   const bridgeIsNetease = /cloudmusic/i.test(bridgeState.app)
   let next: MusicState
   // 「桥接里有别的东西 active」不能直接当真：实测 NxDock（Nexus.exe）会挂着一条
   // state=1 的音频会话却没有在放歌，标题也不像「歌名 - 歌手」。只有它**真的在播**时才让位；
   // 暂停的杂项应用不该把已经能精确控制的网易云盖掉。
-  if (c && (c.playing || !bridgeState.playing || bridgeIsNetease)) {
+  //
+  // 锁定（SPEC-music-source-strategy）改变优先级：
+  //  · 锁网易云：CDP 有就用（暂停也照样显示暂停态），不再看谁在播；
+  //  · 锁别的播放器：一律不用 CDP，哪怕网易云正在播。
+  const useCdp =
+    c !== null && (pinnedNetease || (pin === '' && (c.playing || !bridgeState.playing || bridgeIsNetease)))
+  if (c && useCdp) {
     const sameSong = bridgeState.title === c.title && c.title !== ''
     next = {
       ...bridgeState,
@@ -295,6 +377,16 @@ function recompute(): void {
       neteaseCdpMode: cdpMode,
       desktopLyric: c.desktopLyric
     }
+  } else if (pin !== '' && !(bridgeState.active && exeOf(bridgeState.app) === pin)) {
+    // 锁定的音源不在桥接状态里（退出了 / 桥接还没认到它）：不回落到别人，
+    // 直接给空态。pinnedMissing 由下面的统一计算决定，界面据此显示「未运行」。
+    next = {
+      ...EMPTY_STATE,
+      neteaseCdpBusy: cdpBusy,
+      neteaseRunning,
+      neteaseCdpMode: cdpMode,
+      sources: bridgeState.sources
+    }
   } else {
     next = {
       ...bridgeState,
@@ -303,6 +395,16 @@ function recompute(): void {
       neteaseRunning,
       neteaseCdpMode: cdpMode,
       desktopLyric: null
+    }
+  }
+  next.pinnedExe = pin
+  next.pinnedMissing = pin !== '' && !next.active && !pinAlive
+  // 当前音源可能不在桥接的 sources 里（网易云暂停会撤掉音频会话，或桥接还没认到它）：
+  // 选择器至少要能选到它，否则「锁定当前音源」无从下手。
+  if (next.active && next.app) {
+    const key = exeOf(next.app)
+    if (key && !next.sources.some((s) => exeOf(s.exe) === key)) {
+      next.sources = [...next.sources, { exe: next.app, name: sourceLabel(next.app), playing: next.playing }]
     }
   }
   if (sameState(cache, next)) return
@@ -316,6 +418,8 @@ function recompute(): void {
  */
 type BridgeCommand =
   | MusicCommand
+  | { cmd: 'known'; value: string[] }
+  | { cmd: 'focus'; value: string }
   | { cmd: 'volume'; value: number; exe: string }
   | { cmd: 'appvol'; exe: string }
 
@@ -332,6 +436,16 @@ function send(cmd: string | BridgeCommand): void {
   } catch {
     /* 管道已断：交给看门狗重拉 */
   }
+}
+
+/**
+ * 把主进程的音源配置同步给桥接（SPEC-music-source-strategy）：
+ * `known` = 选择器学到的已知播放器，`focus` = 当前锁定（'' 表示自动）。
+ * 桥接每 frame 都靠这两个值决定「谁有资格被选中」，所以启动、重连、prefs 变化时都要发。
+ */
+function syncBridgeConfig(): void {
+  send({ cmd: 'known', value: knownPlayers })
+  send({ cmd: 'focus', value: pinExe })
 }
 
 /** IPC 边界的运行时校验：渲染层传来的东西不能原样拼进子进程 stdin */
@@ -662,18 +776,33 @@ function startBridge(): void {
     send('poll')
   }, POLL_MS)
 
+  // 先把音源配置（已知播放器 / 锁定）送进去，再要第一帧状态
+  syncBridgeConfig()
   send('poll')
 }
 
 export function setupMusicStore(): void {
   // 网易云后台控制档位（SPEC-netease-cdp-mode）：启动读一次，之后跟着 prefs 广播热更新。
-  cdpMode = getPrefs().neteaseCdpMode ?? 'auto'
+  const bootPrefs = getPrefs()
+  cdpMode = bootPrefs.neteaseCdpMode ?? 'auto'
+  // 音源锁定 / 已知播放器（SPEC-music-source-strategy）：同样启动读一次、随 prefs 热更新
+  pinExe = normalizeExeName(bootPrefs.musicSourcePin ?? '')
+  knownPlayers = bootPrefs.musicKnownPlayers ?? []
   onPrefsWritten((p) => {
     const next = p.neteaseCdpMode ?? 'auto'
-    if (next === cdpMode) return
-    cdpMode = next
-    autoCdpNoPortSince = 0
-    // 档位决定音乐页显不显示「开启入口」，立刻推一帧，不用等下一次轮询
+    if (next !== cdpMode) {
+      cdpMode = next
+      autoCdpNoPortSince = 0
+    }
+    const nextPin = normalizeExeName(p.musicSourcePin ?? '')
+    const nextKnown = p.musicKnownPlayers ?? []
+    if (nextPin !== pinExe || JSON.stringify(nextKnown) !== JSON.stringify(knownPlayers)) {
+      pinExe = nextPin
+      knownPlayers = nextKnown
+      // 桥接在跑就把新配置送过去；它没跑时下次启动会从 prefs 读同一份
+      syncBridgeConfig()
+    }
+    // 档位/锁定决定音乐页显示什么，立刻推一帧，不用等下一次轮询
     recompute()
   })
 
@@ -693,6 +822,28 @@ export function setupMusicStore(): void {
   ipcMain.handle('music:control', async (_e, cmd: unknown): Promise<boolean> => {
     if (!isValidCommand(cmd)) return false
     return applyControl(cmd)
+  })
+
+  // 音源选择（SPEC-music-source-strategy）：null = 自动，进程名 = 锁定。
+  // 点选即记住：把该进程加进「已知播放器」，以后它单独在播时也能自动显示。
+  ipcMain.handle('music:set-source', (_e, exe: unknown): MusicState => {
+    let next = ''
+    if (typeof exe === 'string' && exe.trim() !== '') {
+      next = normalizeExeName(exe)
+      // 非法进程名直接忽略，绝不能当成「解除锁定」
+      if (!next) return cache
+    } else if (exe !== null && exe !== undefined) {
+      return cache
+    }
+    startBridge()
+    if (next === '') {
+      patchPrefs({ musicSourcePin: '' })
+      return cache
+    }
+    const known = getPrefs().musicKnownPlayers ?? []
+    const nextKnown = known.includes(next) ? known : [...known, next].slice(0, 40)
+    patchPrefs({ musicSourcePin: next, musicKnownPlayers: nextKnown })
+    return cache
   })
 
   // 桌面歌词（SPEC-music-desktop-lyric）：「词」按钮第二态。
@@ -724,6 +875,7 @@ export function stopMusicStore(): void {
   cdpState = null
   cdpBusy = false
   neteaseVol = null
+  pinAlive = false
   bridgeState = { ...EMPTY_STATE }
   cache = { ...EMPTY_STATE }
 }

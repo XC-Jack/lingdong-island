@@ -64,7 +64,10 @@
 
 | 日期 | 执行内容 | 结果 | 未验证部分 |
 |---|---|---|---|
-|  |  |  |  |
+| 2026-11-19 | `npm run typecheck`、`npm run build` | EXIT=0 | — |
+| 2026-11-19 | 预览版（临时 userData + CDP 9321）展开岛 → 切到第 5 页 → 截图与 DOM 检查 | 胶囊只在 `.head-top` 右侧出现，文案「音源 · 网易云音乐」，其它页无；浮层右对齐，含「自动（跟随播放）✓」+「网易云音乐·暂停」；再点胶囊关闭 | 真实鼠标点外部关闭（CDP 直接调 `.click()`，未模拟指针事件） |
+| 2026-11-19 | 点浮层里的「网易云音乐」→ 等 2.5 秒 → 读状态 | `pinnedExe=cloudmusic`、`pinnedMissing=false`、CDP 暂停态仍显示；胶囊出现锁标记；`prefs.json` 写入 `musicSourcePin` / `musicKnownPlayers` | — |
+| 2026-11-19 | `musicSetSource('foo')` 锁到未运行进程 → 再 `null` 解锁 | 胶囊「音源 · foo（未运行）」+ 锁；解锁后回到「音源 · 网易云音乐」且无锁 | — |
 
 ## 八、验收记录
 

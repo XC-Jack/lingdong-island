@@ -1944,6 +1944,176 @@ function ensureClockWatcher(): void {
   api.onMusicState(apply)
 }
 
+/** 音源显示名：桥接回来的名字优先；锁定目标没在列表里时用它兜底 */
+const MUSIC_SOURCE_NAMES: Record<string, string> = {
+  cloudmusic: '网易云音乐',
+  qqmusic: 'QQ 音乐',
+  kugou: '酷狗音乐',
+  kuwo: '酷我音乐',
+  spotify: 'Spotify',
+  potplayermini64: 'PotPlayer',
+  potplayermini: 'PotPlayer'
+}
+
+function musicSourceLabel(exe: string): string {
+  const n = exe.replace(/\.exe$/i, '').toLowerCase()
+  return MUSIC_SOURCE_NAMES[n] ?? (n || '未知应用')
+}
+
+/** 进程名归一（与主进程/桥接同规则），只用于比较 */
+function musicExeKey(exe: string): string {
+  return exe.replace(/\.exe$/i, '').toLowerCase()
+}
+
+/**
+ * 音乐页「音源」胶囊 + 选择器（SPEC-music-source-picker，方案 A）。
+ *
+ * 为什么放在头部第一行右侧：音乐页该位置原本是空的，不挤占播放控件；点开浮层右对齐，
+ * 盖住面板内容而不是把页面撑开。组件只在音乐页渲染（切页/收起即卸载，浮层跟着关闭），
+ * 自己订阅 music 状态，避免把 App 全局换成「任何页面都跟着音乐秒级重渲染」。
+ */
+function MusicSourceChip(): React.JSX.Element {
+  const [music, setMusic] = useState<MusicState | null>(null)
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef<HTMLSpanElement | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    void window.island.musicGet().then((s) => {
+      if (alive) setMusic(s)
+    })
+    const off = window.island.onMusicState((s) => setMusic(s))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  // 关闭时机：点击浮层外 / Esc。切页与收起由卸载天然覆盖。
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const pin = music?.pinnedExe ?? ''
+  const missing = music?.pinnedMissing === true
+  const sources = useMemo(() => music?.sources ?? [], [music?.sources])
+
+  const nameOf = (exe: string): string =>
+    sources.find((s) => musicExeKey(s.exe) === musicExeKey(exe))?.name ?? musicSourceLabel(exe)
+
+  const currentName =
+    pin !== ''
+      ? nameOf(pin)
+      : music?.app
+        ? nameOf(music.app)
+        : '自动'
+
+  // 列表：锁定的排最前，其余在播的排暂停前面（同等条件保持桥接给的顺序）
+  const rows = useMemo(() => {
+    const list = [...sources]
+    list.sort((a, b) => {
+      const aPin = pin !== '' && musicExeKey(a.exe) === pin
+      const bPin = pin !== '' && musicExeKey(b.exe) === pin
+      if (aPin !== bPin) return aPin ? -1 : 1
+      if (a.playing !== b.playing) return a.playing ? -1 : 1
+      return 0
+    })
+    return list
+  }, [sources, pin])
+  const pinInList = pin !== '' && rows.some((s) => musicExeKey(s.exe) === pin)
+
+  const pick = (exe: string | null): void => {
+    setOpen(false)
+    void window.island.musicSetSource(exe)
+  }
+
+  return (
+    // stopPropagation：面板里点一下会触发岛「点击收起/展开」的手势，这里必须拦住
+    <span
+      className={`music-src ${open ? 'open' : ''}`}
+      ref={boxRef}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="music-src-chip"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="音乐页跟着哪个播放器显示；可锁定，也可恢复自动"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="music-src-text">
+          音源 · {currentName}
+          {pin !== '' && missing ? '（未运行）' : ''}
+        </span>
+        {pin !== '' && (
+          <span className="fluent-ico music-src-lock" aria-hidden="true">
+            &#xE72E;
+          </span>
+        )}
+        <span className="music-src-caret" aria-hidden="true">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div className="music-src-pop" role="listbox" aria-label="音源">
+          <button
+            type="button"
+            role="option"
+            aria-selected={pin === ''}
+            className={`music-src-item ${pin === '' ? 'current' : ''}`}
+            onClick={() => pick(null)}
+          >
+            <span className="music-src-name">自动（跟随播放）</span>
+            <span className="music-src-tag">{pin === '' ? '✓' : '推荐'}</span>
+          </button>
+          {rows.map((s) => {
+            const isCurrent = pin !== '' && musicExeKey(s.exe) === pin
+            return (
+              <button
+                key={s.exe}
+                type="button"
+                role="option"
+                aria-selected={isCurrent}
+                className={`music-src-item ${isCurrent ? 'current' : ''} ${s.playing ? '' : 'idle'}`}
+                onClick={() => pick(s.exe)}
+              >
+                <span className="music-src-name">{s.name}</span>
+                <span className="music-src-tag">
+                  {s.playing ? '● 在播' : '暂停'}
+                  {isCurrent ? ' ✓' : ''}
+                </span>
+              </button>
+            )
+          })}
+          {pin !== '' && !pinInList && (
+            <div className="music-src-item current idle" role="option" aria-selected>
+              <span className="music-src-name">{musicSourceLabel(pin)}</span>
+              <span className="music-src-tag">未运行 ✓</span>
+            </div>
+          )}
+          {rows.length === 0 && pin === '' && (
+            <div className="music-src-empty">没有检测到其它播放器</div>
+          )}
+          <div className="music-src-hint">选中后固定显示，选「自动」恢复跟随</div>
+        </div>
+      )}
+    </span>
+  )
+}
+
 function MusicPanel({
   onLyricOpenChange,
   desktopLyricEnabled = true
@@ -3571,6 +3741,8 @@ export default function App(): React.JSX.Element {
                 <span className="panel-title">{PAGE_META[page].label}</span>
                 {pagesCustom.collapsed.pet && <span className="head-pet">{renderStatusItem('pet')}</span>}
                 <span className="panel-head-spacer" />
+                {/* 音源胶囊只在音乐页出现（SPEC-music-source-picker A 方案） */}
+                {page === 4 && <MusicSourceChip />}
                 {/* 完成度：美化-04 起左边加一个小圆环（Apple Watch 同心环的单环版），
                     右边仍是纯数字「n/m」。数字节点的类名与文本格式保持原样不动——
                     e2e-todo-today / e2e-collapsed-todo 都对 `.todo-stat .todo-count` 的文本做精确比对。 */}

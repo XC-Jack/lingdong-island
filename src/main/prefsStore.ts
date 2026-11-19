@@ -60,6 +60,16 @@ interface PrefsShape {
    * 缺失 = true（保持刚做完的三态行为）。
    */
   desktopLyricEnabled?: boolean
+  /**
+   * 用户锁定的音源（SPEC-music-source-strategy）。存小写进程名（不带 .exe），
+   * 缺失 / 空串 = 自动跟随播放。
+   */
+  musicSourcePin?: string
+  /**
+   * 用户在音源选择器里点选过的播放器（SPEC-music-source-strategy 的「软白名单」）。
+   * 点选即记住：下次这些进程在跑时和内置已知播放器一样参与自动选源。
+   */
+  musicKnownPlayers?: string[]
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -165,6 +175,31 @@ function normalizeClockFormat(v: unknown): ClockFormat | undefined {
 }
 
 /**
+ * 规整进程名（音乐音源锁定 / 已知播放器表）：小写、去 `.exe`，只允许文件名安全字符。
+ * 不合法返回空串。主进程与音乐模块共用，避免两处各写一套规则。
+ */
+export function normalizeExeName(v: unknown): string {
+  if (typeof v !== 'string') return ''
+  const s = v.trim().toLowerCase().replace(/\.exe$/, '')
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(s) ? s : ''
+}
+
+/** 规整「已知播放器」列表：逐项校验、去重、上限 40 项（够用且防手改刷屏） */
+function normalizeKnownPlayers(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of v) {
+    const name = normalizeExeName(item)
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    out.push(name)
+    if (out.length >= 40) break
+  }
+  return out
+}
+
+/**
  * 校验桌宠窗口位置（SPEC-deskpet-out）。
  *
  * 只做「是不是两个有限数」的校验，**不做范围裁剪**：这里在 load 阶段调用，
@@ -263,6 +298,10 @@ function load(): PrefsShape {
     if (typeof parsed.desktopLyricEnabled === 'boolean') {
       out.desktopLyricEnabled = parsed.desktopLyricEnabled
     }
+    const pin = normalizeExeName(parsed.musicSourcePin)
+    if (pin) out.musicSourcePin = pin
+    const known = normalizeKnownPlayers(parsed.musicKnownPlayers)
+    if (known && known.length > 0) out.musicKnownPlayers = known
     return out
   } catch {
     return { ...EMPTY }
@@ -350,7 +389,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, desktopLyricEnabled } =
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, desktopLyricEnabled, musicSourcePin, musicKnownPlayers } =
     (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
@@ -362,6 +401,8 @@ function applyPatch(payload: unknown): PrefsShape | null {
       neteaseCdpMode?: unknown
       clockFormat?: unknown
       desktopLyricEnabled?: unknown
+      musicSourcePin?: unknown
+      musicKnownPlayers?: unknown
     }
   const pc = normalizePagesCustom(pagesCustom)
   if (pc) data.pagesCustom = pc
@@ -393,6 +434,14 @@ function applyPatch(payload: unknown): PrefsShape | null {
   else if (clockFormat !== undefined) delete data.clockFormat
   if (typeof desktopLyricEnabled === 'boolean') data.desktopLyricEnabled = desktopLyricEnabled
   else if (desktopLyricEnabled !== undefined) delete data.desktopLyricEnabled
+  const pin = normalizeExeName(musicSourcePin)
+  if (pin) data.musicSourcePin = pin
+  else if (musicSourcePin !== undefined) delete data.musicSourcePin
+  if (musicKnownPlayers !== undefined) {
+    const known = normalizeKnownPlayers(musicKnownPlayers) ?? []
+    if (known.length > 0) data.musicKnownPlayers = known
+    else delete data.musicKnownPlayers
+  }
   save(data)
   return JSON.stringify(before) !== JSON.stringify(data) ? data : null
 }

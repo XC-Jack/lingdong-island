@@ -218,6 +218,13 @@ const api = {
     return ipcRenderer.invoke('music:control', cmd)
   },
   /**
+   * 音源选择 / 锁定（SPEC-music-source-strategy）：传进程名锁定它，传 null 回到自动。
+   * 点选即记住——主进程会把这个进程加进「已知播放器」并持久化。
+   */
+  musicSetSource(exe: string | null): Promise<MusicState> {
+    return ipcRenderer.invoke('music:set-source', exe)
+  },
+  /**
    * 网易云桌面歌词开关（SPEC-music-desktop-lyric，等价于它的 Ctrl+D）。
    * 返回操作后的实际状态；没有后台控制 / 页面上找不到按钮时返回 null。
    */

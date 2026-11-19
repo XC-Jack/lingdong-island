@@ -2430,6 +2430,116 @@ div.pm-row[draggable='true'] {
   cursor: default;
 }
 
+/* 音源胶囊 + 选择器（SPEC-music-source-picker，方案 A：头部第一行右侧）。
+   胶囊留在排版流里（flex: none），浮层绝对定位到胶囊下方、右对齐，盖住面板内容，
+   不把头部撑高。最多 5 项可见（约 5×26 + 底部说明），超出滚动。 */
+.music-src {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+}
+.music-src-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 168px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(242, 243, 245, 0.9);
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.music-src-chip:hover,
+.music-src.open .music-src-chip {
+  background: rgba(255, 255, 255, 0.12);
+}
+.music-src-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-src-lock {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.music-src-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.music-src-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 172px;
+  max-height: 190px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(28, 30, 34, 0.98);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.music-src-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  flex: none;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(242, 243, 245, 0.9);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.music-src-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.music-src-item.current {
+  background: rgba(255, 255, 255, 0.1);
+}
+.music-src-item.idle .music-src-name {
+  color: rgba(242, 243, 245, 0.6);
+}
+.music-src-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-src-tag {
+  flex: none;
+  color: rgba(242, 243, 245, 0.55);
+  font-size: 10px;
+}
+.music-src-item.current .music-src-tag {
+  color: #ffd479;
+}
+.music-src-empty {
+  padding: 5px 7px;
+  color: rgba(242, 243, 245, 0.5);
+  font-size: 10px;
+}
+.music-src-hint {
+  flex: none;
+  margin-top: 2px;
+  padding: 5px 7px 3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(242, 243, 245, 0.45);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
 /* 主行：左侧音符占位封面 + 右侧歌名/歌手。封面固定 44px，长歌名靠 ellipsis 截断 */
 /* 参考图布局（用户 m03174 给图，m03368 指出「进度条不该横穿整个页面」，
     m03435「左边的歌名有点宽，可以压缩一点，尽量和右边对称」）：

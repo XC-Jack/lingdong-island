@@ -108,6 +108,19 @@ export interface AppInfo {
  * 数据来自 Windows SMTC（系统媒体传输控制），由 `src/main/musicStore.ts` 每秒采一次，
  * 只有字段真的变了才广播，避免渲染层每秒重渲染。
  */
+/**
+ * 音乐页「音源」列表里的一项（SPEC-music-source-picker）。
+ * 只包含当前挂着音频会话、且能读到窗口标题的进程；OBS/剪映等黑名单进程不在内。
+ */
+export interface MusicSource {
+  /** 进程名，例如 `cloudmusic.exe` */
+  exe: string
+  /** 给人看的名字：已知播放器用中文名，其它应用用进程名（去扩展名） */
+  name: string
+  /** 是否正在出声（这一帧音频会话 state=1） */
+  playing: boolean
+}
+
 export interface MusicState {
   /** 有没有可用的媒体会话；false 时其余字段都是空的，音乐页显示空态 */
   active: boolean
@@ -181,6 +194,12 @@ export interface MusicState {
    * null = 没有 CDP 或读不到（界面不据此做「关闭」动作）。
    */
   desktopLyric: boolean | null
+  /** 当前所有可选音源（音源选择器）；桥接未启动 / 读不到时为空数组 */
+  sources: MusicSource[]
+  /** 用户锁定的音源（小写进程名，如 `cloudmusic`）；'' = 自动跟随播放 */
+  pinnedExe: string
+  /** 锁定的音源当前没在运行；界面据此显示「未运行」，不自动换源 */
+  pinnedMissing: boolean
 }
 
 /** 时钟显示档位（SPEC-clock-date-format）：仅时间 / 日期+时间 / 日期+星期+时间 */

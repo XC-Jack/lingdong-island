@@ -53,7 +53,8 @@ function Await($op, $t) {
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 
 function Emit($obj) {
-  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress))
+  # Depth 4：state 里带了 sources（数组套对象），默认 depth=2 会把内层截成字符串
+  [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 4))
   [Console]::Out.Flush()
 }
 
@@ -99,10 +100,22 @@ function VisibleApps() {
 function PickIndex($sessions) {
   $arr = @($sessions)
   if ($arr.Count -eq 0) { return -1 }
+  # 锁定了音源（SPEC-music-source-strategy）时只在它的会话里选；对不上就返回 -1，
+  # 交给降级路径按进程名处理。锁定期间绝不让别的播放器插队。
+  $range = @()
+  for ($i = 0; $i -lt $arr.Count; $i++) {
+    if ($script:fbFocus -ne "") {
+      $m = ""
+      try { $m = ExeFromAppId ([string]$arr[$i].SourceAppUserModelId) } catch { $m = "" }
+      if ($m -ne $script:fbFocus) { continue }
+    }
+    $range += [int]$i
+  }
+  if ($range.Count -eq 0) { return -1 }
   # 优先正在播放的：同时开着多个播放器时，用户想看的显然是出声的那个。
   # 多个同时在放时，再优先「有可见窗口」的那个（就是摆在用户眼前的那个）。
   $playing = @()
-  for ($i = 0; $i -lt $arr.Count; $i++) {
+  foreach ($i in $range) {
     try {
       if ($arr[$i].GetPlaybackInfo().PlaybackStatus.ToString() -eq "Playing") { $playing += [int]$i }
     } catch {
@@ -110,12 +123,12 @@ function PickIndex($sessions) {
     }
   }
   if ($playing.Count -eq 1) { return [int]$playing[0] }
-  if ($playing.Count -eq 0) { return 0 }
+  if ($playing.Count -eq 0) { return [int]$range[0] }
   $vis = VisibleApps
   foreach ($i in $playing) {
     try {
       $app = [string]$arr[$i].SourceAppUserModelId
-      $exe = ($app -replace '^.*[\\/]', '') -replace '\.exe$', ''
+      $exe = ExeFromAppId $app
       if ($exe -and $vis.ContainsKey($exe)) { return [int]$i }
     } catch { }
   }
@@ -1283,6 +1296,144 @@ function IsSkipExe($exe) {
   return ($script:fbSkipExe -contains $name)
 }
 
+# ── 已知播放器（软白名单）与音源锁定 ────────────────────────────────────
+# 用户 2026-11-19 定下的规则（SPEC-music-source-strategy）：
+#   · 内置一张常见播放器表；用户在音源选择器里点选过的应用，主进程记进 prefs 后
+#     通过 {"cmd":"known"} 同步过来。两者合起来算「已知播放器」。
+#   · 自动选源时已知播放器优先；陌生应用只有在「机器上没有任何已知播放器存活」
+#     且自己正在出声时才允许顶上，否则 OBS/剪映这类挂音频会话的软件就会抢走音乐页。
+#   · 黑名单（fbSkipExe）优先于一切：既不进候选，也永远学不成已知。
+#   · 锁定（focus）期间只认那一个进程；它退出了就回空态，绝不自动换源。
+# 汽水音乐暂不写死进程名（手上没有实测值）：第一次在列表里点选它就会自动学进来。
+$script:fbKnownBuiltin = @("cloudmusic", "qqmusic", "kugou", "kuwo", "spotify", "potplayermini64", "potplayermini")
+# 用户点选过的（选择器学习来的）；由主进程通过 known 命令写入
+$script:fbKnownExtra = @()
+# 锁定的音源（小写进程名，不带 .exe）；"" = 自动
+$script:fbFocus = ""
+$script:fbDisplayNames = @{
+  "cloudmusic" = "网易云音乐"
+  "qqmusic" = "QQ 音乐"
+  "kugou" = "酷狗音乐"
+  "kuwo" = "酷我音乐"
+  "spotify" = "Spotify"
+  "potplayermini64" = "PotPlayer"
+  "potplayermini" = "PotPlayer"
+}
+
+function ExeName($exe) {
+  if ([string]::IsNullOrEmpty($exe)) { return "" }
+  $n = [System.IO.Path]::GetFileNameWithoutExtension([string]$exe)
+  if ([string]::IsNullOrEmpty($n)) { return "" }
+  return $n.ToLowerInvariant()
+}
+
+# SMTC 的 SourceAppUserModelId 可能是「完整路径\app.exe」，也可能是 AUMID；
+# 这里取末段文件名再交给 ExeName 规整，与降级路径的进程名对齐。
+function ExeFromAppId($appId) {
+  if ([string]::IsNullOrEmpty($appId)) { return "" }
+  $p = ([string]$appId) -replace '^.*[\\/]', ''
+  return (ExeName $p)
+}
+
+function IsKnownExe($exe) {
+  $name = ExeName $exe
+  if ([string]::IsNullOrEmpty($name)) { return $false }
+  if ($script:fbKnownBuiltin -contains $name) { return $true }
+  return ($script:fbKnownExtra -contains $name)
+}
+
+function DisplayNameOf($exe) {
+  $name = ExeName $exe
+  if ($script:fbDisplayNames.ContainsKey($name)) { return $script:fbDisplayNames[$name] }
+  return $name
+}
+
+# 已知播放器进程是否有活着的（含暂停、收托盘、没有音频会话的）。
+# 缓存 2 秒：poll 每秒一次，没必要每帧都对每个名字跑一遍 Get-Process。
+$script:knownAliveAt = [DateTime]::MinValue
+$script:knownAliveCache = $false
+function AnyKnownAlive() {
+  $now = [DateTime]::UtcNow
+  if (($now - $script:knownAliveAt).TotalMilliseconds -lt 2000) { return $script:knownAliveCache }
+  $alive = $false
+  foreach ($n in @($script:fbKnownBuiltin + $script:fbKnownExtra)) {
+    if ([string]::IsNullOrEmpty($n)) { continue }
+    try {
+      if ($null -ne (Get-Process -Name $n -ErrorAction SilentlyContinue)) { $alive = $true; break }
+    } catch { }
+  }
+  $script:knownAliveCache = $alive
+  $script:knownAliveAt = $now
+  return $alive
+}
+
+function FocusAlive() {
+  if ($script:fbFocus -eq "") { return $false }
+  return (PlayerAlive $script:fbFocus)
+}
+
+# 当前所有「有音频会话且读得到窗口标题」的进程（黑名单除外，陌生应用也算在内）。
+# 缓存 500ms：一帧里音量、按键兜底、状态回包都可能用到，不必重复枚举。
+$script:candAt = [DateTime]::MinValue
+$script:candCache = @()
+function GetCandidates() {
+  $now = [DateTime]::UtcNow
+  if (($now - $script:candAt).TotalMilliseconds -lt 500) { return $script:candCache }
+  $out = New-Object System.Collections.ArrayList
+  $list = ""
+  try { $list = [IslandAppVol.AppVol]::ActiveList() } catch { $list = "" }
+  if (-not [string]::IsNullOrEmpty($list)) {
+    foreach ($item in $list.Split(';')) {
+      $f = $item.Split(',')
+      if ($f.Length -lt 3) { continue }
+      $exe = [string]$f[0]
+      # 录屏/推流/剪辑软件会挂音频会话，标题也像「A - B」，但不是播放器（见 fbSkipExe）
+      if (IsSkipExe $exe) { continue }
+      # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
+      $procId = 0
+      [void][int]::TryParse([string]$f[1], [ref]$procId)
+      $st = 0
+      [void][int]::TryParse([string]$f[2], [ref]$st)
+      $t = ""
+      try { $t = [IslandBarClick]::TitleOf($exe) } catch { $t = "" }
+      # 没有主窗口的会话（系统音效、后台更新进程）不能用：抓进度条和点击都靠窗口
+      if ([string]::IsNullOrEmpty($t)) { continue }
+      [void]$out.Add(@{ exe = $exe; procId = $procId; state = $st; title = $t; known = (IsKnownExe $exe) })
+    }
+  }
+  $script:candCache = $out.ToArray()
+  $script:candAt = $now
+  return $script:candCache
+}
+
+# 音源选择器的数据：同一进程多个音频会话合并；锁定目标即使暂时没有会话也补一行。
+function GetSources() {
+  $out = New-Object System.Collections.ArrayList
+  $seen = @{}
+  foreach ($c in @(GetCandidates)) {
+    $name = ExeName $c.exe
+    if ([string]::IsNullOrEmpty($name)) { continue }
+    if ($seen.ContainsKey($name)) {
+      if ([int]$c.state -eq 1) { $out[$seen[$name]]["playing"] = $true }
+      continue
+    }
+    [void]$out.Add(@{ exe = [string]$c.exe; name = (DisplayNameOf $c.exe); playing = ([int]$c.state -eq 1) })
+    $seen[$name] = $out.Count - 1
+  }
+  # 暂停的播放器会撤掉音频会话（网易云实测如此），但它仍然是用户想切回去的对象。
+  # 把「锁定目标」和「上次认过的播放器」补进列表（只补进程还活着的），
+  # 这样选择器里不会出现「明明开着却选不到」。
+  foreach ($extra in @($script:fbFocus, $script:fbExe)) {
+    if ([string]::IsNullOrEmpty($extra)) { continue }
+    $key = ExeName $extra
+    if ($key -eq "" -or $seen.ContainsKey($key)) { continue }
+    if (-not (PlayerAlive $extra)) { continue }
+    [void]$out.Add(@{ exe = $extra; name = (DisplayNameOf $extra); playing = $false })
+    $seen[$key] = $out.Count - 1
+  }
+  return $out.ToArray()
+}
+
 # 把上次认到的播放器记到脚本旁边的小文件里。
 # 为什么要落盘：程序冷启动时若网易云正好处于暂停态（音频会话已被它自己撤掉），
 # 第一帧 ActiveList 就是空的，$fbExe 也是空的，界面会闪一下「现在没有在放歌」。
@@ -1353,49 +1504,45 @@ function PlayerAlive($exe) {
 }
 
 function GetFallback() {
-  try { $list = [IslandAppVol.AppVol]::ActiveList() } catch { $list = "" }
+  $cands = @(GetCandidates)
+  $anyKnown = AnyKnownAlive
   $best = $null
   $bestScore = -1
-  if (-not [string]::IsNullOrEmpty($list)) {
-    foreach ($item in $list.Split(';')) {
-      $f = $item.Split(',')
-      if ($f.Length -lt 3) { continue }
-      $exe = [string]$f[0]
-      # 录屏/推流软件会挂音频会话、窗口标题也像「A - B」，但不是播放器（见上方 fbSkipExe）
-      if (IsSkipExe $exe) { continue }
-      # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
-      $procId = 0
-      [void][int]::TryParse([string]$f[1], [ref]$procId)
-      $st = 0
-      [void][int]::TryParse([string]$f[2], [ref]$st)
-      $t = ""
-      try { $t = [IslandBarClick]::TitleOf($exe) } catch { $t = "" }
-      # 没有主窗口的会话（系统音效、后台更新进程）不能用：抓进度条和点击都靠窗口
-      if ([string]::IsNullOrEmpty($t)) { continue }
-      # 打分：正在出声 > 标题带「 - 」（说明在放歌）> 上次认过的那个
-      $score = 0
-      if ($st -eq 1) { $score += 100 }
-      if ($t.Contains(" - ")) { $score += 50 }
-      if ($exe -eq $script:fbExe) { $score += 30 }
-      if ($score -gt $bestScore) {
-        $bestScore = $score
-        $best = @{ exe = $exe; procId = $procId; state = $st; title = $t; live = $true }
-      }
+  foreach ($c in $cands) {
+    $exe = [string]$c.exe
+    # 锁定了音源就只在它一个里面挑
+    if ($script:fbFocus -ne "" -and (ExeName $exe) -ne $script:fbFocus) { continue }
+    if (-not [bool]$c.known) {
+      # 陌生应用的门禁：机器上还有已知播放器活着（哪怕它暂停着）就不许抢；
+      # 只有谁都没开、它自己在出声时才允许顶上（第一次用冷门播放器也能自动显示）。
+      if ($anyKnown) { continue }
+      if ([int]$c.state -ne 1) { continue }
+    }
+    # 打分：正在出声 > 标题带「 - 」（说明在放歌）> 上次认过的那个
+    $score = 0
+    if ([int]$c.state -eq 1) { $score += 100 }
+    if (([string]$c.title).Contains(" - ")) { $score += 50 }
+    if ((ExeName $exe) -eq (ExeName $script:fbExe)) { $score += 30 }
+    if ($score -gt $bestScore) {
+      $bestScore = $score
+      $best = @{ exe = $exe; procId = [int]$c.procId; state = [int]$c.state; title = [string]$c.title; live = $true }
     }
   }
   # 网易云一暂停就把音频会话整条撤掉（实测：暂停后 persess 里 cloudmusic 直接消失），
   # 只靠 ActiveList 会让界面在「按暂停」的瞬间变成空态——用户看到的是「按钮没反应」。
   # 所以会话消失后仍认上次那个播放器，只要它的窗口还在（标题还能读到）。
-  if ($null -eq $best -and $script:fbExe -ne "" -and -not (IsSkipExe $script:fbExe)) {
+  # 锁定期间只认锁定目标；它没在运行就回空态，绝不换源。
+  $ref = $script:fbExe
+  if ($script:fbFocus -ne "") { $ref = $script:fbFocus }
+  if ($null -eq $best -and $ref -ne "" -and -not (IsSkipExe $ref) -and (PlayerAlive $ref)) {
     $t2 = ""
-    try { $t2 = [IslandBarClick]::TitleOf($script:fbExe) } catch { $t2 = "" }
+    try { $t2 = [IslandBarClick]::TitleOf($ref) } catch { $t2 = "" }
     if (-not [string]::IsNullOrEmpty($t2)) {
-      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $t2; live = $false; remembered = $false }
-    } elseif ((PlayerAlive $script:fbExe) -and $script:fbSongExe -eq $script:fbExe -and
-              -not [string]::IsNullOrEmpty($script:fbSongTitle)) {
+      $best = @{ exe = $ref; procId = 0; state = 0; title = $t2; live = $false; remembered = $false }
+    } elseif ($script:fbSongExe -eq $ref -and -not [string]::IsNullOrEmpty($script:fbSongTitle)) {
       # 窗口已收进托盘/隐藏：标题读不到。进程还在、又记着上次的歌 → 按暂停态返回它
       # （用户 2026-11-19 截图：不分这一支就会变成「现在没有在放歌」）。
-      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $script:fbSongTitle;
+      $best = @{ exe = $ref; procId = 0; state = 0; title = $script:fbSongTitle;
         artist = $script:fbSongArtist; live = $false; remembered = $true }
     }
   }
@@ -1495,6 +1642,30 @@ while ($true) {
     } catch {
       Emit @{ type = "ack"; cmd = "resync"; ok = $false }
     }
+    continue
+  }
+
+  # 已知播放器表（主进程从 prefs 同步；用户在音源选择器里点选过的会出现在这里）。
+  # value 是数组；解析失败/为空都按「没有额外已知播放器」处理。
+  if ($cmd -eq "known") {
+    $list = @()
+    foreach ($x in @($val)) {
+      $n = ExeName ([string]$x)
+      if ($n -ne "" -and ($list -notcontains $n)) { $list += $n }
+    }
+    $script:fbKnownExtra = $list
+    $script:knownAliveAt = [DateTime]::MinValue  # 表变了，存活缓存作废
+    Emit @{ type = "ack"; cmd = "known"; ok = $true; count = $list.Count }
+    continue
+  }
+
+  # 锁定音源（SPEC-music-source-strategy）：只跟踪这个进程，空值回到自动。
+  if ($cmd -eq "focus") {
+    $n = ""
+    if ($null -ne $val) { $n = ExeName ([string]$val) }
+    $script:fbFocus = $n
+    $script:fbPct = -1.0
+    Emit @{ type = "ack"; cmd = "focus"; ok = $true; exe = $script:fbFocus }
     continue
   }
 
@@ -1648,10 +1819,12 @@ while ($true) {
           # 位置已知就允许拖（哪怕这一帧被字幕背景盖住读不出新值）
           barOk = [bool]($fb.known -or ([double]$fb.pct -ge 0))
           fallback = $true
+          sources = @(GetSources)
+          pinAlive = [bool](FocusAlive)
         })
         continue
       }
-      Emit @{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false; cover = ""; barPct = -1; barOk = $false; fallback = $false }
+      Emit ([ordered]@{ type = "state"; active = $false; title = ""; artist = ""; album = ""; position = 0; duration = 0; playing = $false; app = ""; shuffle = $false; repeat = 0; volume = 0; canSeek = $false; canShuffle = $false; canRepeat = $false; canVolume = $false; cover = ""; barPct = -1; barOk = $false; fallback = $false; sources = @(GetSources); pinAlive = [bool](FocusAlive) })
       continue
     }
     # 快照必须在这个作用域里直接取，且必须先 @() 再索引，原因见 PickIndex 上方的注释
@@ -1713,6 +1886,8 @@ while ($true) {
         cover = $cover
         barPct = [math]::Round($barPct, 4)
         barOk = [bool]($barPct -ge 0)
+        sources = @(GetSources)
+        pinAlive = [bool](FocusAlive)
       })
     } catch {
       # 把异常文本吐出去，别再静默发空态——静默会让人误以为「本机没有播放器」
