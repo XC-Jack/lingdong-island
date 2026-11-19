@@ -315,27 +315,24 @@ body {
   color: rgba(242, 243, 245, 0.72);
 }
 
-/* 更新行下方的常驻仓库出口（2026-11-19 用户要求）：更新器失败也能手动下载 */
+/* 更新行：状态文案可能很长、按钮最多三个（下载/直接下载/检查更新），
+   按钮另起一行靠右，别和文案挤在一行（2026-11-19 用户反馈太挤） */
+.set-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.set-row-stack .set-row-ctl {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* 更新行下方的加速器说明（2026-11-19 用户要求替换掉仓库链接） */
 .set-update-fallback {
   margin: -4px 0 8px;
   font-size: 12px;
   line-height: 1.5;
   color: rgba(242, 243, 245, 0.45);
-}
-.set-link {
-  margin-left: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  color: #fbbf24;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.set-link:hover {
-  color: #fde68a;
 }
 
 /* 卡片下方的结果提示（导出成功给路径、失败给原因）；路径很长，允许断行 */

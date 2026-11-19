@@ -133,6 +133,28 @@ function setState(patch: Partial<UpdateState>): void {
 }
 
 /** 把 electron-updater 的英文错误归成一句能看懂的话，原文留在 detail 里排查用 */
+/**
+ * checkForUpdates 自身没有超时：没开加速器时 GitHub 的 TCP 连接会被黑洞吞掉，
+ * 状态会永远停在「检查中…」（2026-11-19 用户实测截图）。25 秒没结果就按失败处理。
+ */
+const CHECK_TIMEOUT_MS = 25_000
+
+function withTimeout<T>(task: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    task.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
 function describeError(raw: string): string {
   if (/net::|ENOTFOUND|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang up|timed? ?out/i.test(raw)) {
     return '连不上 GitHub，检查网络后重试'
@@ -229,7 +251,8 @@ async function check(): Promise<void> {
   checking = true
   setState({ stage: 'checking', message: undefined })
   try {
-    await autoUpdater.checkForUpdates()
+    // 消息里带 ETIMEDOUT，走 describeError 的「连不上 GitHub」文案
+    await withTimeout(autoUpdater.checkForUpdates(), CHECK_TIMEOUT_MS, 'ETIMEDOUT: 检查更新超过 25 秒无响应')
     resetRetry()
   } catch (e) {
     fail(e)

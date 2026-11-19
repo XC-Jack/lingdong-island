@@ -89,9 +89,20 @@ void window.island.onSettingsSection((s) => {
 })
 
 /** 一行设置项：左侧标签、右侧值/控件 */
-function Row({ label, hint, children }: { label: string; hint?: string; children?: ReactNode }): ReactElement {
+function Row({
+  label,
+  hint,
+  children,
+  stack
+}: {
+  label: string
+  hint?: string
+  children?: ReactNode
+  /** 按钮较多、提示文案较长的行（如「更新」）：按钮另起一行靠右，不和文案挤在一起 */
+  stack?: boolean
+}): ReactElement {
   return (
-    <div className="set-row">
+    <div className={`set-row${stack ? ' set-row-stack' : ''}`}>
       <div className="set-row-text">
         <div className="set-label">{label}</div>
         {hint ? <div className="set-hint">{hint}</div> : null}
@@ -496,7 +507,7 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
                 <Row label="版本">{info ? info.version : '—'}</Row>
-                <Row label="更新" hint={updateHint}>
+                <Row label="更新" hint={updateHint} stack>
                   <div className="set-update-ctl">
                     <button
                       type="button"
@@ -547,20 +558,10 @@ export default function SettingsApp(): ReactElement {
                     ) : null}
                   </div>
                 </Row>
-                {/* 用户 2026-11-19：更新器依赖 api.github.com + latest.yml，任一失败时
-                    给一个不经过更新器的常驻出口，直接去仓库下载最新版 */}
+                {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
+                    去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
                 <p className="set-update-fallback">
-                  GitHub 连不上或更新加载失败？
-                  <button
-                    type="button"
-                    className="set-link"
-                    title="打开 GitHub Releases 页面，手动下载最新版"
-                    onClick={() => {
-                      void window.island.updateOpenPage()
-                    }}
-                  >
-                    去仓库下载最新版
-                  </button>
+                  GitHub 连不上或更新加载失败？多半是没开加速器，开启后回来点「检查更新」。
                 </p>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
