@@ -784,13 +784,25 @@ div.pm-row[draggable='true'] {
 .about-sep {
   opacity: 0.6;
 }
-.about-desc {
+/* 一句 tagline 管气质，比功能罗列耐看；14px 比正文稍亮一档 */
+.about-tagline {
   max-width: 360px;
   margin: 14px 0 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.75;
-  color: rgba(242, 243, 245, 0.72);
+  letter-spacing: 0.2px;
+  color: rgba(242, 243, 245, 0.82);
   text-wrap: pretty;
+}
+/* 硬事实用 11px 元信息，和 tagline 拉开层级 */
+.about-facts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: rgba(242, 243, 245, 0.42);
 }
 
 /* GitHub 链接卡：整行是一个按钮，悬停提亮、箭头转绿，键盘聚焦有描边 */

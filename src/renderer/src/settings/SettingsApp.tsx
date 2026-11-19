@@ -698,8 +698,14 @@ export default function SettingsApp(): ReactElement {
                   <span className="about-sep">·</span>
                   <span>Windows 桌面版</span>
                 </p>
-                <p className="about-desc">
-                  收起时显示时间与电量，展开后收着待办、日程、系统通知和临时文件，还有一只会表达情绪的宠物「岛仔」。
+                {/* 文案分工：tagline 管气质，facts 给硬事实（本地数据/无账号是产品事实） */}
+                <p className="about-tagline">把要紧的事，都收进屏幕顶端的这颗胶囊里。</p>
+                <p className="about-facts">
+                  <span>数据只在本机</span>
+                  <span className="about-sep">·</span>
+                  <span>无需账号</span>
+                  <span className="about-sep">·</span>
+                  <span>不打扰</span>
                 </p>
               </div>
               {/* GitHub 链接卡：整行是一个按钮，地址固定在主进程 */}

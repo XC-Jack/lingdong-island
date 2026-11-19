@@ -28,7 +28,7 @@
 ## 三、预期行为
 
 1. 导航最下方出现「关于」；点击后内容区显示关于页，标题与其它页一致（14px/600）。
-2. 身份卡：44px 图标（胶囊字形，紫色）、产品名 18px/600、版本与平台一行（11px 等宽数字、次要色）、说明 13px/1.75、最大宽度 360px 居中。
+2. 身份卡：44px 图标（胶囊字形，紫色）、产品名 18px/600、版本与平台一行（11px 等宽数字、次要色）、一句 tagline（14px/1.75，最大宽度 360px）居中，下面一行 11px 事实（数据只在本机 · 无需账号 · 不打扰）。
 3. GitHub 卡：左侧 GitHub 标（16px）、中间两行（`XC-Jack / lingdong-island` 13px 主色；`源码、版本更新与问题反馈都在这里 · PolyForm 非商业许可` 11px 次要色）、右侧 `↗`；悬停整卡提亮、箭头转绿；键盘 `focus-visible` 有描边。
 4. 点击 GitHub 卡：用系统默认浏览器打开仓库地址；不经过更新器、不读网络。
 5. 版本号取自已有的 `info.version`（`settings:app-info`），开发版/安装版都显示真实值。
@@ -59,7 +59,7 @@
 |---|---|---|---|
 | 2026-11-19 | `npm run typecheck`、`npm run build` | EXIT=0 | — |
 | 2026-11-19 | 预览版（隔离 userData + CDP 9345）打开 `about` 分区 | 导航为 `常规 / 页面管理 / 桌宠 / 专注·喝水 / 关于`，`关于` 高亮；页面标题「关于」 | — |
-| 2026-11-19 | 量取布局 | 身份卡 `223,92–860,294`；产品名 18px；版本 `v0.2.0`，`font-family` 为 `ui-monospace, "Cascadia Mono", Consolas`；说明宽 360、高 46（两行）；GitHub 卡 `223,306–860,369`，`scrollWidth == clientWidth`（无溢出）；内容区 `scrollHeight == clientHeight 537`（一屏放下） | — |
+| 2026-11-19 | 量取布局 | 身份卡 `223,92–860,294`；产品名 18px；版本 `v0.2.0`，`font-family` 为 `ui-monospace, "Cascadia Mono", Consolas`；tagline 宽 284、高 25（单行），事实行 11px；GitHub 卡 `223,306–860,369`，`scrollWidth == clientWidth`（无溢出）；内容区 `scrollHeight == clientHeight 537`（一屏放下） | — |
 | 2026-11-19 | 点击 GitHub 卡 | `window.island.openGithub()` 返回 `true`（`shell.openExternal` 未报错）；DOM 为 `<button>`、`tabIndex=0`（键盘可达） | 系统浏览器实际打开的页面内容（当前网络到 GitHub 不通，未截图） |
 | 2026-11-19 | 缩放锁回归 | 关于页沿用同一 `html/body` `overflow: clip` 与 `zoom-changed` 复位，未新增独立滚动容器 | 未在关于页重测 Ctrl+滚轮（同一设置窗口，前一轮已实测） |
 
