@@ -496,11 +496,24 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
                 <Row label="版本">{info ? info.version : '—'}</Row>
-                <Row label="更新" hint={updateHint}>
+                {/* 更新行：左侧「标签 + 状态说明 + 加速器提示」，按钮组在右侧垂直居中
+                    （2026-11-19 用户三次调整后的位置） */}
+                <div className="set-row set-row-update">
+                  <div className="set-row-text">
+                    <div className="set-label">更新</div>
+                    {updateHint ? <div className="set-hint">{updateHint}</div> : null}
+                    {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
+                        去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
+                    <p className="set-update-fallback">
+                      连不上？多半是没开加速器，开了再试。
+                    </p>
+                  </div>
                   <div className="set-update-ctl">
                     <button
                       type="button"
-                      className="set-btn"
+                      className={`set-btn${
+                        update?.stage === 'available' || update?.stage === 'ready' ? ' set-btn-primary' : ''
+                      }`}
                       disabled={!update || updateBusy || update.stage === 'unsupported'}
                       onClick={onUpdateAction}
                     >
@@ -530,23 +543,23 @@ export default function SettingsApp(): ReactElement {
                         直接下载
                       </button>
                     ) : null}
+                    {/* 停在「有新版本」时主按钮是下载，仍要能手动刷新版本号
+                        （用户 2026-11-19：检查到 0.1.18 后 0.1.19 已发布，
+                        设置页没有可点的「检查更新」，要等 4 小时周期） */}
+                    {update?.stage === 'available' || (update?.stage === 'error' && update.version) ? (
+                      <button
+                        type="button"
+                        className="set-btn set-btn-quiet"
+                        title="重新向 GitHub 查询最新版本"
+                        onClick={() => {
+                          void window.island.updateCheck()
+                        }}
+                      >
+                        检查更新
+                      </button>
+                    ) : null}
                   </div>
-                </Row>
-                {/* 用户 2026-11-19：更新器依赖 api.github.com + latest.yml，任一失败时
-                    给一个不经过更新器的常驻出口，直接去仓库下载最新版 */}
-                <p className="set-update-fallback">
-                  GitHub 连不上或更新加载失败？
-                  <button
-                    type="button"
-                    className="set-link"
-                    title="打开 GitHub Releases 页面，手动下载最新版"
-                    onClick={() => {
-                      void window.island.updateOpenPage()
-                    }}
-                  >
-                    去仓库下载最新版
-                  </button>
-                </p>
+                </div>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
                     type="button"

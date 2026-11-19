@@ -20,7 +20,10 @@ body,
   width: 100%;
   height: 100%;
   background: #131417;
-  overflow: hidden;
+  /* overflow: clip 连程序化滚动（scrollIntoView / 焦点滚动）也禁止；
+     hidden 只是不显示滚动条，仍可能被代码或缩放锚点带偏（2026-11-19 实测踩过：
+     整个页面被滚到内容区原点，左侧导航和标题栏跑到窗口外） */
+  overflow: clip;
 }
 
 body {
@@ -163,6 +166,8 @@ body {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* 设置是固定宽度排版，永远不该横向滚；纵向滚动保留 */
+  overflow-x: clip;
   padding: 18px 22px 22px;
 }
 /* 滚动条跟深色底配，别用系统亮色那条 */
@@ -306,31 +311,58 @@ body {
   gap: 8px;
 }
 .set-btn-quiet {
+  border-color: rgba(255, 255, 255, 0.1);
   background: transparent;
   color: rgba(242, 243, 245, 0.72);
 }
+.set-btn-quiet:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
 
-/* 更新行下方的常驻仓库出口（2026-11-19 用户要求）：更新器失败也能手动下载 */
+/* 主操作（下载 / 重启并安装）：用岛内绿色强调色填充，和两个次级按钮拉开层级 */
+.set-btn-primary {
+  border-color: transparent;
+  color: #10240f;
+  background: #7dd87d;
+  font-weight: 500;
+}
+.set-btn-primary:hover {
+  background: #92e292;
+}
+.set-btn-primary:active {
+  background: #6cc76c;
+}
+
+/* 更新行（2026-11-19 用户反馈后重排）：
+   标签和按钮同一行，状态说明、加速器提示在下方通栏——
+   按钮不再孤零零悬在右侧，长文案也不会和按钮抢同一行 */
+.set-row-update {
+  gap: 16px;
+  padding: 8px 0;
+}
+.set-row-update .set-row-text {
+  flex: 1 1 auto;
+}
+/* 按钮组在右侧、相对左侧整块文案垂直居中（2026-11-19 用户要求） */
+.set-row-update .set-update-ctl {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.set-row-update .set-update-fallback {
+  margin: 4px 0 0;
+}
+/* 这一行按钮比别处密一点，别把行撑高 */
+.set-row-update .set-btn {
+  padding: 4px 10px;
+}
+
+/* 加速器说明：比状态说明更小、用琥珀色区分「注意事项」，不抢主信息 */
 .set-update-fallback {
   margin: -4px 0 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: rgba(242, 243, 245, 0.45);
-}
-.set-link {
-  margin-left: 4px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  font-size: 12px;
-  color: #fbbf24;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.set-link:hover {
-  color: #fde68a;
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(251, 191, 36, 0.62);
 }
 
 /* 卡片下方的结果提示（导出成功给路径、失败给原因）；路径很长，允许断行 */
