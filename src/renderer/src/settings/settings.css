@@ -20,7 +20,10 @@ body,
   width: 100%;
   height: 100%;
   background: #131417;
-  overflow: hidden;
+  /* overflow: clip 连程序化滚动（scrollIntoView / 焦点滚动）也禁止；
+     hidden 只是不显示滚动条，仍可能被代码或缩放锚点带偏（2026-11-19 实测踩过：
+     整个页面被滚到内容区原点，左侧导航和标题栏跑到窗口外） */
+  overflow: clip;
 }
 
 body {
@@ -163,6 +166,8 @@ body {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* 设置是固定宽度排版，永远不该横向滚；纵向滚动保留 */
+  overflow-x: clip;
   padding: 18px 22px 22px;
 }
 /* 滚动条跟深色底配，别用系统亮色那条 */

@@ -530,6 +530,21 @@ export default function SettingsApp(): ReactElement {
                         直接下载
                       </button>
                     ) : null}
+                    {/* 停在「有新版本」时主按钮是下载，仍要能手动刷新版本号
+                        （用户 2026-11-19：检查到 0.1.18 后 0.1.19 已发布，
+                        设置页没有可点的「检查更新」，要等 4 小时周期） */}
+                    {update?.stage === 'available' || (update?.stage === 'error' && update.version) ? (
+                      <button
+                        type="button"
+                        className="set-btn set-btn-quiet"
+                        title="重新向 GitHub 查询最新版本"
+                        onClick={() => {
+                          void window.island.updateCheck()
+                        }}
+                      >
+                        检查更新
+                      </button>
+                    ) : null}
                   </div>
                 </Row>
                 {/* 用户 2026-11-19：更新器依赖 api.github.com + latest.yml，任一失败时

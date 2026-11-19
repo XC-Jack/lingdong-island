@@ -60,6 +60,18 @@ function createSettingsWindow(): BrowserWindow {
     }
   })
 
+  /*
+   * 设置页按 880×580 固定排版：锁死页面缩放。
+   * 2026-11-19 用户实测遇到整页被横向/纵向带偏（左侧导航与标题栏跑到窗口外），
+   * 重新打开设置后恢复；页面缩放后会同时产生溢出和滚动锚点位移，是最可能的入口，
+   * 所以直接不允许缩放（Ctrl+滚轮、触控板捏合都走这里）。
+   */
+  void win.webContents.setVisualZoomLevelLimits(1, 1)
+  win.webContents.on('zoom-changed', () => {
+    win.webContents.setZoomFactor(1)
+  })
+  win.webContents.setZoomFactor(1)
+
   if (process.env['ELECTRON_RENDERER_URL']) {
     void win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/settings.html`)
   } else {
