@@ -1952,7 +1952,10 @@ const MUSIC_SOURCE_NAMES: Record<string, string> = {
   kuwo: '酷我音乐',
   spotify: 'Spotify',
   potplayermini64: 'PotPlayer',
-  potplayermini: 'PotPlayer'
+  potplayermini: 'PotPlayer',
+  // 汽水音乐：进程 SodaMusic.exe，SMTC 的 AUMID 是中文「汽水音乐」
+  '汽水音乐': '汽水音乐',
+  sodamusic: '汽水音乐'
 }
 
 function musicSourceLabel(exe: string): string {
@@ -2730,7 +2733,11 @@ function MusicPanel({
           调试端口只能在网易云启动时打开，所以这里给一键重启入口。开启后进度/seek 直接
           操作它的页面，窗口最小化也有效，不再依赖抓像素和把窗口顶到前台。 */}
       {/* 档位为「关闭」时连这个入口都不给（SPEC-netease-cdp-mode）：用户明确不想让岛碰网易云 */}
-      {music?.neteaseRunning === true && !music.neteaseCdp && music.neteaseCdpMode !== 'off' && (
+      {/* 锁定到别的音源时不给网易云入口：用户明确在看汽水，别拿网易云的按钮打扰他 */}
+      {music?.neteaseRunning === true &&
+        !music.neteaseCdp &&
+        music.neteaseCdpMode !== 'off' &&
+        (music.pinnedExe === '' || music.pinnedExe === 'cloudmusic') && (
         <button
           type="button"
           className={`music-cdp-tip ${music.neteaseCdpBusy ? 'busy' : ''}`}

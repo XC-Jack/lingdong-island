@@ -105,9 +105,9 @@ function PickIndex($sessions) {
   $range = @()
   for ($i = 0; $i -lt $arr.Count; $i++) {
     if ($script:fbFocus -ne "") {
-      $m = ""
-      try { $m = ExeFromAppId ([string]$arr[$i].SourceAppUserModelId) } catch { $m = "" }
-      if ($m -ne $script:fbFocus) { continue }
+      $hit = $false
+      try { $hit = AppMatchesFocus ([string]$arr[$i].SourceAppUserModelId) } catch { $hit = $false }
+      if (-not $hit) { continue }
     }
     $range += [int]$i
   }
@@ -1304,8 +1304,9 @@ function IsSkipExe($exe) {
 #     且自己正在出声时才允许顶上，否则 OBS/剪映这类挂音频会话的软件就会抢走音乐页。
 #   · 黑名单（fbSkipExe）优先于一切：既不进候选，也永远学不成已知。
 #   · 锁定（focus）期间只认那一个进程；它退出了就回空态，绝不自动换源。
-# 汽水音乐暂不写死进程名（手上没有实测值）：第一次在列表里点选它就会自动学进来。
-$script:fbKnownBuiltin = @("cloudmusic", "qqmusic", "kugou", "kuwo", "spotify", "potplayermini64", "potplayermini")
+# 汽水音乐 [2026-11-19 用户截图实测]：进程 SodaMusic.exe，SMTC 的 AUMID 是中文「汽水音乐」。
+# 同一个应用会以两种身份出现，靠显示名合并成一行（见 SourceKey）。
+$script:fbKnownBuiltin = @("cloudmusic", "qqmusic", "kugou", "kuwo", "spotify", "potplayermini64", "potplayermini", "sodamusic")
 # 用户点选过的（选择器学习来的）；由主进程通过 known 命令写入
 $script:fbKnownExtra = @()
 # 锁定的音源（小写进程名，不带 .exe）；"" = 自动
@@ -1318,6 +1319,9 @@ $script:fbDisplayNames = @{
   "spotify" = "Spotify"
   "potplayermini64" = "PotPlayer"
   "potplayermini" = "PotPlayer"
+  # SMTC AUMID 是中文，直接按显示名对号（见下方 AppMatchesFocus）
+  "汽水音乐" = "汽水音乐"
+  "sodamusic" = "汽水音乐"
 }
 
 function ExeName($exe) {
@@ -1346,6 +1350,24 @@ function DisplayNameOf($exe) {
   $name = ExeName $exe
   if ($script:fbDisplayNames.ContainsKey($name)) { return $script:fbDisplayNames[$name] }
   return $name
+}
+
+# 选择器里的去重键：优先用显示名。同一个应用在音频会话里是 SodaMusic.exe、
+# 在 SMTC 里是「汽水音乐」，按显示名合并成一行，否则用户会看到两个「在播」。
+function SourceKey($exe) {
+  $d = DisplayNameOf $exe
+  if ([string]::IsNullOrEmpty($d)) { return (ExeName $exe) }
+  return $d.ToLowerInvariant()
+}
+
+# 锁定匹配：SMTC 的 AUMID 可能是进程名（带路径或 .exe），也可能直接是中文应用名
+# （汽水音乐实测为「汽水音乐」）。两种都比一次，否则锁了汽水就选不到它的 SMTC 会话。
+function AppMatchesFocus($appId) {
+  if ($script:fbFocus -eq "") { return $true }
+  $m = ExeFromAppId $appId
+  if ($m -eq "") { return $false }
+  if ($m -eq $script:fbFocus) { return $true }
+  return ($m -eq (SourceKey $script:fbFocus))
 }
 
 # 已知播放器进程是否有活着的（含暂停、收托盘、没有音频会话的）。
@@ -1411,21 +1433,21 @@ function GetSources() {
   $out = New-Object System.Collections.ArrayList
   $seen = @{}
   foreach ($c in @(GetCandidates)) {
-    $name = ExeName $c.exe
-    if ([string]::IsNullOrEmpty($name)) { continue }
-    if ($seen.ContainsKey($name)) {
-      if ([int]$c.state -eq 1) { $out[$seen[$name]]["playing"] = $true }
+    $key = SourceKey $c.exe
+    if ([string]::IsNullOrEmpty($key)) { continue }
+    if ($seen.ContainsKey($key)) {
+      if ([int]$c.state -eq 1) { $out[$seen[$key]]["playing"] = $true }
       continue
     }
     [void]$out.Add(@{ exe = [string]$c.exe; name = (DisplayNameOf $c.exe); playing = ([int]$c.state -eq 1) })
-    $seen[$name] = $out.Count - 1
+    $seen[$key] = $out.Count - 1
   }
   # 暂停的播放器会撤掉音频会话（网易云实测如此），但它仍然是用户想切回去的对象。
   # 把「锁定目标」和「上次认过的播放器」补进列表（只补进程还活着的），
   # 这样选择器里不会出现「明明开着却选不到」。
   foreach ($extra in @($script:fbFocus, $script:fbExe)) {
     if ([string]::IsNullOrEmpty($extra)) { continue }
-    $key = ExeName $extra
+    $key = SourceKey $extra
     if ($key -eq "" -or $seen.ContainsKey($key)) { continue }
     if (-not (PlayerAlive $extra)) { continue }
     [void]$out.Add(@{ exe = $extra; name = (DisplayNameOf $extra); playing = $false })

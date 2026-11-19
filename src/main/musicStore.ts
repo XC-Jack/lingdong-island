@@ -317,12 +317,45 @@ const SOURCE_NAMES: Record<string, string> = {
   kuwo: '酷我音乐',
   spotify: 'Spotify',
   potplayermini64: 'PotPlayer',
-  potplayermini: 'PotPlayer'
+  potplayermini: 'PotPlayer',
+  // 汽水音乐：进程 SodaMusic.exe，SMTC 的 AUMID 是中文「汽水音乐」（2026-11-19 实测）
+  '汽水音乐': '汽水音乐',
+  sodamusic: '汽水音乐'
 }
 
 function sourceLabel(app: string): string {
   const key = exeOf(app)
   return SOURCE_NAMES[key] ?? (key || app)
+}
+
+/** 同一应用可能有两种身份（进程名 / SMTC 的中文应用名），按显示名认定为同一个 */
+function sameSource(a: string, b: string): boolean {
+  if (!a || !b) return false
+  if (exeOf(a) === exeOf(b)) return true
+  return sourceLabel(a).toLowerCase() === sourceLabel(b).toLowerCase()
+}
+
+/**
+ * 把选择器点选的标识解析成可锁定的进程名。
+ *
+ * 正常情况下传进来就是进程名（SodaMusic.exe）；但 SMTC 可能只暴露中文应用名
+ * （汽水音乐实测 AUMID 就是「汽水音乐」），这种标识不能直接当进程名用——
+ * 先在当前 sources 里找同名项，再按内置显示名反查。
+ */
+function resolveSourceExe(raw: string): string {
+  const direct = normalizeExeName(raw)
+  if (direct) return direct
+  const key = raw.trim().toLowerCase().replace(/\.exe$/, '')
+  if (!key) return ''
+  const hit = cache.sources.find((s) => exeOf(s.exe) === key || s.name.trim().toLowerCase() === key)
+  const viaHit = hit ? normalizeExeName(hit.exe) : ''
+  if (viaHit) return viaHit
+  for (const [exe, name] of Object.entries(SOURCE_NAMES)) {
+    if (name.toLowerCase() !== key) continue
+    const n = normalizeExeName(exe)
+    if (n) return n
+  }
+  return ''
 }
 
 /**
@@ -377,7 +410,7 @@ function recompute(): void {
       neteaseCdpMode: cdpMode,
       desktopLyric: c.desktopLyric
     }
-  } else if (pin !== '' && !(bridgeState.active && exeOf(bridgeState.app) === pin)) {
+  } else if (pin !== '' && !(bridgeState.active && sameSource(bridgeState.app, pin))) {
     // 锁定的音源不在桥接状态里（退出了 / 桥接还没认到它）：不回落到别人，
     // 直接给空态。pinnedMissing 由下面的统一计算决定，界面据此显示「未运行」。
     next = {
@@ -402,8 +435,9 @@ function recompute(): void {
   // 当前音源可能不在桥接的 sources 里（网易云暂停会撤掉音频会话，或桥接还没认到它）：
   // 选择器至少要能选到它，否则「锁定当前音源」无从下手。
   if (next.active && next.app) {
-    const key = exeOf(next.app)
-    if (key && !next.sources.some((s) => exeOf(s.exe) === key)) {
+    // 按「同一应用」比而不是只比 exe：汽水音乐在 sources 里是 SodaMusic.exe、
+    // 当前音源的 app 却是 SMTC 的中文 AUMID「汽水音乐」，只比 exe 会多出一行。
+    if (!next.sources.some((s) => sameSource(s.exe, next.app))) {
       next.sources = [...next.sources, { exe: next.app, name: sourceLabel(next.app), playing: next.playing }]
     }
   }
@@ -829,8 +863,8 @@ export function setupMusicStore(): void {
   ipcMain.handle('music:set-source', (_e, exe: unknown): MusicState => {
     let next = ''
     if (typeof exe === 'string' && exe.trim() !== '') {
-      next = normalizeExeName(exe)
-      // 非法进程名直接忽略，绝不能当成「解除锁定」
+      next = resolveSourceExe(exe)
+      // 解析不出进程名就直接忽略，绝不能当成「解除锁定」
       if (!next) return cache
     } else if (exe !== null && exe !== undefined) {
       return cache
