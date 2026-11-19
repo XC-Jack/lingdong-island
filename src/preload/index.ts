@@ -112,6 +112,18 @@ const api = {
   updateDownload(): Promise<UpdateState> {
     return ipcRenderer.invoke('update:download')
   },
+  /** 暂停下载（清掉半截文件，继续会从头下载） */
+  updatePause(): Promise<UpdateState> {
+    return ipcRenderer.invoke('update:pause')
+  },
+  /** 取消下载并清理残留，回到「可下载」状态 */
+  updateCancel(): Promise<UpdateState> {
+    return ipcRenderer.invoke('update:cancel')
+  },
+  /** 打开指定版本的安装包直链（浏览器下载），没有版本号时打开发布页 */
+  updateOpenDownload(): Promise<boolean> {
+    return ipcRenderer.invoke('update:open-download')
+  },
   /** 退出并静默安装已下载的版本 */
   updateInstall(): Promise<boolean> {
     return ipcRenderer.invoke('update:install')

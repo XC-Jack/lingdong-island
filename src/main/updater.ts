@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, net, Notification, powerMonitor, shell } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, CancellationToken } from 'electron-updater'
 import type { UpdateInfo, ProgressInfo } from 'electron-updater'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { UpdateState } from '../shared/types'
 import { openSettings } from './settingsWindow'
@@ -35,6 +36,9 @@ const RESUME_CHECK_DELAY_MS = 30_000
 const RETRY_DELAYS_MS = [10 * 60 * 1000, 30 * 60 * 1000]
 /** 降级出口：打不开更新器时让用户自己下 */
 const RELEASE_PAGE = 'https://github.com/XC-Jack/lingdong-island/releases/latest'
+/** 指定版本安装包的 GitHub 直链（文件名规则由 build.artifactName 固定） */
+const ASSET_URL = (version: string): string =>
+  `https://github.com/XC-Jack/lingdong-island/releases/download/v${version}/Lingdong-Island-Setup-${version}.exe`
 /**
  * 已提示过的版本与日期（2026-11-19 起按天去重）。
  * 原来只记版本、一个版本永远只提示一次：toast 被专注助手拦掉或人不在电脑前，
@@ -52,6 +56,35 @@ let resumeTimer: NodeJS.Timeout | null = null
 let retryIndex = 0
 /** 系统通知必须留引用，否则会被 GC 提前回收导致 click 收不到 */
 let updateNotification: Notification | null = null
+/** 当前下载的取消令牌；暂停/取消都靠它打断 electron-updater */
+let activeToken: CancellationToken | null = null
+/** 用户主动打断下载时记录意图，区分「暂停」和「取消」的收尾状态 */
+let cancelMode: 'pause' | 'cancel' | null = null
+
+/**
+ * electron-updater 的下载临时目录。
+ * 路径规则见其 AppAdapter.getAppCacheDir：Windows 是 %LOCALAPPDATA%\<app.name>-updater，
+ * 半截文件在 pending\temp-*.exe；取消时 electron-updater 只清理最终文件、不清临时文件，
+ * 所以这里自己删，保证用户说的「取消之后没有残留」。
+ */
+function updateCacheDir(): string {
+  const base = process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local')
+  return join(base, `${app.name}-updater`)
+}
+
+function pendingDownloadDir(): string {
+  return join(updateCacheDir(), 'pending')
+}
+
+function clearPendingDownload(): void {
+  try {
+    rmSync(pendingDownloadDir(), { recursive: true, force: true })
+    startupLog('update: pending download cleared')
+  } catch (e) {
+    const raw = e instanceof Error ? e.message : String(e)
+    startupLog(`update: clear pending failed ${raw}`)
+  }
+}
 
 function todayKey(): string {
   const d = new Date()
@@ -178,7 +211,14 @@ async function check(): Promise<void> {
     setState({ stage: 'unsupported', message: '开发版不检查更新，安装版才会自动检查' })
     return
   }
-  if (checking || state.stage === 'downloading' || state.stage === 'ready') return
+  if (
+    checking ||
+    state.stage === 'downloading' ||
+    state.stage === 'paused' ||
+    state.stage === 'ready'
+  ) {
+    return
+  }
   // 没网就直接跳过，不写「检查失败」——用户 2026-11-18 要求连不上时安静；
   // 也不排重试，等下一个 4 小时周期或唤醒补查。
   if (!net.isOnline()) {
@@ -200,13 +240,92 @@ async function check(): Promise<void> {
 }
 
 async function download(): Promise<void> {
-  if (state.stage !== 'available' && state.stage !== 'error') return
+  if (state.stage !== 'available' && state.stage !== 'error' && state.stage !== 'paused') return
+  // 上一笔下载还在收尾（刚点过取消/暂停）：electron-updater 的 downloadPromise 未清空前
+  // 再调 downloadUpdate 会复用旧 Promise，直接忽略这次点击
+  if (activeToken !== null) {
+    startupLog('update: previous download still stopping, ignore')
+    return
+  }
   if (!state.version) return
+  const version = state.version
+  const token = new CancellationToken()
+  activeToken = token
+  cancelMode = null
+  /*
+   * 差分下载需要缓存里的上一版 installer.exe 才能拼出新安装包。
+   * 没有它时 electron-updater 仍会先拉两份 .blockmap（国内网络经常卡几十秒到几分钟），
+   * 再以 ENOENT 失败回退全量——纯浪费。手动安装/首次使用的机器都没有这个文件，
+   * 所以先判断，缺了就直接全量。
+   */
+  const canDifferential = existsSync(join(updateCacheDir(), 'installer.exe'))
+  autoUpdater.disableDifferentialDownload = !canDifferential
+  startupLog(`update: download ${version} (${canDifferential ? 'differential' : 'full, no cached installer'})`)
   setState({ stage: 'downloading', percent: 0, message: undefined })
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater.downloadUpdate(token)
+  } catch (e) {
+    // 取消不会派发 error 事件，只在 downloadUpdate 的 Promise 上以 CancellationError 结束
+    if (token.cancelled) {
+      if (cancelMode === 'pause') {
+        startupLog(`update: download paused at ${state.percent ?? 0}%`)
+        clearPendingDownload()
+        setState({ stage: 'paused', version, message: '已暂停，继续会从头下载' })
+      } else if (cancelMode === 'cancel') {
+        startupLog('update: download cancelled by user')
+        clearPendingDownload()
+        setState({ stage: 'available', version, percent: undefined, message: undefined })
+      } else {
+        // 非用户操作（如退出前清理）打断：回到可下载状态
+        setState({ stage: 'available', version, percent: undefined, message: undefined })
+      }
+      return
+    }
+    fail(e)
+    clearPendingDownload()
+  } finally {
+    if (activeToken === token) activeToken = null
+    cancelMode = null
+  }
+}
+
+/** 暂停下载：取消当前传输并清掉临时文件，状态停在 paused，之后可重新下载 */
+function pauseDownload(): void {
+  if (state.stage !== 'downloading' || activeToken === null || cancelMode !== null) return
+  cancelMode = 'pause'
+  activeToken.cancel()
+}
+
+/**
+ * 取消下载：回到「发现新版本、可下载」状态，不留半截文件。
+ * 下载中只发取消信号，状态等 download() 的 catch 收尾后统一落回 available——
+ * 提前放回 available 会让用户能立刻再点下载，撞上尚未结束的旧任务。
+ */
+function cancelDownload(): void {
+  if (state.stage !== 'downloading' && state.stage !== 'paused') return
+  if (cancelMode === 'cancel') return
+  const version = state.version
+  if (state.stage === 'paused' || activeToken === null) {
+    clearPendingDownload()
+    setState({ stage: 'available', version, percent: undefined, message: undefined })
+    startupLog('update: download cancelled from paused')
+    return
+  }
+  cancelMode = 'cancel'
+  startupLog('update: cancelling download')
+  activeToken.cancel()
+}
+
+/** 直接下载：用系统浏览器打开发布资产，绕开应用内下载慢的问题 */
+async function openDownload(): Promise<boolean> {
+  const version = state.version
+  try {
+    await shell.openExternal(version ? ASSET_URL(version) : RELEASE_PAGE)
+    startupLog(`update: open download ${version || 'release page'}`)
+    return true
   } catch (e) {
     fail(e)
+    return false
   }
 }
 
@@ -245,6 +364,8 @@ function attachEvents(): void {
   })
 
   autoUpdater.on('download-progress', (p: ProgressInfo) => {
+    // 用户已点暂停/取消、收尾还没完成时，迟到的进度包不能把状态翻回 downloading
+    if (cancelMode !== null) return
     const percent = Math.max(0, Math.min(100, Math.round(p.percent)))
     // 每 1% 才广播一次，避免高频 IPC 让设置页掉帧
     if (state.stage === 'downloading' && state.percent === percent) return
@@ -274,6 +395,15 @@ export function setupUpdater(): void {
     await download()
     return state
   })
+  ipcMain.handle('update:pause', (): UpdateState => {
+    pauseDownload()
+    return state
+  })
+  ipcMain.handle('update:cancel', (): UpdateState => {
+    cancelDownload()
+    return state
+  })
+  ipcMain.handle('update:open-download', async (): Promise<boolean> => await openDownload())
   ipcMain.handle('update:install', (): boolean => {
     install()
     return true

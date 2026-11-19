@@ -300,6 +300,8 @@ export type UpdateStage =
   | 'available'
   /** 正在下载 */
   | 'downloading'
+  /** 用户暂停了下载（继续会从头开始，electron-updater 不支持断点续传） */
+  | 'paused'
   /** 下载完成，等用户点重启安装 */
   | 'ready'
   /** 检查或下载失败 */

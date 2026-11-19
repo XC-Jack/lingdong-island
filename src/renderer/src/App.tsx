@@ -1222,9 +1222,12 @@ function fmtRel(ms: number): string {
 function NotifyPanel({
   onUnread,
   refreshTick,
+  onOpenUpdate,
 }: {
   onUnread: (n: number) => void
   refreshTick: number
+  /** 点「（有新版本）」：收起岛并打开设置「常规」的更新行 */
+  onOpenUpdate: () => void
 }): React.JSX.Element {
   const [items, setItems] = useState<NotifyItem[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -1237,7 +1240,11 @@ function NotifyPanel({
 
   useEffect(() => {
     const apply = (s: UpdateState): void => {
-      const show = s.stage === 'available' || s.stage === 'downloading' || s.stage === 'ready'
+      const show =
+        s.stage === 'available' ||
+        s.stage === 'downloading' ||
+        s.stage === 'paused' ||
+        s.stage === 'ready'
       setUpdateVersion(show ? s.version ?? '' : '')
     }
     void window.island.updateGetState().then(apply)
@@ -1353,9 +1360,14 @@ function NotifyPanel({
         <span className="shelf-count">
           {visibleItems.length > 0 ? `${visibleItems.length} 条通知` : ''}
           {updateVersion !== '' && (
-            <span className="shelf-update-hint" title={`新版本 ${updateVersion} 可用`}>
+            <button
+              type="button"
+              className="shelf-update-hint"
+              title={`新版本 ${updateVersion} 可用，点击打开设置更新`}
+              onClick={onOpenUpdate}
+            >
               （有新版本）
-            </span>
+            </button>
           )}
         </span>
         <span className="shelf-toolbar-spacer" />
@@ -3284,6 +3296,17 @@ export default function App(): React.JSX.Element {
     window.island.openSettings('general')
   }
 
+  /** 通知页「（有新版本）」：收起岛再开设置，避免两个窗口叠在一起 */
+  const openUpdateSettings = (): void => {
+    if (collapseTimer.current !== null) {
+      window.clearTimeout(collapseTimer.current)
+      collapseTimer.current = null
+    }
+    setExpanded(false)
+    window.island.setBannerVisible(false)
+    window.island.openSettings('general')
+  }
+
   // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 15 秒兜底刷新
   // （2026-11-19：原来 60 秒一次，用户断网后最多要等一分半才看到图标）
   useEffect(() => {
@@ -3848,7 +3871,11 @@ export default function App(): React.JSX.Element {
                 ) : page === 1 ? (
                   <ShelfPanel />
                 ) : page === 2 ? (
-                  <NotifyPanel onUnread={onNotifyUnread} refreshTick={notifyRefreshTick} />
+                  <NotifyPanel
+                    onUnread={onNotifyUnread}
+                    refreshTick={notifyRefreshTick}
+                    onOpenUpdate={openUpdateSettings}
+                  />
                 ) : page === 3 ? (
                   <SchedulePanel />
                 ) : (
