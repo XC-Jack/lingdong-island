@@ -89,20 +89,9 @@ void window.island.onSettingsSection((s) => {
 })
 
 /** 一行设置项：左侧标签、右侧值/控件 */
-function Row({
-  label,
-  hint,
-  children,
-  stack
-}: {
-  label: string
-  hint?: string
-  children?: ReactNode
-  /** 按钮较多、提示文案较长的行（如「更新」）：按钮另起一行靠右，不和文案挤在一起 */
-  stack?: boolean
-}): ReactElement {
+function Row({ label, hint, children }: { label: string; hint?: string; children?: ReactNode }): ReactElement {
   return (
-    <div className={`set-row${stack ? ' set-row-stack' : ''}`}>
+    <div className="set-row">
       <div className="set-row-text">
         <div className="set-label">{label}</div>
         {hint ? <div className="set-hint">{hint}</div> : null}
@@ -507,11 +496,17 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
                 <Row label="版本">{info ? info.version : '—'}</Row>
-                <Row label="更新" hint={updateHint} stack>
-                  <div className="set-update-ctl">
+                {/* 更新行单独排版：标签与按钮同一行，状态说明与加速器提示在下方通栏。
+                    2026-11-19 用户反馈：按钮单独占一行像「硬放」，提示字也太大太灰 */}
+                <div className="set-row set-row-update">
+                  <div className="set-row-head">
+                    <div className="set-label">更新</div>
+                    <div className="set-update-ctl">
                     <button
                       type="button"
-                      className="set-btn"
+                      className={`set-btn${
+                        update?.stage === 'available' || update?.stage === 'ready' ? ' set-btn-primary' : ''
+                      }`}
                       disabled={!update || updateBusy || update.stage === 'unsupported'}
                       onClick={onUpdateAction}
                     >
@@ -556,13 +551,15 @@ export default function SettingsApp(): ReactElement {
                         检查更新
                       </button>
                     ) : null}
+                    </div>
                   </div>
-                </Row>
-                {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
-                    去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
-                <p className="set-update-fallback">
-                  GitHub 连不上或更新加载失败？多半是没开加速器，开启后回来点「检查更新」。
-                </p>
+                  {updateHint ? <div className="set-hint">{updateHint}</div> : null}
+                  {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
+                      去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
+                  <p className="set-update-fallback">
+                    GitHub 连不上或更新加载失败？多半是没开加速器，开启后回来点「检查更新」。
+                  </p>
+                </div>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
                     type="button"

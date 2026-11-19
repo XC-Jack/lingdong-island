@@ -311,28 +311,55 @@ body {
   gap: 8px;
 }
 .set-btn-quiet {
+  border-color: rgba(255, 255, 255, 0.1);
   background: transparent;
   color: rgba(242, 243, 245, 0.72);
 }
+.set-btn-quiet:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
 
-/* 更新行：状态文案可能很长、按钮最多三个（下载/直接下载/检查更新），
-   按钮另起一行靠右，别和文案挤在一行（2026-11-19 用户反馈太挤） */
-.set-row-stack {
+/* 主操作（下载 / 重启并安装）：用岛内绿色强调色填充，和两个次级按钮拉开层级 */
+.set-btn-primary {
+  border-color: transparent;
+  color: #10240f;
+  background: #7dd87d;
+  font-weight: 500;
+}
+.set-btn-primary:hover {
+  background: #92e292;
+}
+.set-btn-primary:active {
+  background: #6cc76c;
+}
+
+/* 更新行（2026-11-19 用户反馈后重排）：
+   标签和按钮同一行，状态说明、加速器提示在下方通栏——
+   按钮不再孤零零悬在右侧，长文案也不会和按钮抢同一行 */
+.set-row-update {
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
 }
-.set-row-stack .set-row-ctl {
-  justify-content: flex-end;
-  flex-wrap: wrap;
+.set-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.set-row-update .set-hint {
+  margin-top: 0;
+}
+.set-row-update .set-update-fallback {
+  margin: 2px 0 0;
 }
 
-/* 更新行下方的加速器说明（2026-11-19 用户要求替换掉仓库链接） */
+/* 加速器说明：比状态说明更小、用琥珀色区分「注意事项」，不抢主信息 */
 .set-update-fallback {
   margin: -4px 0 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: rgba(242, 243, 245, 0.45);
+  font-size: 11px;
+  line-height: 1.6;
+  color: rgba(251, 191, 36, 0.62);
 }
 
 /* 卡片下方的结果提示（导出成功给路径、失败给原因）；路径很长，允许断行 */
