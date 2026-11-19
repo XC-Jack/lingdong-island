@@ -79,13 +79,17 @@ function readStatus(): StatusSnapshot {
     let battery: number | null = null
     let charging = false
     let wifi: WifiSnapshot | null = null
+    let sawLine = false
+    let sawNet = false
     // 逐行找：第一行电量，net| 开头的是网络行。
     // 多接口并存（Wi-Fi+网线同时插）时优先网线（更稳定，通常是有意为之），
     // 虚拟网卡（Virtual=True，如 VPN）跳过不算。
     for (const line of out.split(/\r?\n/)) {
       const t = line.trim()
       if (!t) continue
+      sawLine = true
       if (t.startsWith('net|')) {
+        sawNet = true
         const [, v4, v6, iface, media, virtual] = t.split('|')
         if (v4 === undefined) continue
         const isEthernet = media === '802.3' && virtual !== 'True'
@@ -107,6 +111,12 @@ function readStatus(): StatusSnapshot {
           charging = chg === 'True'
         }
       }
+    }
+    // 命令成功执行、但没有任何可用连接配置（Wi-Fi 断开 / 未插网线）：
+    // 返回 connected:false 的快照，让界面显示断网图标（用户 2026-11-19）。
+    // null 只留给「命令失败 / 完全读不到」，界面保持不渲染，避免误报。
+    if (!sawNet && sawLine) {
+      wifi = { connected: false, online: false, name: null, kind: 'wifi' }
     }
     return { battery, charging, wifi }
   } catch {

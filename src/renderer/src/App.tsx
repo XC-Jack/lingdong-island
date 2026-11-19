@@ -214,6 +214,15 @@ const IcoWifi = (): React.JSX.Element => (
 )
 
 /**
+ * 无网络（用户 2026-11-19 参考图）：Windows 的「地球 + 斜杠」。
+ * 地球直接用系统字体 U+E774，斜杠由 CSS 叠上去，并带一圈深色描边留出缺口，
+ * 与系统任务栏的无 Internet 图标同一观感（尺寸与旁边 18px 图标对齐）。
+ */
+const IcoNoNet = (): React.JSX.Element => (
+  <span className="fluent-ico nonet-ico" aria-hidden="true">&#xE774;</span>
+)
+
+/**
  * 网线（收起态 US-005 插网线时）：直接用 Windows 系统图标字体里的以太网字形（U+E839）。
  *
  * 2026-11-18 用户「原图标太丑了，换成系统自带的」：原来手绘的 RJ45 插口在 18px 下
@@ -3402,32 +3411,35 @@ export default function App(): React.JSX.Element {
             {formatClock(now, clockFormat)}
           </span>
         )
-      case 'net':
-        // 网络（US-005）：Wi-Fi 弧线 / 插网线显示水晶头图标；有网白色、连上没网橙色；
-        // 读不到（没联网 / 命令失败）不渲染，不打扰
-        return wifi !== null ? (
+      case 'net': {
+        // 网络（US-005 / 2026-11-19 用户参考图）：有网显示 Wi-Fi 弧线 / 网线；
+        // 没网（Wi-Fi 断开，或连上但上不了网）显示系统风格的「地球 + 斜杠」。
+        // wifi=null 只代表状态读取失败，保持不渲染，避免把读失败误报成断网。
+        if (wifi === null) return null
+        const netOk = wifi.connected && wifi.online
+        const kindName = wifi.kind === 'ethernet' ? '网线' : 'Wi-Fi'
+        const title = netOk
+          ? `${kindName}：${wifi.name ?? ''}（网络正常）`
+          : wifi.connected
+            ? `${kindName}：${wifi.name ?? ''}（连上了但上不了网）`
+            : '网络未连接（没有可用的 Wi-Fi 或网线）'
+        const aria = netOk
+          ? `${kindName}已连接，网络正常`
+          : wifi.connected
+            ? `${kindName}已连接但没有网络`
+            : '网络未连接'
+        return (
           <span
             key="net"
-            className={`collapsed-wifi ${wifi.online ? '' : 'offline'}`}
-            title={
-              wifi.kind === 'ethernet'
-                ? `网线：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-                : `Wi-Fi：${wifi.name ?? ''}（${wifi.online ? '网络正常' : '连上了但上不了网'}）`
-            }
+            className={`collapsed-wifi ${netOk ? '' : 'offline'}`}
+            title={title}
             role="img"
-            aria-label={
-              wifi.kind === 'ethernet'
-                ? wifi.online
-                  ? '网线已连接，网络正常'
-                  : '网线已连接但没有网络'
-                : wifi.online
-                  ? 'Wi-Fi 已连接，网络正常'
-                  : 'Wi-Fi 已连接但没有网络'
-            }
+            aria-label={aria}
           >
-            {wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi />}
+            {netOk ? wifi.kind === 'ethernet' ? <IcoEthernet /> : <IcoWifi /> : <IcoNoNet />}
           </span>
-        ) : null
+        )
+      }
       case 'todo':
         // 待办剩余：只在真有未完成的事时出现，全部做完就收起不再催。
         // US-033 起统计口径是「待办 + 今天的日程」，所以文案用「件没做完」

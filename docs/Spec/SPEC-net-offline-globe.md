@@ -51,7 +51,10 @@
 
 | 日期 | 执行内容 | 结果 | 未验证部分 |
 |---|---|---|---|
-|  |  |  |  |
+| 2026-11-19 | `npm run typecheck` / `npm run build` | EXIT=0 | — |
+| 2026-11-19 | `node scripts/e2e-wifi.mjs`（在线分支） | **PASS**：快照 `connected:true, online:true, name:GZHL_Student 3`；图标仍 Wi-Fi 弧线，文案与 aria 不变 | 真实断网未拔网线 |
+| 2026-11-19 | 临时 `ISLAND_FAKE_OFFLINE=1` 强制无网 + CDP 截屏（探针已删，未提交） | 收起态显示地球+斜杠：`.collapsed-wifi.offline`、颜色 `rgba(242,243,245,0.94)`、文案「网络未连接（没有可用的 Wi-Fi 或网线）」、字体 `Segoe Fluent Icons`、尺寸 13.5 视觉 px；截图见 `.tmp/offline-icon-shot.png`（一次性） | 真实断网/只有本地连接两种系统状态 |
+| 2026-11-19 | 读取失败分支 | 代码保持 `wifi=null` 不渲染 | 未模拟 PowerShell 失败 |
 
 ## 八、验收记录
 
