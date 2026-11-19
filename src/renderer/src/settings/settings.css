@@ -337,34 +337,24 @@ body {
    标签和按钮同一行，状态说明、加速器提示在下方通栏——
    按钮不再孤零零悬在右侧，长文案也不会和按钮抢同一行 */
 .set-row-update {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  padding: 6px 0;
+  gap: 16px;
+  padding: 8px 0;
 }
-/* 标签绝对定位在行首，按钮组在整行里水平居中（2026-11-19 用户要求） */
-.set-row-head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: 26px;
+.set-row-update .set-row-text {
+  flex: 1 1 auto;
 }
-.set-row-head .set-label {
-  position: absolute;
-  left: 0;
+/* 按钮组在右侧、相对左侧整块文案垂直居中（2026-11-19 用户要求） */
+.set-row-update .set-update-ctl {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
-.set-row-head .set-update-ctl {
-  margin: 0 auto;
+.set-row-update .set-update-fallback {
+  margin: 4px 0 0;
 }
 /* 这一行按钮比别处密一点，别把行撑高 */
 .set-row-update .set-btn {
   padding: 4px 10px;
-}
-.set-row-update .set-hint {
-  margin-top: 0;
-}
-.set-row-update .set-update-fallback {
-  margin: 0;
 }
 
 /* 加速器说明：比状态说明更小、用琥珀色区分「注意事项」，不抢主信息 */

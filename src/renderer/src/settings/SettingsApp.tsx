@@ -496,12 +496,19 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
                 <Row label="版本">{info ? info.version : '—'}</Row>
-                {/* 更新行单独排版：标签与按钮同一行，状态说明与加速器提示在下方通栏。
-                    2026-11-19 用户反馈：按钮单独占一行像「硬放」，提示字也太大太灰 */}
+                {/* 更新行：左侧「标签 + 状态说明 + 加速器提示」，按钮组在右侧垂直居中
+                    （2026-11-19 用户三次调整后的位置） */}
                 <div className="set-row set-row-update">
-                  <div className="set-row-head">
+                  <div className="set-row-text">
                     <div className="set-label">更新</div>
-                    <div className="set-update-ctl">
+                    {updateHint ? <div className="set-hint">{updateHint}</div> : null}
+                    {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
+                        去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
+                    <p className="set-update-fallback">
+                      连不上？多半是没开加速器，开了再试。
+                    </p>
+                  </div>
+                  <div className="set-update-ctl">
                     <button
                       type="button"
                       className={`set-btn${
@@ -551,14 +558,7 @@ export default function SettingsApp(): ReactElement {
                         检查更新
                       </button>
                     ) : null}
-                    </div>
                   </div>
-                  {updateHint ? <div className="set-hint">{updateHint}</div> : null}
-                  {/* 用户 2026-11-19：连不上 GitHub / 加载失败基本都是没开加速器，
-                      去掉仓库链接，改成一句说明；开了加速器再点「检查更新」即可 */}
-                  <p className="set-update-fallback">
-                    GitHub 连不上或更新加载失败？多半是没开加速器，开启后回来点「检查更新」。
-                  </p>
                 </div>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
