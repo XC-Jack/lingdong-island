@@ -1272,8 +1272,10 @@ $script:fbPlaying = $false
 # 既满足「有会话」也满足「标题带 ' - '」，降级路径就把它当成在放歌，音乐页显示 OBS 并
 # 覆盖 last-player/last-song；同时让桥接看起来「在播」，把暂停的网易云 CDP 状态挤掉，
 # 音乐页还错误地出现「点此开启后台精确控制」入口（用户：设置里其实是自动）。
+# 剪辑软件同理（2026-11-19 用户朋友：网易云 + 剪映，音乐页显示剪映）：
+# 剪映专业版进程 JianyingPro.exe 会挂音频会话、窗口标题也带 ' - '；CapCut 是同产品海外版。
 # 这些进程一律不参与降级识别，也不写入记忆。
-$script:fbSkipExe = @("obs", "obs32", "obs64")
+$script:fbSkipExe = @("obs", "obs32", "obs64", "jianyingpro", "capcut")
 
 function IsSkipExe($exe) {
   if ([string]::IsNullOrEmpty($exe)) { return $false }
