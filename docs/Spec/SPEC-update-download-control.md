@@ -75,9 +75,10 @@
 | 2026-11-19 | `E2E_CDP_PORT=9326 env -u ELECTRON_RUN_AS_NODE node scripts/e2e-music.mjs` | **PASS 48 过 / 0 败** | — |
 | 2026-11-19 | 观察：`ready` →「重启并安装」流程 | 本轮未执行安装（避免覆盖当前装机 0.1.15），代码路径未改动（`install()` / `quitAndInstall` 原样） | 端到端安装流程（此前 v0.1.12 全链路实测可参考） |
 | 2026-11-19 | 首轮 e2e 直接运行失败 | `TypeError: fetch failed`；本 shell 里 `ELECTRON_RUN_AS_NODE=1`，dev Electron 被当 Node 跑。`env -u ELECTRON_RUN_AS_NODE` 后通过 | — |
+| 2026-11-19 | 打包 0.1.17 并静默装机 | 安装包 124,198,851 B；装机 asar 13,419,957 B / SHA256 `21BE325A…83214F`，与 `release\win-unpacked` 逐字节一致；`灵动岛.exe` FileVersion 0.1.17；启动日志 `update: armed, version 0.1.17` | 0.1.17 发现下一版本的真机链路（需等下次发版） |
 
 ## 八、验收记录
 
 | 日期 | 验收人/会话 | 针对提交 | 结论 |
 |---|---|---|---|
-|  |  |  |  |
+| 2026-11-19 | 用户授权「合并 + 打包 0.1.17 + 发 Release」 | `1ec7a43`（合并 `1b276f5`，版本 `431393a`，标签 `v0.1.17`） | 已合并 `main`、装机验证通过、GitHub Release 三件套发布为 Latest |
