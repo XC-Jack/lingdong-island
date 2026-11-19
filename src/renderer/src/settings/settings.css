@@ -743,3 +743,108 @@ div.pm-row[draggable='true'] {
 .pet-photo-action {
   pointer-events: none;
 }
+
+/* ===== 关于页（SPEC-settings-about，2026-11-19）===== */
+/* 身份卡：图标、名称、版本、说明全部居中；说明限宽 360px，避免长行 */
+.about-card {
+  align-items: center;
+  padding: 22px 24px 20px;
+  text-align: center;
+}
+.about-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(159, 139, 255, 0.12);
+  color: #9f8bff;
+}
+.about-name {
+  margin: 12px 0 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: #f2f3f5;
+}
+/* 版本与平台是元信息：11px、等宽数字，不和产品名抢层级 */
+.about-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  color: rgba(242, 243, 245, 0.45);
+}
+.about-version {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.about-sep {
+  opacity: 0.6;
+}
+.about-desc {
+  max-width: 360px;
+  margin: 14px 0 0;
+  font-size: 13px;
+  line-height: 1.75;
+  color: rgba(242, 243, 245, 0.72);
+  text-wrap: pretty;
+}
+
+/* GitHub 链接卡：整行是一个按钮，悬停提亮、箭头转绿，键盘聚焦有描边 */
+.about-link {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.about-link:hover {
+  background: #202127;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.about-link:focus-visible {
+  outline: 2px solid rgba(125, 216, 125, 0.55);
+  outline-offset: 2px;
+}
+.about-link-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(242, 243, 245, 0.8);
+}
+.about-link-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.about-link-title {
+  font-size: 13px;
+  color: #f2f3f5;
+}
+.about-link-sub {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.45);
+}
+.about-link-arrow {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: rgba(242, 243, 245, 0.4);
+  transition: color 140ms ease;
+}
+.about-link:hover .about-link-arrow {
+  color: #7dd87d;
+}
