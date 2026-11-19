@@ -128,6 +128,14 @@ const api = {
       ipcRenderer.removeListener('update:state', h)
     }
   },
+  /** 主进程决定「现在该提示一次新版本」时广播（同版本每天最多一次）。返回取消订阅函数 */
+  onUpdateAnnounce(cb: (version: string) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, version: string): void => cb(version)
+    ipcRenderer.on('update:announce', h)
+    return () => {
+      ipcRenderer.removeListener('update:announce', h)
+    }
+  },
   /** 诊断日志（US-036 探针）：渲染层把收起判定写进 userData/collapse-log.txt */
   logDiag(line: string): void {
     ipcRenderer.send('island:log-diag', line)

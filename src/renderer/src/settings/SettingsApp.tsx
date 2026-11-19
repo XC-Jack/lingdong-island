@@ -382,31 +382,35 @@ export default function SettingsApp(): ReactElement {
     }
   })()
 
-  /** 更新行说明：把状态写清楚，失败给原因而不是只变红 */
+  /** 更新时间文案：最近一次检查的 HH:mm（没有 checkedAt 返回空串） */
+  const checkedTime = ((): string => {
+    if (!update?.checkedAt) return ''
+    return new Date(update.checkedAt).toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  })()
+
+  /** 更新行说明：把状态写清楚，失败给原因而不是只变红；能查到时间就带上 */
   const updateHint = ((): string | undefined => {
     if (!update) return undefined
     switch (update.stage) {
       case 'checking':
         return '正在向 GitHub 查询最新版本'
       case 'none':
-        return update.checkedAt
-          ? `已是最新 · ${new Date(update.checkedAt).toLocaleTimeString('zh-CN', {
-              hour: '2-digit',
-              minute: '2-digit'
-            })} 检查`
-          : '已是最新'
+        return checkedTime !== '' ? `已是最新 · ${checkedTime} 检查` : '已是最新'
       case 'available':
-        return `新版本 ${update.version ?? ''} 可用，确认后才会下载`
+        return `新版本 ${update.version ?? ''} 可用${checkedTime !== '' ? ` · ${checkedTime} 检查` : ''}，确认后才会下载`
       case 'downloading':
         return `正在下载 ${update.percent ?? 0}%`
       case 'ready':
         return `已下载 ${update.version ?? ''}，重启后生效`
       case 'error':
-        return update.message ?? '检查更新失败'
+        return `${update.message ?? '检查更新失败'}${checkedTime !== '' ? ` · ${checkedTime} 检查` : ''}`
       case 'unsupported':
         return update.message ?? '开发版不检查更新'
       default:
-        return '启动后会自动检查，也可以现在手动检查'
+        return '每 4 小时自动检查（睡眠唤醒后也会补查），也可以现在手动检查'
     }
   })()
 

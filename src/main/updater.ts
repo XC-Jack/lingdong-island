@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, Notification, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, net, Notification, powerMonitor, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateInfo, ProgressInfo } from 'electron-updater'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -23,32 +23,66 @@ import { startupLog } from './startupLog'
 
 /** 启动后多久做第一次静默检查（避开启动时的窗口/托盘初始化） */
 const FIRST_CHECK_DELAY_MS = 60_000
+/**
+ * 周期检查（2026-11-19 用户定 4 小时）。
+ * 岛通常长期挂在托盘里、用睡眠代替关机，只在启动时查一次会让更新永远查不到
+ * （0.1.13 → 0.1.14 用户反馈「基本没有弹过更新」）。
+ */
+const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+/** 系统从睡眠唤醒后多久补查（合盖睡眠不会触发进程重启，只能靠事件补） */
+const RESUME_CHECK_DELAY_MS = 30_000
+/** 单次检查失败后的重试间隔；两次都不行就等下一个 4 小时周期 */
+const RETRY_DELAYS_MS = [10 * 60 * 1000, 30 * 60 * 1000]
 /** 降级出口：打不开更新器时让用户自己下 */
 const RELEASE_PAGE = 'https://github.com/XC-Jack/lingdong-island/releases/latest'
 /**
- * 已提示过的版本（2026-11-18 用户要求「每次启动给一次提示即可」）。
- * 存在 userData 里而不是内存：否则每次启动都会对同一个新版本再弹一次通知。
+ * 已提示过的版本与日期（2026-11-19 起按天去重）。
+ * 原来只记版本、一个版本永远只提示一次：toast 被专注助手拦掉或人不在电脑前，
+ * 这个版本就再也不会提示。现在同一版本每天最多一次，跨天仍未更新会再提示。
  */
 const NOTIFY_STATE_FILE = 'update-notified.json'
 
 let state: UpdateState = { stage: 'idle', current: '0.0.0' }
 let checking = false
 let firstCheckTimer: NodeJS.Timeout | null = null
+let intervalTimer: NodeJS.Timeout | null = null
+let retryTimer: NodeJS.Timeout | null = null
+let resumeTimer: NodeJS.Timeout | null = null
+/** 已排过的重试次数（对应 RETRY_DELAYS_MS 下标） */
+let retryIndex = 0
 /** 系统通知必须留引用，否则会被 GC 提前回收导致 click 收不到 */
 let updateNotification: Notification | null = null
 
-function notifiedVersion(): string {
+function todayKey(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function readNotifyMark(): { version: string; date: string } {
   try {
     const raw = JSON.parse(readFileSync(join(app.getPath('userData'), NOTIFY_STATE_FILE), 'utf8'))
-    return typeof raw?.version === 'string' ? raw.version : ''
+    return {
+      version: typeof raw?.version === 'string' ? raw.version : '',
+      date: typeof raw?.date === 'string' ? raw.date : ''
+    }
   } catch {
-    return ''
+    return { version: '', date: '' }
   }
+}
+
+/** 今天是否已经为这个版本提示过 */
+function notifiedToday(version: string): boolean {
+  const mark = readNotifyMark()
+  return mark.version === version && mark.date === todayKey()
 }
 
 function markNotified(version: string): void {
   try {
-    writeFileSync(join(app.getPath('userData'), NOTIFY_STATE_FILE), JSON.stringify({ version }), 'utf8')
+    writeFileSync(
+      join(app.getPath('userData'), NOTIFY_STATE_FILE),
+      JSON.stringify({ version, date: todayKey() }),
+      'utf8'
+    )
   } catch {
     /* 写不了就下次再提示，不影响更新本身 */
   }
@@ -82,21 +116,54 @@ function describeError(raw: string): string {
 function fail(e: unknown): void {
   const raw = e instanceof Error ? e.message : String(e)
   startupLog(`update: error ${raw}`)
-  setState({ stage: 'error', message: describeError(raw), detail: raw })
+  setState({ stage: 'error', message: describeError(raw), detail: raw, checkedAt: Date.now() })
+}
+
+function clearRetryTimer(): void {
+  if (retryTimer !== null) clearTimeout(retryTimer)
+  retryTimer = null
+}
+
+/** 检查成功后清零，重新开始记失败次数 */
+function resetRetry(): void {
+  clearRetryTimer()
+  retryIndex = 0
+}
+
+/** 失败后按 10 分钟 → 30 分钟重试；两次用完就交给 4 小时周期 */
+function scheduleRetry(): void {
+  if (retryTimer !== null || retryIndex >= RETRY_DELAYS_MS.length) return
+  const delay = RETRY_DELAYS_MS[retryIndex]
+  retryIndex += 1
+  startupLog(`update: retry in ${Math.round(delay / 60000)} min`)
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    void check()
+  }, delay)
+}
+
+/** 通知渲染层弹岛内横幅（收起态）；设置窗口也收得到，但它没有对应处理，忽略即可 */
+function announceAvailable(version: string): void {
+  const wins = BrowserWindow.getAllWindows()
+  startupLog(`update: announce ${version} to ${wins.length} window(s)`)
+  for (const win of wins) {
+    if (!win.isDestroyed()) win.webContents.send('update:announce', version)
+  }
 }
 
 /**
- * 发现新版本时发一条系统通知；点了直接落到设置页「常规」。
- * 同一个版本只提示一次（记在 userData\update-notified.json），
- * 避免用户没装之前每次开机都被弹一次。
+ * 发现新版本时提示：岛内横幅 + 系统通知。
+ * 同一版本每天最多提示一次（记在 userData\update-notified.json 的 version + date），
+ * 跨天仍未更新会再提示；系统通知不支持时横幅仍然弹。
  */
 function notifyAvailable(version: string): void {
-  if (!Notification.isSupported()) return
-  if (notifiedVersion() === version) {
-    startupLog(`update: already notified ${version}, skip`)
+  if (notifiedToday(version)) {
+    startupLog(`update: already notified ${version} today, skip`)
     return
   }
   markNotified(version)
+  announceAvailable(version)
+  if (!Notification.isSupported()) return
   updateNotification = new Notification({
     title: `灵动岛 ${version} 可以更新`,
     body: '点这里打开设置，确认后下载',
@@ -111,8 +178,9 @@ async function check(): Promise<void> {
     setState({ stage: 'unsupported', message: '开发版不检查更新，安装版才会自动检查' })
     return
   }
-  if (checking || state.stage === 'downloading') return
-  // 没网就直接跳过，不写「检查失败」——用户 2026-11-18 要求连不上时安静
+  if (checking || state.stage === 'downloading' || state.stage === 'ready') return
+  // 没网就直接跳过，不写「检查失败」——用户 2026-11-18 要求连不上时安静；
+  // 也不排重试，等下一个 4 小时周期或唤醒补查。
   if (!net.isOnline()) {
     startupLog('update: offline, skip check')
     if (state.stage !== 'none') setState({ stage: 'error', message: '当前没有网络，未检查更新' })
@@ -122,8 +190,10 @@ async function check(): Promise<void> {
   setState({ stage: 'checking', message: undefined })
   try {
     await autoUpdater.checkForUpdates()
+    resetRetry()
   } catch (e) {
     fail(e)
+    scheduleRetry()
   } finally {
     checking = false
   }
@@ -151,6 +221,7 @@ function install(): void {
 function attachEvents(): void {
   autoUpdater.on('update-available', (info: UpdateInfo) => {
     startupLog(`update: available ${info.version}`)
+    resetRetry()
     setState({
       stage: 'available',
       version: info.version,
@@ -163,6 +234,7 @@ function attachEvents(): void {
 
   autoUpdater.on('update-not-available', (info: UpdateInfo) => {
     startupLog(`update: none (latest ${info.version})`)
+    resetRetry()
     setState({
       stage: 'none',
       version: undefined,
@@ -235,14 +307,32 @@ export function setupUpdater(): void {
 
   attachEvents()
   startupLog(`update: armed, version ${app.getVersion()}`)
-  // 每次启动只查一次（用户 2026-11-18：「不要老在后台扫」，启动时给一次提示即可）。
-  // 不再有周期定时器；运行期间要再查只能在设置页手动点。
+  // 启动查一次 + 每 4 小时一次（2026-11-19 用户定）。
+  // 岛通常长期不重启，只在启动查一次会让新版本永远发现不了。
   firstCheckTimer = setTimeout(() => {
     void check()
   }, FIRST_CHECK_DELAY_MS)
+  intervalTimer = setInterval(() => {
+    void check()
+  }, CHECK_INTERVAL_MS)
+  startupLog(`update: periodic check every ${CHECK_INTERVAL_MS / 3600000} h`)
+  // 笔记本合盖睡眠不会重启进程，唤醒后补查一次，避免「睡了一周回来还是旧版本」。
+  powerMonitor.on('resume', () => {
+    if (resumeTimer) clearTimeout(resumeTimer)
+    resumeTimer = setTimeout(() => {
+      resumeTimer = null
+      startupLog('update: check after resume')
+      void check()
+    }, RESUME_CHECK_DELAY_MS)
+  })
 
   app.on('before-quit', () => {
     if (firstCheckTimer) clearTimeout(firstCheckTimer)
+    if (intervalTimer) clearInterval(intervalTimer)
+    if (resumeTimer) clearTimeout(resumeTimer)
+    clearRetryTimer()
     firstCheckTimer = null
+    intervalTimer = null
+    resumeTimer = null
   })
 }

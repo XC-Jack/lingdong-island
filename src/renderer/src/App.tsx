@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState } from '../../shared/types'
 import Pet from './pet/Pet'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
@@ -1230,8 +1230,19 @@ function NotifyPanel({
   const [loaded, setLoaded] = useState(false)
   // 已读水位（美化-04）：order > lastOrder 的条目算未读，画蓝点
   const [lastOrder, setLastOrder] = useState(0)
+  // 有新版本时在标题旁标黄（用户 2026-11-19）：挂载时取一次状态，之后跟随主进程广播
+  const [updateVersion, setUpdateVersion] = useState('')
   // 相对时间（"5 分钟前"）每 30s 重算一次，避免开着不动时间变陈旧
   const [, tickNow] = useState(0)
+
+  useEffect(() => {
+    const apply = (s: UpdateState): void => {
+      const show = s.stage === 'available' || s.stage === 'downloading' || s.stage === 'ready'
+      setUpdateVersion(show ? s.version ?? '' : '')
+    }
+    void window.island.updateGetState().then(apply)
+    return window.island.onUpdateState(apply)
+  }, [])
 
   useEffect(() => {
     void window.island.notifyRefresh().then((r: NotifyListResult) => {
@@ -1339,7 +1350,14 @@ function NotifyPanel({
   return (
     <div className="todo-panel">
       <div className="shelf-toolbar">
-        <span className="shelf-count">{visibleItems.length > 0 ? `${visibleItems.length} 条通知` : ''}</span>
+        <span className="shelf-count">
+          {visibleItems.length > 0 ? `${visibleItems.length} 条通知` : ''}
+          {updateVersion !== '' && (
+            <span className="shelf-update-hint" title={`新版本 ${updateVersion} 可用`}>
+              （有新版本）
+            </span>
+          )}
+        </span>
         <span className="shelf-toolbar-spacer" />
         <button
           type="button"
@@ -3235,6 +3253,37 @@ export default function App(): React.JSX.Element {
     announceBannerHold(false)
   }
 
+  // 新版本横幅（SPEC-update-notification-reliability）：主进程按「同版本每天最多一次」推送。
+  // 与验证码横幅共用横幅位（通知 > 验证码 > 更新）；点击打开设置「常规」，展开态忽略。
+  const [updateBanner, setUpdateBanner] = useState<string | null>(null)
+  const updateBannerTimer = useRef<number | null>(null)
+  useEffect(() => {
+    const off = window.island.onUpdateAnnounce((version: string) => {
+      if (expandedRef.current) return
+      if (updateBannerTimer.current !== null) window.clearTimeout(updateBannerTimer.current)
+      setUpdateBanner(version)
+      window.island.setBannerVisible(true)
+      announceBannerHold(true) // US-041 横幅优先
+      updateBannerTimer.current = window.setTimeout(() => {
+        setUpdateBanner(null)
+        updateBannerTimer.current = null
+        window.island.setBannerVisible(false)
+        announceBannerHold(false)
+      }, 6000)
+    })
+    return off
+  }, [])
+
+  /** 点击更新横幅：收回横幅并打开设置「常规」（更新按钮在那一页） */
+  const openUpdateBanner = (): void => {
+    if (updateBannerTimer.current !== null) window.clearTimeout(updateBannerTimer.current)
+    updateBannerTimer.current = null
+    setUpdateBanner(null)
+    window.island.setBannerVisible(false)
+    announceBannerHold(false)
+    window.island.openSettings('general')
+  }
+
   // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 15 秒兜底刷新
   // （2026-11-19：原来 60 秒一次，用户断网后最多要等一分半才看到图标）
   useEffect(() => {
@@ -3911,6 +3960,27 @@ export default function App(): React.JSX.Element {
           <span className="banner-code-badge" aria-hidden="true">验证码</span>
           <span className="banner-code-text">{codeBanner}</span>
           {codeCopied && <span className="banner-code-copied" aria-hidden="true">已复制</span>}
+        </div>
+      )}
+      {/* 新版本横幅：优先级最低——通知/验证码横幅在显示时先不抢位 */}
+      {updateBanner !== null && !expanded && banner === null && codeBanner === null && (
+        <div
+          className="collapsed-banner update-banner"
+          key={updateBanner}
+          role="button"
+          tabIndex={0}
+          title="点击打开设置查看更新"
+          aria-label={`灵动岛 ${updateBanner} 可更新，点击打开设置`}
+          onClick={openUpdateBanner}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') openUpdateBanner()
+          }}
+        >
+          <span className="banner-update-badge" aria-hidden="true">更新</span>
+          <span className="banner-text">
+            <span className="banner-app">灵动岛 {updateBanner}</span>
+            <span className="banner-title">可更新，点击查看</span>
+          </span>
         </div>
       )}
     </div>

@@ -23,7 +23,9 @@ import { join } from 'node:path'
 
 const ROOT = process.cwd()
 const ELECTRON = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
-const CDP_PORT = 9321
+// 默认 9321（工程规则约定）；端口被占用时可用 E2E_CDP_PORT 临时换一个，避免
+// 「DevTools 绑定失败 → fetch failed」这种与代码无关的假失败（2026-11-19 实测踩过）
+const CDP_PORT = Number(process.env.E2E_CDP_PORT || 9321)
 const USER_DATA = join(process.env.APPDATA, 'lingdong-island')
 const PREFS = join(USER_DATA, 'prefs.json')
 
