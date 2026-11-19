@@ -370,7 +370,9 @@ export default function SettingsApp(): ReactElement {
       case 'checking':
         return '检查中…'
       case 'downloading':
-        return `下载中 ${update.percent ?? 0}%`
+        return '暂停'
+      case 'paused':
+        return '继续下载'
       case 'available':
         return update.version ? `下载 ${update.version}` : '下载'
       case 'ready':
@@ -402,7 +404,9 @@ export default function SettingsApp(): ReactElement {
       case 'available':
         return `新版本 ${update.version ?? ''} 可用${checkedTime !== '' ? ` · ${checkedTime} 检查` : ''}，确认后才会下载`
       case 'downloading':
-        return `正在下载 ${update.percent ?? 0}%`
+        return `正在下载 ${update.percent ?? 0}%（可暂停或取消）`
+      case 'paused':
+        return `已暂停${update.percent ? `在 ${update.percent}%` : ''}，继续会从头下载`
       case 'ready':
         return `已下载 ${update.version ?? ''}，重启后生效`
       case 'error':
@@ -414,11 +418,25 @@ export default function SettingsApp(): ReactElement {
     }
   })()
 
-  const updateBusy = update?.stage === 'checking' || update?.stage === 'downloading'
+  /** 下载中主按钮是「暂停」，去点它不能被当成「忙」而禁用 */
+  const updateBusy = update?.stage === 'checking'
+
+  /** 有目标版本时给出的浏览器直链入口；下载中不显示，避免一排三个按钮 */
+  const canDirectDownload =
+    (update?.stage === 'available' || update?.stage === 'paused' || update?.stage === 'error') &&
+    !!update?.version
 
   const onUpdateAction = (): void => {
     if (!update || updateBusy) return
-    if (update.stage === 'available') {
+    if (update.stage === 'downloading') {
+      void window.island.updatePause()
+      return
+    }
+    if (update.stage === 'available' || update.stage === 'paused') {
+      void window.island.updateDownload()
+      return
+    }
+    if (update.stage === 'error' && update.version) {
       void window.island.updateDownload()
       return
     }
@@ -488,7 +506,30 @@ export default function SettingsApp(): ReactElement {
                     >
                       {updateLabel}
                     </button>
-                    {update?.stage === 'error' ? (
+                    {update?.stage === 'downloading' || update?.stage === 'paused' ? (
+                      <button
+                        type="button"
+                        className="set-btn set-btn-quiet"
+                        title="停止下载并删除已下载的半截文件"
+                        onClick={() => {
+                          void window.island.updateCancel()
+                        }}
+                      >
+                        取消
+                      </button>
+                    ) : null}
+                    {canDirectDownload ? (
+                      <button
+                        type="button"
+                        className="set-btn set-btn-quiet"
+                        title="用浏览器下载该版本安装包（应用内下载慢时可用）"
+                        onClick={() => {
+                          void window.island.updateOpenDownload()
+                        }}
+                      >
+                        直接下载
+                      </button>
+                    ) : update?.stage === 'error' ? (
                       <button
                         type="button"
                         className="set-btn set-btn-quiet"
