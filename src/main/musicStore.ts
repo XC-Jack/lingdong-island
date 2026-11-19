@@ -159,6 +159,42 @@ function broadcast(s: MusicState): void {
   }
 }
 
+/**
+ * 封面缓存（SPEC-music-source-picker 衍生问题）。
+ *
+ * 桥接只在「换歌」时发完整封面，其余帧发 null 表示沿用。切换音源时中间会经过
+ * 另一播放器的状态（网易云降级路径固定发 cover=""），把主进程里那张封面冲掉；
+ * 切回来时桥接又判断「这首歌没变、不重发」，封面就再也回不来了（用户 2026-11-19 截图：
+ * 锁定汽水后封面一直是音符占位）。这里按「应用|歌名|歌手|专辑」留住最近一张，
+ * 只有键完全一致时才恢复，避免把上一首/上一播放器的封面张冠李戴。
+ */
+const COVER_RE = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/
+let lastCoverKey = ''
+let lastCoverData = ''
+
+function coverKeyOf(msg: Record<string, unknown>): string {
+  return [msg.app, msg.title, msg.artist, msg.album].map((v) => String(v ?? '')).join('|')
+}
+
+/** 把桥接回包的 cover 字段解析成渲染层可用的 data URL（空串 = 这首确实没封面） */
+function resolveCover(msg: Record<string, unknown>): string {
+  if (!Boolean(msg.active)) return ''
+  const raw = msg.cover
+  if (raw === null || raw === undefined) {
+    // 桥接说「这首歌没变、不重发」：只有缓存里正是同一首才恢复；
+    // 对不上说明缓存丢了，宁可不显示也不要拿别的歌/别的播放器的封面顶上。
+    const key = coverKeyOf(msg)
+    return key === lastCoverKey ? lastCoverData : ''
+  }
+  if (typeof raw === 'string' && COVER_RE.test(raw)) {
+    lastCoverKey = coverKeyOf(msg)
+    lastCoverData = raw
+    return raw
+  }
+  // 桥接明确发了 ""：这首歌没有封面（或换了歌还没取到），不能沿用上一首的
+  return ''
+}
+
 /** 收桥接回来的 sources（音源选择器数据）；坏条目直接丢，坏一条不影响其它 */
 function parseSources(raw: unknown): MusicSource[] {
   if (!Array.isArray(raw)) return []
@@ -279,16 +315,8 @@ function handleLine(text: string): void {
     })(),
     barOk: Boolean(msg.barOk),
     // 封面：桥接只在「换歌」时回传完整 data URL（或 "" 表示这张没封面）；
-    // 未换歌时回 null（JSON），沿用缓存，避免每秒往 stdout 重发几十 KB 的 base64。
-    // 空态（active=false）时强制清掉封面，否则下次开播会短暂显示上一首歌的封面。
-    // 只放行合法的 data:image 前缀，挡住异常输入。
-    cover: !Boolean(msg.active)
-      ? ''
-      : (msg.cover === null || msg.cover === undefined
-          ? bridgeState.cover
-          : (typeof msg.cover === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(msg.cover)
-              ? msg.cover
-              : '')),
+    // 未换歌时回 null，沿用缓存。缓存按歌曲存（见 resolveCover），切音源再来回切也不会丢。
+    cover: resolveCover(msg),
     // 桥接原始状态不带这两个字段，合并时由 recompute() 统一决定
     neteaseCdp: false,
     neteaseCdpBusy: false,
@@ -910,6 +938,8 @@ export function stopMusicStore(): void {
   cdpBusy = false
   neteaseVol = null
   pinAlive = false
+  lastCoverKey = ''
+  lastCoverData = ''
   bridgeState = { ...EMPTY_STATE }
   cache = { ...EMPTY_STATE }
 }
