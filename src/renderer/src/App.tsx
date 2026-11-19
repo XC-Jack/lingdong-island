@@ -3053,7 +3053,8 @@ export default function App(): React.JSX.Element {
     announceBannerHold(false)
   }
 
-  // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 60 秒兜底刷新
+  // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 15 秒兜底刷新
+  // （2026-11-19：原来 60 秒一次，用户断网后最多要等一分半才看到图标）
   useEffect(() => {
     let alive = true
     const apply = (s: { battery: number | null; charging: boolean; wifi: WifiSnapshot | null }): void => {
@@ -3071,11 +3072,15 @@ export default function App(): React.JSX.Element {
     const offStatus = window.island.onStatusChanged((s) => {
       if (alive) apply(s)
     })
+    // 点岛/展开时顺手拉一次：用户刚断网、马上点开看状态时不必等下一个轮询周期
+    // （capture 阶段监听，不干扰各页面自己的点击处理）
+    window.addEventListener('pointerdown', pull, true)
     pull()
-    const id = window.setInterval(pull, 60_000)
+    const id = window.setInterval(pull, 15_000)
     return () => {
       alive = false
       window.clearInterval(id)
+      window.removeEventListener('pointerdown', pull, true)
       offStatus()
     }
   }, [])
