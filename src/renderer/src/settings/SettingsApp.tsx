@@ -529,19 +529,24 @@ export default function SettingsApp(): ReactElement {
                       >
                         直接下载
                       </button>
-                    ) : update?.stage === 'error' ? (
-                      <button
-                        type="button"
-                        className="set-btn set-btn-quiet"
-                        onClick={() => {
-                          void window.island.updateOpenPage()
-                        }}
-                      >
-                        发布页
-                      </button>
                     ) : null}
                   </div>
                 </Row>
+                {/* 用户 2026-11-19：更新器依赖 api.github.com + latest.yml，任一失败时
+                    给一个不经过更新器的常驻出口，直接去仓库下载最新版 */}
+                <p className="set-update-fallback">
+                  GitHub 连不上或更新加载失败？
+                  <button
+                    type="button"
+                    className="set-link"
+                    title="打开 GitHub Releases 页面，手动下载最新版"
+                    onClick={() => {
+                      void window.island.updateOpenPage()
+                    }}
+                  >
+                    去仓库下载最新版
+                  </button>
+                </p>
                 <Row label="数据文件夹" hint={info ? info.userData : undefined}>
                   <button
                     type="button"

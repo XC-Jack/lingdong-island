@@ -75,7 +75,16 @@
 | 2026-11-19 | `E2E_CDP_PORT=9326 env -u ELECTRON_RUN_AS_NODE node scripts/e2e-music.mjs` | **PASS 48 过 / 0 败** | — |
 | 2026-11-19 | 观察：`ready` →「重启并安装」流程 | 本轮未执行安装（避免覆盖当前装机 0.1.15），代码路径未改动（`install()` / `quitAndInstall` 原样） | 端到端安装流程（此前 v0.1.12 全链路实测可参考） |
 | 2026-11-19 | 首轮 e2e 直接运行失败 | `TypeError: fetch failed`；本 shell 里 `ELECTRON_RUN_AS_NODE=1`，dev Electron 被当 Node 跑。`env -u ELECTRON_RUN_AS_NODE` 后通过 | — |
+| 2026-11-19 | 开发版（隔离 userData + CDP）打开设置「常规」 | `.set-update-fallback` 文本「GitHub 连不上或更新加载失败？去仓库下载最新版」，链接文字正确，计算色 `rgb(251, 191, 36)` | 点击后浏览器实际打开（没有在测试里点，避免弹外部窗口；复用已在用的 `update:open-page`） |
 | 2026-11-19 | 打包 0.1.17 并静默装机 | 安装包 124,198,851 B；装机 asar 13,419,957 B / SHA256 `21BE325A…83214F`，与 `release\win-unpacked` 逐字节一致；`灵动岛.exe` FileVersion 0.1.17；启动日志 `update: armed, version 0.1.17` | 0.1.17 发现下一版本的真机链路（需等下次发版） |
+
+## 七·补、2026-11-19 补充：更新行下方常驻仓库链接
+
+- **目标**：用户要求「更新下面配一条链接，GitHub 连不上或加载失败时可以直接去仓库下载最新版」。
+- **修改范围**：`SettingsApp.tsx`（更新行下方新增常驻链接，复用 `updateOpenPage`）、`settings.css`（`.set-update-fallback` / `.set-link`）；错误态的「发布页」按钮被常驻链接取代。
+- **预期行为**：设置「常规 → 更新」行下方始终显示「GitHub 连不上或更新加载失败？去仓库下载最新版」，点击用系统浏览器打开 `https://github.com/XC-Jack/lingdong-island/releases/latest`。与更新状态无关，无需先触发检查失败。
+- **不做什么**：不做应用内第二下载器；不镜像仓库到国内地址（如整站不可达，浏览器同样打不开，文案已限定为更新器失败场景）。
+- **验收**：设置页 DOM 出现该链接；点击可打开浏览器（手动确认）；`typecheck` / `build` EXIT=0。
 
 ## 八、验收记录
 
