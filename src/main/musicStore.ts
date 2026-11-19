@@ -93,6 +93,14 @@ let cdpState: NeteaseCdpState | null = null
 /** CDP 拿到的封面（data URL）及其对应的歌，免每秒重复下载 */
 let cdpCover = ''
 let cdpCoverKey = ''
+/**
+ * 封面请求状态（用户 2026-11-19「网易云切歌时有时封面加载不出来」）：
+ * 原来只在换歌那一刻抓一次，超时/网络抖一下就整首空白。现在同一首没拿到就重试，
+ * 最多 6 次；换歌重置。
+ */
+let cdpCoverAt = 0
+let cdpCoverTries = 0
+let cdpCoverBusy = false
 let cdpTimer: ReturnType<typeof setInterval> | null = null
 let cdpPolling = false
 let cdpBusy = false
@@ -574,14 +582,31 @@ async function pollCdp(): Promise<void> {
       if (key !== cdpCoverKey) {
         cdpCoverKey = key
         cdpCover = ''
-        if (s.coverUrl) {
-          void fetchNeteaseCover(s.coverUrl).then((data) => {
-            if (cdpCoverKey === key && data) {
-              cdpCover = data
-              recompute()
-            }
-          })
-        }
+        cdpCoverTries = 0
+        cdpCoverAt = 0
+      }
+      // 封面还没拿到（请求超时 / 网络抖动 / 刚换歌时地址还没就绪）时重试：前 3 次隔 3 秒，
+      // 之后隔 10 秒，同一首歌最多 6 次。换歌会重置计数；成功后 cdpCover 非空，自然不再请求。
+      const coverSpacing = cdpCoverTries < 3 ? 3000 : 10000
+      if (
+        s.coverUrl &&
+        cdpCover === '' &&
+        !cdpCoverBusy &&
+        cdpCoverTries < 6 &&
+        Date.now() - cdpCoverAt > coverSpacing
+      ) {
+        const url = s.coverUrl
+        const keyAtStart = key
+        cdpCoverTries += 1
+        cdpCoverAt = Date.now()
+        cdpCoverBusy = true
+        void fetchNeteaseCover(url).then((data) => {
+          cdpCoverBusy = false
+          if (cdpCoverKey === keyAtStart && data) {
+            cdpCover = data
+            recompute()
+          }
+        })
       }
     }
     recompute()

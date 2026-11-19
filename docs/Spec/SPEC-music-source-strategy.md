@@ -74,6 +74,7 @@
 | 2026-11-19 | 单独运行桥接脚本，依次发 `known(["foo"])`、`poll`、`focus(cloudmusic)`、`poll`、`focus("")`、`poll` | 回包含 `sources` / `pinAlive`；`focus=cloudmusic` 时 sources 只含网易云且 `pinAlive=true`；清空 focus 后恢复 | 真实第二播放器、陌生应用门禁（本机只有网易云） |
 | 2026-11-19 | 预览版（临时 userData + CDP）调 `window.island.musicSetSource(...)` | `pin=cloudmusic.exe` → `pinnedExe=cloudmusic`、暂停态仍 `active=true` 且 `neteaseCdp=true`、`pinnedMissing=false`；`pin=foo` → `active=false`、`pinnedMissing=true`；解锁后恢复自动 | 锁到非网易云播放器后的控制命令路由 |
 | 2026-11-19 | `node scripts/e2e-music.mjs` | 首轮 48/0；之后两轮 47/1，失败项均为 U4c（本机网易云暂停在 151s，测试 seek 到 150s，歌词行号不变；与本次改动无关的环境性失败） | — |
+| 2026-11-19 | 网易云封面重试（用户反馈「切歌时有时封面加载不出来」）：临时加环境变量开关让前 4 次抓取强制返回空，预览版锁网易云观察 | 抓取尝试时间线 0s / 2.6s / 5.0s / 16.2s / 27.1s（前 3 次隔 ~3s，之后隔 ~10s），第 5 次成功，`coverLen` 由 0 变 7495；去掉临时开关重建后，汽水 ↔ 网易云来回切封面均正常（40,230 B / 25,143 B） | 未制造真实网络超时；重试 6 次仍失败时整首无封面的情况未验证 |
 
 ## 八、验收记录
 
