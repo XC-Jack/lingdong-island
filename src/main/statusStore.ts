@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain, powerMonitor } from 'electron'
+import { connect as netConnect } from 'node:net'
 
 /** Wi-Fi / 网线状态（收起态 US-005）；读不到时 wifi 为 null，UI 不显示 */
 export interface WifiSnapshot {
@@ -31,6 +32,20 @@ export interface StatusSnapshot {
 const CACHE_MS = 10_000
 /** 看门狗周期：只读 powerMonitor，不起子进程，所以可以比取数频繁得多 */
 const WATCH_MS = 1_000
+/**
+ * 网络连通性探针（2026-11-19 用户「十几秒还是太长了」）。
+ * Node 直接发 TCP 握手，不起 PowerShell，可以每 3 秒跑一次；只在「通/不通」翻转时
+ * 触发一次真正的状态重读（约 400ms 的 PowerShell），让图标在几秒内跟上，而不是等轮询。
+ * 目标用阿里公共 DNS 的 443 端口（本机实测 223.5.5.5:53、119.29.29.29:53 被网络屏蔽，
+ * 223.5.5.5:443 与 223.6.6.6:443 可连；两个都失败才算不通）。
+ * 探针只当「触发器」用，界面上网/离线仍以 Windows 的连接类别为准，避免自造判据。
+ */
+const NET_PROBE_MS = 3_000
+const NET_PROBE_TIMEOUT_MS = 1_500
+const NET_PROBE_HOSTS: ReadonlyArray<readonly [string, number]> = [
+  ['223.5.5.5', 443],
+  ['223.6.6.6', 443]
+]
 /** 事件到达后补读电量/网络的延迟。颜色已由事件当场翻转（不等这一步），
  *  这里只是为了把百分比和 Wi-Fi 一起刷新，所以可以比上一版的 600ms 更早。
  *  取 300ms 仍留有「系统状态机追上事件」的余量；该数值无真机插拔实测依据。 */
@@ -85,7 +100,6 @@ function readStatus(): StatusSnapshot {
     let charging = false
     let wifi: WifiSnapshot | null = null
     let sawLine = false
-    let sawNet = false
     // 逐行找：第一行电量，net| 开头的是网络行。
     // 多接口并存（Wi-Fi+网线同时插）时优先网线（更稳定，通常是有意为之），
     // 虚拟网卡（Virtual=True，如 VPN）跳过不算。
@@ -94,7 +108,6 @@ function readStatus(): StatusSnapshot {
       if (!t) continue
       sawLine = true
       if (t.startsWith('net|')) {
-        sawNet = true
         const [, v4, v6, iface, media, virtual] = t.split('|')
         if (v4 === undefined) continue
         const isEthernet = media === '802.3' && virtual !== 'True'
@@ -117,10 +130,12 @@ function readStatus(): StatusSnapshot {
         }
       }
     }
-    // 命令成功执行、但没有任何可用连接配置（Wi-Fi 断开 / 未插网线）：
+    // 命令成功执行、但没有可用的物理连接（Wi-Fi 断开 / 未插网线 / 只剩 Radmin 这类虚拟网卡）：
     // 返回 connected:false 的快照，让界面显示断网图标（用户 2026-11-19）。
+    // 这里不能看「有没有 net| 行」——只剩虚拟网卡时也有行，但 wifi 仍会是 null，
+    // 界面就什么都不显示（用户断网后截图正是这个现象）。
     // null 只留给「命令失败 / 完全读不到」，界面保持不渲染，避免误报。
-    if (!sawNet && sawLine) {
+    if (wifi === null && sawLine) {
       wifi = { connected: false, online: false, name: null, kind: 'wifi' }
     }
     return { battery, charging, wifi }
@@ -204,6 +219,62 @@ function startWatch(): void {
   }, WATCH_MS)
 }
 
+let probeTimer: ReturnType<typeof setInterval> | null = null
+let probeBusy = false
+let lastReach: boolean | null = null
+let probeSettleTimers: Array<ReturnType<typeof setTimeout>> = []
+
+function probeHost(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = netConnect({ host, port })
+    let done = false
+    const finish = (ok: boolean): void => {
+      if (done) return
+      done = true
+      sock.destroy()
+      resolve(ok)
+    }
+    sock.setTimeout(NET_PROBE_TIMEOUT_MS)
+    sock.once('connect', () => finish(true))
+    sock.once('timeout', () => finish(false))
+    sock.once('error', () => finish(false))
+  })
+}
+
+async function probeReachable(): Promise<boolean> {
+  const results = await Promise.all(NET_PROBE_HOSTS.map(([h, p]) => probeHost(h, p)))
+  return results.some(Boolean)
+}
+
+function refreshNow(): void {
+  cache = readStatus()
+  cacheAt = Date.now()
+  broadcast(cache)
+}
+
+/**
+ * 网络探针：只当触发器，不通/通翻转时立刻重读一次状态并广播，再在 2.5 秒后补读一次
+ * （Windows 的连接类别有时比 TCP 握手慢一拍）。界面判据仍是 readStatus 的 Windows 结果。
+ */
+function startNetProbe(): void {
+  if (probeTimer !== null) return
+  probeTimer = setInterval(() => {
+    if (probeBusy) return
+    probeBusy = true
+    void probeReachable()
+      .then((ok) => {
+        const prev = lastReach
+        lastReach = ok
+        if (prev === null || ok === prev) return
+        probeSettleTimers.push(setTimeout(refreshNow, 600))
+        probeSettleTimers.push(setTimeout(refreshNow, 2_500))
+      })
+      .finally(() => {
+        probeBusy = false
+      })
+  }, NET_PROBE_MS)
+}
+
 export function setupStatus(): void {
   ipcMain.handle('status:snapshot', (): StatusSnapshot => {
     // 缓存 30 秒兜底；插拔电源、休眠恢复都会主动作废缓存并广播
@@ -215,12 +286,19 @@ export function setupStatus(): void {
     return cache
   })
 
+  // 渲染层收到系统 online/offline 事件时强制重读（不等缓存/轮询）
+  ipcMain.handle('status:refresh', (): StatusSnapshot => {
+    refreshNow()
+    return cache
+  })
+
   // 插拔电源：先用事件方向当场翻转颜色并广播，再延迟补读百分比与 Wi-Fi
   powerMonitor.on('on-ac', () => applyPowerEvent(true))
   powerMonitor.on('on-battery', () => applyPowerEvent(false))
   // 休眠恢复：合盖期间的电量变化事件可能丢，醒来补读一次
   powerMonitor.on('resume', scheduleRefresh)
   startWatch()
+  startNetProbe()
 }
 
 /** 退出时清掉定时器（与 notifyStore / scheduleStore 的 stop 同型） */
@@ -233,6 +311,14 @@ export function stopStatus(): void {
     clearTimeout(settleTimer)
     settleTimer = null
   }
+  if (probeTimer !== null) {
+    clearInterval(probeTimer)
+    probeTimer = null
+  }
+  for (const t of probeSettleTimers) clearTimeout(t)
+  probeSettleTimers = []
+  probeBusy = false
+  lastReach = null
   lastOnBattery = null
   trustedCharging = null
   trustedAt = 0

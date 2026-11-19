@@ -3072,6 +3072,17 @@ export default function App(): React.JSX.Element {
     const offStatus = window.island.onStatusChanged((s) => {
       if (alive) apply(s)
     })
+    // 系统网络切换（Chromium online/offline、NetworkInformation change）时立刻强制重读，
+    // 不等 15 秒轮询；主进程另有 TCP 探针兜住「连着网但上不了网」这种不发 online 事件的情况。
+    const refresh = (): void => {
+      void window.island.statusRefresh().then((s) => {
+        if (alive) apply(s)
+      })
+    }
+    window.addEventListener('online', refresh)
+    window.addEventListener('offline', refresh)
+    const conn = (navigator as Navigator & { connection?: EventTarget }).connection
+    conn?.addEventListener?.('change', refresh)
     // 点岛/展开时顺手拉一次：用户刚断网、马上点开看状态时不必等下一个轮询周期
     // （capture 阶段监听，不干扰各页面自己的点击处理）
     window.addEventListener('pointerdown', pull, true)
@@ -3081,6 +3092,9 @@ export default function App(): React.JSX.Element {
       alive = false
       window.clearInterval(id)
       window.removeEventListener('pointerdown', pull, true)
+      window.removeEventListener('online', refresh)
+      window.removeEventListener('offline', refresh)
+      conn?.removeEventListener?.('change', refresh)
       offStatus()
     }
   }, [])

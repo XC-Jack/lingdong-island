@@ -260,6 +260,10 @@ const api = {
   statusSnapshot(): Promise<StatusSnapshot> {
     return ipcRenderer.invoke('status:snapshot')
   },
+  /** 强制重读一次状态（绕过缓存）；渲染层在系统 online/offline 事件时调用 */
+  statusRefresh(): Promise<StatusSnapshot> {
+    return ipcRenderer.invoke('status:refresh')
+  },
   /**
    * 主进程主动推送的状态快照（插拔电源、休眠恢复时推，不等 60 秒轮询）。
    * 与 statusSnapshot 同一份结构，渲染层收到直接覆盖即可。
