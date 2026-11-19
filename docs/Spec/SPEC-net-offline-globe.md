@@ -63,6 +63,7 @@
 | 2026-11-19 | 用户再次反馈「断网之后直接就不显示了」：排查发现只剩 Radmin VPN 虚拟连接时仍有 `net\|` 行，旧判据 `!sawNet && sawLine` 不成立 → 返回 `wifi=null`，界面整块不渲染 | 改为 `wifi === null && sawLine`；临时环境变量伪造「只有虚拟网卡」的 PowerShell 输出（钩子已删）验证快照为 `connected:false, online:false`，CDP 确认 `.nonet-ico` 已渲染 | 用户真实断开实体网卡后的最终效果 |
 | 2026-11-19 | TCP 探针选点：`node -e` 连 `223.5.5.5:53`、`119.29.29.29:53` 均超时；改 `223.5.5.5:443`、`223.6.6.6:443` 实测 9~12ms 连通 | 采用 443 两主机，任一通即视为可达 | 其它网络环境下这两个地址是否可达 |
 | 2026-11-19 | 新增 `status:refresh` IPC + 渲染层 `online`/`offline`/`navigator.connection change` 监听；CDP 调 `window.island.statusRefresh()` | 返回 `{"battery":99,"charging":true,"wifi":{"connected":true,"online":true,"name":"GZHL_Student 3","kind":"wifi"}}`，IPC 通路正常 | 未实测真实断网下探针翻转→图标出现的秒数（网络已恢复） |
+| 2026-11-19 | 用户反馈「图标做的太丑了，你参考一下本机的」（附系统任务栏截图）：字形 U+E774 + 伪元素斜杠与系统观感不一致 | 改成手绘 SVG（`IconSvg` 24 视框、stroke 1.8）：圆 + 经线椭圆 + 赤道 + 左上到右下斜杠；斜杠用 `<mask>` 在地球上切出缺口（不依赖背景色，悬停换底色不会露色块）；删除 `.nonet-ico` 伪元素样式。`npm run typecheck` / `npm run build` EXIT=0；把与组件完全相同的 SVG 注入运行中的收起态槽位，CDP `Page.captureScreenshot` 放大 8 倍核对（截图一次性，已删） | 图标为地球+斜杠、线与 Wi-Fi 弧线同粗细、斜杠缺口干净；未在真实断网状态下看整条链路（组件接线沿用此前已验的 `netOk` 分支） |
 
 ## 八、验收记录
 

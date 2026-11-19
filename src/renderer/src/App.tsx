@@ -214,12 +214,26 @@ const IcoWifi = (): React.JSX.Element => (
 )
 
 /**
- * 无网络（用户 2026-11-19 参考图）：Windows 的「地球 + 斜杠」。
- * 地球直接用系统字体 U+E774，斜杠由 CSS 叠上去，并带一圈深色描边留出缺口，
- * 与系统任务栏的无 Internet 图标同一观感（尺寸与旁边 18px 图标对齐）。
+ * 无网络（用户 2026-11-19 参考图；同日反馈「图标做的太丑了，你参考一下本机的」）：
+ * 按 Windows 任务栏的「地球 + 斜杠」手绘——圆 + 经线椭圆 + 赤道，再叠一条左上到右下的斜杠。
+ * 斜杠处用 mask 把地球切出缺口（不靠背景色描边，换底色/悬停都不会露出色块），
+ * 线宽与旁边 Wi-Fi 弧线保持一致（IconSvg 的 1.8/24）。
  */
 const IcoNoNet = (): React.JSX.Element => (
-  <span className="fluent-ico nonet-ico" aria-hidden="true">&#xE774;</span>
+  <IconSvg>
+    <defs>
+      <mask id="nonet-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect x="0" y="0" width="24" height="24" fill="#fff" />
+        <line x1="4.4" y1="4.4" x2="19.6" y2="19.6" stroke="#000" strokeWidth="4.4" />
+      </mask>
+    </defs>
+    <g mask="url(#nonet-cut)">
+      <circle cx="12" cy="12" r="8.2" />
+      <ellipse cx="12" cy="12" rx="3.3" ry="8.2" />
+      <path d="M3.8 12h16.4" />
+    </g>
+    <line x1="5.2" y1="5.2" x2="18.8" y2="18.8" />
+  </IconSvg>
 )
 
 /**
