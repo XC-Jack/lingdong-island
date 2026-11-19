@@ -214,26 +214,14 @@ const IcoWifi = (): React.JSX.Element => (
 )
 
 /**
- * 无网络（用户 2026-11-19 参考图；同日反馈「图标做的太丑了，你参考一下本机的」）：
- * 按 Windows 任务栏的「地球 + 斜杠」手绘——圆 + 经线椭圆 + 赤道，再叠一条左上到右下的斜杠。
- * 斜杠处用 mask 把地球切出缺口（不靠背景色描边，换底色/悬停都不会露出色块），
- * 线宽与旁边 Wi-Fi 弧线保持一致（IconSvg 的 1.8/24）。
+ * 无网络（用户 2026-11-19 参考图；同日「图标做的太丑了，你参考一下本机的」「完全对不上」）：
+ * 不再手绘——直接用 Windows 自己画任务栏图标用的那个字形 U+F384
+ * （Segoe Fluent Icons「地球 + 禁止符」，本机字体里按像素比对确认，相似度 0.78，远超其它候选）。
+ * 与网线 U+E839 同一做法：字形由系统字体提供，观感与任务栏完全一致。
+ * 字形本身铺满 em 框，所以字号单独收到 15px，视觉尺寸与旁边 18px 视框的 Wi-Fi 弧线相当。
  */
 const IcoNoNet = (): React.JSX.Element => (
-  <IconSvg>
-    <defs>
-      <mask id="nonet-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
-        <rect x="0" y="0" width="24" height="24" fill="#fff" />
-        <line x1="4.4" y1="4.4" x2="19.6" y2="19.6" stroke="#000" strokeWidth="4.4" />
-      </mask>
-    </defs>
-    <g mask="url(#nonet-cut)">
-      <circle cx="12" cy="12" r="8.2" />
-      <ellipse cx="12" cy="12" rx="3.3" ry="8.2" />
-      <path d="M3.8 12h16.4" />
-    </g>
-    <line x1="5.2" y1="5.2" x2="18.8" y2="18.8" />
-  </IconSvg>
+  <span className="fluent-ico nonet-glyph" aria-hidden="true">&#xF384;</span>
 )
 
 /**

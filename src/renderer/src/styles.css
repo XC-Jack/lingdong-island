@@ -398,8 +398,12 @@ body {
   color: rgba(242, 243, 245, 0.94);
 }
 
-/* 无网图标（2026-11-19 用户「图标做的太丑了」）改成手绘 SVG（见 App.tsx 的 IcoNoNet），
-   尺寸由上面的 `.collapsed-wifi svg` 统一控制为 18px，不再需要字体/伪元素规则。 */
+/* 无网图标（2026-11-19 用户「图标做的太丑了，你参考一下本机的」）：
+   改用系统字形 U+F384（Segoe Fluent Icons，与 Windows 任务栏同一字形）。
+   该字形的轮廓铺满 em 框，18px 会比旁边图标大一圈，单独收到 15px。 */
+.nonet-glyph {
+  font-size: 15px;
+}
 
 .collapsed-label {
   font-size: 12px;
