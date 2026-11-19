@@ -44,9 +44,9 @@ export interface ShelfRevealResult {
 /**
  * 设置窗口的左导航分区（SPEC-settings-shell）。
  * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、
- * focus=专注·喝水（占位）、pet=桌宠（SPEC-deskpet-skin）
+ * focus=专注·喝水（占位）、pet=桌宠（SPEC-deskpet-skin）、about=关于（SPEC-settings-about）
  */
-export type SettingsSection = 'general' | 'pages' | 'focus' | 'pet'
+export type SettingsSection = 'general' | 'pages' | 'focus' | 'pet' | 'about'
 
 /**
  * 可选的桌宠皮肤 id（SPEC-deskpet-skin）。

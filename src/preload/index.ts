@@ -100,6 +100,10 @@ const api = {
   openUserData(): Promise<boolean> {
     return ipcRenderer.invoke('settings:open-user-data')
   },
+  /** 「关于」页：用系统浏览器打开仓库地址（地址固定在主进程） */
+  openGithub(): Promise<boolean> {
+    return ipcRenderer.invoke('settings:open-github')
+  },
   /** 自动更新（SPEC-auto-update）：当前状态快照 */
   updateGetState(): Promise<UpdateState> {
     return ipcRenderer.invoke('update:get-state')

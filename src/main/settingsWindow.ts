@@ -20,8 +20,11 @@ let settingsWindow: BrowserWindow | null = null
 let pendingSection: SettingsSection | null = null
 
 function isValidSection(v: unknown): v is SettingsSection {
-  return v === 'general' || v === 'pages' || v === 'focus' || v === 'pet'
+  return v === 'general' || v === 'pages' || v === 'focus' || v === 'pet' || v === 'about'
 }
+
+/** 「关于」页的仓库地址：固定在主进程，渲染层只能请求打开这一个地址 */
+const GITHUB_REPO_URL = 'https://github.com/XC-Jack/lingdong-island'
 
 /** 主进程告诉设置窗口切到哪个分区（导航点击是渲染层自己切的，这里只处理菜单直达） */
 function sendSection(win: BrowserWindow, section: SettingsSection): void {
@@ -146,5 +149,10 @@ export function setupSettingsWindow(): void {
   ipcMain.handle('settings:open-user-data', async (): Promise<boolean> => {
     const err = await shell.openPath(app.getPath('userData'))
     return err === ''
+  })
+
+  ipcMain.handle('settings:open-github', async (): Promise<boolean> => {
+    await shell.openExternal(GITHUB_REPO_URL)
+    return true
   })
 }
