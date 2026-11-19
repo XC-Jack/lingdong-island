@@ -392,7 +392,9 @@ async function pollCdp(): Promise<void> {
     if (neteaseRunning) send({ cmd: 'appvol', exe: 'cloudmusic.exe' })
     if (s) {
       neteaseRunning = true
-      const key = `${s.title}|${s.artist}`
+      // 缓存键用封面地址，不用曲名：曲名解析失败（空串）时键会恒为 "|"，封面就永远
+      // 停在第一首（2026-11-19 用户反馈）。地址跟着页面里的 <img> 走，换歌必变。
+      const key = s.coverUrl || `${s.title}|${s.artist}`
       if (key !== cdpCoverKey) {
         cdpCoverKey = key
         cdpCover = ''

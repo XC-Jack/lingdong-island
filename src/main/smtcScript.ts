@@ -1289,6 +1289,46 @@ function SaveFbExe($exe) {
 }
 $script:fbSavedExe = $script:fbExe
 
+# 最近一次识别到的曲目（用户 2026-11-19：「音乐已暂停，音乐页就不显示音乐播放了」）。
+# 网易云暂停会撤掉音频会话，窗口收进托盘后 TitleOf 也读不到标题——两条路都空，
+# 界面就变成「现在没有在放歌」。记住这首歌，只要进程还活着就按暂停态返回它；
+# 进程退出后自然回到空态。落盘是为了「先暂停+收托盘、再启动岛」也能显示。
+$script:fbSongFile = [System.IO.Path]::Combine($PSScriptRoot, "last-song.json")
+$script:fbSongExe = ""
+$script:fbSongTitle = ""
+$script:fbSongArtist = ""
+try {
+  if ([System.IO.File]::Exists($script:fbSongFile)) {
+    $js = ([System.IO.File]::ReadAllText($script:fbSongFile)) | ConvertFrom-Json
+    if ($null -ne $js) {
+      $script:fbSongExe = [string]$js.exe
+      $script:fbSongTitle = [string]$js.title
+      $script:fbSongArtist = [string]$js.artist
+    }
+  }
+} catch { }
+
+function SaveFbSong($exe, $title, $artist) {
+  try {
+    if ([string]::IsNullOrEmpty($title)) { return }
+    $sig = $exe + "|" + $title + "|" + $artist
+    if ($sig -eq $script:fbSongSaved) { return }
+    $obj = @{ exe = $exe; title = $title; artist = $artist }
+    [System.IO.File]::WriteAllText($script:fbSongFile, ($obj | ConvertTo-Json -Compress))
+    $script:fbSongSaved = $sig
+  } catch { }
+}
+$script:fbSongSaved = $script:fbSongExe + "|" + $script:fbSongTitle + "|" + $script:fbSongArtist
+
+# 播放器进程是否还活着：只用于判断「记住的暂停曲目还值不值得显示」，不参与选播放器。
+function PlayerAlive($exe) {
+  try {
+    $name = [System.IO.Path]::GetFileNameWithoutExtension($exe)
+    if ([string]::IsNullOrEmpty($name)) { return $false }
+    return $null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue)
+  } catch { return $false }
+}
+
 function GetFallback() {
   try { $list = [IslandAppVol.AppVol]::ActiveList() } catch { $list = "" }
   $best = $null
@@ -1325,19 +1365,36 @@ function GetFallback() {
     $t2 = ""
     try { $t2 = [IslandBarClick]::TitleOf($script:fbExe) } catch { $t2 = "" }
     if (-not [string]::IsNullOrEmpty($t2)) {
-      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $t2; live = $false }
+      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $t2; live = $false; remembered = $false }
+    } elseif ((PlayerAlive $script:fbExe) -and $script:fbSongExe -eq $script:fbExe -and
+              -not [string]::IsNullOrEmpty($script:fbSongTitle)) {
+      # 窗口已收进托盘/隐藏：标题读不到。进程还在、又记着上次的歌 → 按暂停态返回它
+      # （用户 2026-11-19 截图：不分这一支就会变成「现在没有在放歌」）。
+      $best = @{ exe = $script:fbExe; procId = 0; state = 0; title = $script:fbSongTitle;
+        artist = $script:fbSongArtist; live = $false; remembered = $true }
     }
   }
   if ($null -eq $best) { return $null }
   $exe = [string]$best.exe
   $title = [string]$best.title
-  # 「歌名 - 歌手」拆开：只在第一个 " - " 处断，歌名里带横线也不会拆坏
   $song = $title
   $artist = ""
-  $sep = $title.IndexOf(" - ")
-  if ($sep -gt 0) {
-    $song = $title.Substring(0, $sep).Trim()
-    $artist = $title.Substring($sep + 3).Trim()
+  if ([bool]$best.remembered) {
+    # 记住的曲目本来就是歌名/歌手分开存的，不要再按 " - " 拆（歌名里可能带横线）
+    $artist = [string]$best.artist
+  } else {
+    # 「歌名 - 歌手」拆开：只在第一个 " - " 处断，歌名里带横线也不会拆坏
+    $sep = $title.IndexOf(" - ")
+    if ($sep -gt 0) {
+      $song = $title.Substring(0, $sep).Trim()
+      $artist = $title.Substring($sep + 3).Trim()
+    }
+    if (-not [string]::IsNullOrEmpty($song)) {
+      $script:fbSongExe = $exe
+      $script:fbSongTitle = $song
+      $script:fbSongArtist = $artist
+      SaveFbSong $exe $song $artist
+    }
   }
   $pct = GetBarPct $title $exe
   $peak = -1.0
@@ -1352,7 +1409,9 @@ function GetFallback() {
   if (-not [bool]$best.live) {
     # 会话都不在了 = 播放器自己撤了音频流 = 暂停。这时不能沿用上一帧的 true，
     # 否则歌词会一直滚（实测过：暂停后歌词还在走，比不放歌更迷惑）。
-    $playing = $false
+    # 例外：记住的曲目 + 窗口收起来时，没有 SMTC 会话也没有标题，但用户可能用媒体键
+    # 继续播了——峰值还在就照实显示在播，别把正在响的音乐显示成暂停。
+    if ([bool]$best.remembered -and $peak -gt 0.0008) { $playing = $true } else { $playing = $false }
   } elseif ($peak -gt 0.0008) {
     $playing = $true
   } elseif ($peak -ge 0 -and $peak -le 0.0002) {
@@ -1367,8 +1426,11 @@ function GetFallback() {
   # barOk 用「位置已知」而不是「这一帧读到了」：字幕背景盖住进度条时读不到，但条还在原处，
   # 点击照样打得中（ClickPct 会退回上次的行位置）。若直接用 pct>=0，
   # 用户 m02806 说的「把字幕背景拉下去后进度条就点不了」就会每帧复发。
+  # 记住的暂停曲目是例外：窗口已经收起来，点不到任何东西，不能给一条假的可拖进度条。
   $known = $false
-  try { $known = [IslandBarClick]::RowKnown() } catch { $known = $false }
+  if (-not [bool]$best.remembered) {
+    try { $known = [IslandBarClick]::RowKnown() } catch { $known = $false }
+  }
   return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct; known = $known }
 }
 

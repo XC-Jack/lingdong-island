@@ -207,12 +207,25 @@ const STATE_EXPR = `(() => {
   let title = '';
   let artist = '';
   if (titleEl) {
-    const badge = /^(VIP|试听|超高|极高|标准|无损|杜比|Hi-Res|HiRes|独家|新歌|抢先听|付费)$/;
-    const lines = (titleEl.innerText || '').split('\\n').map(function (x) { return x.trim(); })
-      .filter(function (x) { return x && !badge.test(x); });
-    title = lines[0] || '';
-    // 标题行在 innerText 里会重复一次（实测「歌名\\n歌名\\n歌手」），去掉与歌名相同的行
-    artist = lines.filter(function (x) { return x !== title; }).join(' / ');
+    // 曲名/歌手按子元素读 textContent，不用 innerText：播放栏在页面里不可见时
+    // innerText 恒为 ""（实测 2026-11-19，用户首页布局），主进程把空曲名当封面
+    // 缓存键，封面就一直停在第一首。.main-title 里的 .cmd-space 只包歌名，
+    // 整块 textContent 会把「VIP/试听」角标粘进歌名（"Free LoopVIP试听"）。
+    const main = titleEl.querySelector('.main-title');
+    const nameEl = main && main.querySelector('.cmd-space');
+    if (nameEl) title = (nameEl.textContent || '').trim();
+    else if (main) title = (main.textContent || '').trim();
+    const authorEl = titleEl.querySelector('.author');
+    if (authorEl) artist = (authorEl.textContent || '').replace(/\\s+/g, ' ').trim();
+    // 布局改版时的兜底：仍按 innerText 的行拆（角标单独一行）
+    if (!title) {
+      const badge = /^(VIP|试听|超高|极高|标准|无损|杜比|Hi-Res|HiRes|独家|新歌|抢先听|付费)$/;
+      const lines = (titleEl.innerText || '').split('\\n').map(function (x) { return x.trim(); })
+        .filter(function (x) { return x && !badge.test(x); });
+      title = lines[0] || '';
+      // 标题行在 innerText 里会重复一次（实测「歌名\\n歌名\\n歌手」），去掉与歌名相同的行
+      if (!artist) artist = lines.filter(function (x) { return x !== title; }).join(' / ');
+    }
   }
   const btn = document.querySelector('[data-testid=tid_playbar_play_btn]');
   const icon = btn && btn.querySelector('.cmd-icon');
@@ -369,6 +382,9 @@ export async function fetchNeteaseCover(url: string): Promise<string> {
     // 去掉 type 后同一地址回的是标准 PNG（实测 200x200、97KB）。
     parsed.searchParams.delete('type')
     parsed.searchParams.delete('thumbnail')
+    // imageView（哪怕是空值）会让服务端忽略 param，直接回 1425x1425 原图（实测 310KB）；
+    // 去掉后 param=200y200 生效，10KB 左右，换歌时抓得更快。
+    parsed.searchParams.delete('imageView')
     parsed.searchParams.set('param', '200y200')
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 4000)
