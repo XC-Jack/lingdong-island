@@ -1267,6 +1267,20 @@ function GetAppVolume($app) {
 $script:fbExe = ""
 $script:fbPct = -1.0
 $script:fbPlaying = $false
+# 不是音乐播放器、但会挂音频会话的进程（2026-11-19 用户截图实测）：
+# OBS 录制时 obs64 的音频会话 state=1，窗口标题是「OBS 33.0.1 - 配置文件: 未命名 - 场景: 未命名」，
+# 既满足「有会话」也满足「标题带 ' - '」，降级路径就把它当成在放歌，音乐页显示 OBS 并
+# 覆盖 last-player/last-song；同时让桥接看起来「在播」，把暂停的网易云 CDP 状态挤掉，
+# 音乐页还错误地出现「点此开启后台精确控制」入口（用户：设置里其实是自动）。
+# 这些进程一律不参与降级识别，也不写入记忆。
+$script:fbSkipExe = @("obs", "obs32", "obs64")
+
+function IsSkipExe($exe) {
+  if ([string]::IsNullOrEmpty($exe)) { return $false }
+  $name = [System.IO.Path]::GetFileNameWithoutExtension([string]$exe).ToLowerInvariant()
+  return ($script:fbSkipExe -contains $name)
+}
+
 # 把上次认到的播放器记到脚本旁边的小文件里。
 # 为什么要落盘：程序冷启动时若网易云正好处于暂停态（音频会话已被它自己撤掉），
 # 第一帧 ActiveList 就是空的，$fbExe 也是空的，界面会闪一下「现在没有在放歌」。
@@ -1275,13 +1289,15 @@ $script:fbStateFile = [System.IO.Path]::Combine($PSScriptRoot, "last-player.txt"
 try {
   if ([System.IO.File]::Exists($script:fbStateFile)) {
     $saved = ([System.IO.File]::ReadAllText($script:fbStateFile)).Trim()
-    if (-not [string]::IsNullOrEmpty($saved)) { $script:fbExe = $saved }
+    # 旧版本可能把 OBS 写进记忆；读到这类进程直接丢弃，等真正的播放器下次播放再写回
+    if (-not [string]::IsNullOrEmpty($saved) -and -not (IsSkipExe $saved)) { $script:fbExe = $saved }
   }
 } catch { }
 
 function SaveFbExe($exe) {
   try {
     if ([string]::IsNullOrEmpty($exe)) { return }
+    if (IsSkipExe $exe) { return }
     if ($exe -eq $script:fbSavedExe) { return }
     [System.IO.File]::WriteAllText($script:fbStateFile, $exe)
     $script:fbSavedExe = $exe
@@ -1301,9 +1317,13 @@ try {
   if ([System.IO.File]::Exists($script:fbSongFile)) {
     $js = ([System.IO.File]::ReadAllText($script:fbSongFile)) | ConvertFrom-Json
     if ($null -ne $js) {
-      $script:fbSongExe = [string]$js.exe
-      $script:fbSongTitle = [string]$js.title
-      $script:fbSongArtist = [string]$js.artist
+      # 同上：OBS 等非播放器写进来的记忆不认
+      $songExe = [string]$js.exe
+      if (-not (IsSkipExe $songExe)) {
+        $script:fbSongExe = $songExe
+        $script:fbSongTitle = [string]$js.title
+        $script:fbSongArtist = [string]$js.artist
+      }
     }
   }
 } catch { }
@@ -1311,6 +1331,7 @@ try {
 function SaveFbSong($exe, $title, $artist) {
   try {
     if ([string]::IsNullOrEmpty($title)) { return }
+    if (IsSkipExe $exe) { return }
     $sig = $exe + "|" + $title + "|" + $artist
     if ($sig -eq $script:fbSongSaved) { return }
     $obj = @{ exe = $exe; title = $title; artist = $artist }
@@ -1338,6 +1359,8 @@ function GetFallback() {
       $f = $item.Split(',')
       if ($f.Length -lt 3) { continue }
       $exe = [string]$f[0]
+      # 录屏/推流软件会挂音频会话、窗口标题也像「A - B」，但不是播放器（见上方 fbSkipExe）
+      if (IsSkipExe $exe) { continue }
       # 注意：变量名不能叫 $pid —— 那是 PowerShell 的只读自动变量（当前进程 ID）。
       $procId = 0
       [void][int]::TryParse([string]$f[1], [ref]$procId)
@@ -1361,7 +1384,7 @@ function GetFallback() {
   # 网易云一暂停就把音频会话整条撤掉（实测：暂停后 persess 里 cloudmusic 直接消失），
   # 只靠 ActiveList 会让界面在「按暂停」的瞬间变成空态——用户看到的是「按钮没反应」。
   # 所以会话消失后仍认上次那个播放器，只要它的窗口还在（标题还能读到）。
-  if ($null -eq $best -and $script:fbExe -ne "") {
+  if ($null -eq $best -and $script:fbExe -ne "" -and -not (IsSkipExe $script:fbExe)) {
     $t2 = ""
     try { $t2 = [IslandBarClick]::TitleOf($script:fbExe) } catch { $t2 = "" }
     if (-not [string]::IsNullOrEmpty($t2)) {

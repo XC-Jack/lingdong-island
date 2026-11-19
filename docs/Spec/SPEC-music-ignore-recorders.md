@@ -40,7 +40,18 @@
 - [ ] 恢复网易云播放：正常显示歌曲，`last-player.txt` 写回 `cloudmusic.exe`。
 - [ ] `node scripts/e2e-music.mjs` PASS。
 
-## 六、不做什么
+## 六、自检记录
+
+| 日期 | 执行内容 | 结果 | 未验证部分 |
+|---|---|---|---|
+| 2026-11-19 | 复现：OBS 33.0.1 运行、网易云暂停，旧桥接 `poll` | 返回 `active=true / title=OBS 33.0.1 / artist=配置文件: 未命名 - 场景: 未命名 / app=obs64.exe`，与用户截图一致 | — |
+| 2026-11-19 | `npm run typecheck` / `npm run build` | EXIT=0 | — |
+| 2026-11-19 | 修补后同场景跑桥接 `poll` | `active=false`，不再返回 OBS | 网易云在播时未复测（避免打断用户播放） |
+| 2026-11-19 | 手工写入 `last-player.txt=obs64.exe` + OBS 版 `last-song.json` 再跑 `poll` | 仍 `active=false`，污染记忆被忽略 | — |
+| 2026-11-19 | `node scripts/e2e-music.mjs` | 46 过 / 2 败（M2l、U4c）；同一脚本在**未改动的 `main` 源码**上同样 46/2，失败与本次改动无关（当前网易云停着，音量/seek 用例受环境影响） | M2l/U4c 的环境稳定性 |
+| 2026-11-19 | 对照复现细节 | OBS 的音频会话 `state=1`、无 SMTC 会话、窗口标题含 ` - ` ⇒ 命中降级打分 100+50，且会覆盖 `last-player.txt` / `last-song.json`（本机实际被写成 obs64） | OBS 其它版本/分支进程名 |
+
+## 七、不做什么
 
 - 不做通用「录音/录屏软件识别库」，只处理已复现的 OBS 家族。
 - 不改 SMTC 主路径的会话选择。
