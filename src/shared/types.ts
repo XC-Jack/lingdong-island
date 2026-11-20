@@ -216,10 +216,18 @@ export interface SoftwareResidueItem {
   product: string
   /** 目录大小；非目录为 null */
   bytes: number | null
+  /** 计划任务所在的容器路径（以 \ 结尾）；只有 task 项有 */
+  taskPath?: string
+  /** 服务/驱动的原始启动方式（Auto / Manual / Disabled / System 等），撤销时重建用 */
+  startMode?: string
+  /** 服务的显示名，撤销时重建用 */
+  displayName?: string
   /** 采集时是否在运行 */
   running: boolean
   /** 处理它是否需要管理员权限 */
   admin: boolean
+  /** 是否允许清理（确定级的服务/计划任务/空目录）；主进程计算，界面只读 */
+  cleanable: boolean
 }
 
 export interface SoftwareResidueScanResult {
@@ -227,6 +235,35 @@ export interface SoftwareResidueScanResult {
   scannedAt: number
   /** 没扫成的部分（例如 PowerShell 报错），给用户看的说明 */
   warnings: string[]
+}
+
+/* ---------- 软件残留清理（SPEC-space-residue-cleanup） ---------- */
+
+export interface ResidueCleanupItemResult {
+  id: string
+  label: string
+  ok: boolean
+  /** 单项说明：删掉了 / 跳过了 / 为什么失败 */
+  message: string
+}
+
+export interface ResidueCleanupRunResult {
+  ok: boolean
+  /** 用户取消了 UAC，什么都没动 */
+  canceled: boolean
+  items: ResidueCleanupItemResult[]
+  warnings: string[]
+  /** 备份目录；没执行时为 '' */
+  backupDir: string
+  scan: SoftwareResidueScanResult
+}
+
+export interface ResidueUndoResult {
+  ok: boolean
+  canceled: boolean
+  restored: number
+  warnings: string[]
+  scan: SoftwareResidueScanResult
 }
 
 /* ---------- 系统清理（需要管理员，SPEC-space-admin-cleanup） ---------- */

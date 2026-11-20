@@ -1121,6 +1121,37 @@ div.pm-row[draggable='true'] {
 .swr-row.swr-definite {
   background: rgba(140, 170, 255, 0.06);
 }
+.swr-row.on {
+  background: rgba(125, 216, 125, 0.08);
+}
+/* 勾选框：沿用清理清单的圆形方框样式，只包一层按钮 */
+.swr-check {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.swr-check .clean-check {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+}
+.swr-check[aria-checked='true'] .clean-check {
+  border-color: #7dd87d;
+  background: #7dd87d;
+}
+.swr-check:focus-visible {
+  outline: 1px solid rgba(125, 216, 125, 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* 结果可能多行，保留换行 */
+.swr-note {
+  white-space: pre-line;
+}
 .swr-head {
   display: flex;
   align-items: center;

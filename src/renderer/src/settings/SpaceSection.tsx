@@ -858,10 +858,16 @@ function SoftwareResiduePanel(): ReactElement {
   const [scanned, setScanned] = useState(false)
   const [note, setNote] = useState('')
   const [copied, setCopied] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [canUndo, setCanUndo] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     setScanning(true)
     setNote('')
+    setSelected(new Set())
+    setConfirming(false)
     try {
       const r = await window.island.softwareResidueScan()
       setItems(r.items)
@@ -875,6 +881,19 @@ function SoftwareResiduePanel(): ReactElement {
   }, [])
 
   // 扫描要读服务、驱动和各个盘符下的目录，十几秒起步，不随设置页打开自动跑
+
+  const toggle = (it: SoftwareResidueItem): void => {
+    if (!it.cleanable || busy) return
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(it.id)) next.delete(it.id)
+      else next.add(it.id)
+      return next
+    })
+    // 勾选一变，之前的确认就作废
+    setConfirming(false)
+    setNote('')
+  }
 
   const copy = async (): Promise<void> => {
     const text =
@@ -893,12 +912,70 @@ function SoftwareResiduePanel(): ReactElement {
     }
   }
 
+  const runCleanup = async (): Promise<void> => {
+    if (busy || selected.size === 0) return
+    const picked = items.filter((i) => selected.has(i.id))
+    if (!confirming) {
+      const names = picked.slice(0, 5).map((p) => p.label).join('、')
+      const more = picked.length > 5 ? ' 等' : ''
+      setConfirming(true)
+      setNote(
+        `将清理 ${picked.length} 项：${names}${more}。会先导出备份，可用「撤销上次清理」恢复；需要一次管理员授权。再点一次「确认清理」执行。`
+      )
+      return
+    }
+    setBusy(true)
+    setNote('正在请求管理员权限，请在弹窗里点「是」…')
+    try {
+      const r = await window.island.softwareResidueCleanup([...selected])
+      setItems(r.scan.items)
+      setScanned(true)
+      setSelected(new Set())
+      const lines = r.items.map(
+        (x) => `${x.ok ? '已清理' : '未处理'}：${x.label}${x.message ? `（${x.message}）` : ''}`
+      )
+      const done = r.items.filter((x) => x.ok).length
+      setNote(
+        [r.canceled ? '' : `本次处理 ${done}/${r.items.length} 项。`, ...lines, ...r.warnings]
+          .filter(Boolean)
+          .join('\n')
+      )
+      if (done > 0) setCanUndo(true)
+    } catch {
+      setNote('清理失败，请稍后再试。')
+    } finally {
+      setBusy(false)
+      setConfirming(false)
+    }
+  }
+
+  const undo = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setNote('正在请求管理员权限，请在弹窗里点「是」…')
+    try {
+      const r = await window.island.softwareResidueUndo()
+      setItems(r.scan.items)
+      setScanned(true)
+      setSelected(new Set())
+      setConfirming(false)
+      setNote([r.canceled ? '' : `已恢复 ${r.restored} 项。`, ...r.warnings].filter(Boolean).join('\n'))
+      if (r.restored > 0) setCanUndo(false)
+    } catch {
+      setNote('撤销失败，请稍后再试。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const cleanableCount = items.filter((i) => i.cleanable).length
+
   return (
     <div className="clean-group swr-group">
       <div className="clean-group-head">
-        <h3 className="clean-group-title">软件残留（仅检测）</h3>
+        <h3 className="clean-group-title">软件残留</h3>
         <p className="clean-lead">
-          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。这是线索清单，不是待删清单：徽标只表示证据强弱，不代表删掉安全（驱动和非空目录尤其不要直接删）。只检测，不会停止或删除任何东西。
+          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。确定级的服务、计划任务和空目录可以勾选清理：会先备份，可用「撤销上次清理」恢复。驱动和非空目录只报告，不提供删除——它们删错可能影响系统或正在用的软件。
         </p>
       </div>
       <div className="swr-list">
@@ -909,55 +986,92 @@ function SoftwareResiduePanel(): ReactElement {
         {!scanning && scanned && items.length === 0 ? (
           <div className="clean-empty">没有发现软件残留。</div>
         ) : null}
-        {items.map((it) => (
-          <div key={it.id} className={`swr-row swr-${it.level}`}>
-            <div className="swr-head">
-              <span className={`swr-level swr-level-${it.level}`}>{RESIDUE_LEVEL_TEXT[it.level]}</span>
-              <span className="swr-kind">{RESIDUE_KIND_TEXT[it.kind]}</span>
-              <span className="swr-name">{it.label}</span>
-              {it.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
-              {it.admin ? <span className="swr-tag">需要管理员</span> : null}
-              <span className="swr-size">{it.bytes === null ? '' : formatBytes(it.bytes)}</span>
+        {items.map((it) => {
+          const on = selected.has(it.id)
+          return (
+            <div
+              key={it.id}
+              className={`swr-row swr-${it.level}${on ? ' on' : ''}${it.cleanable ? ' swr-selectable' : ''}`}
+            >
+              <div className="swr-head">
+                {it.cleanable ? (
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={on}
+                    aria-label={it.label}
+                    className="swr-check"
+                    disabled={busy}
+                    onClick={() => toggle(it)}
+                  >
+                    <span className="clean-check" aria-hidden="true">
+                      {on ? (
+                        <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <path d="M2.4 6.2 5 8.7l4.6-5.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : null}
+                    </span>
+                  </button>
+                ) : null}
+                <span className={`swr-level swr-level-${it.level}`}>{RESIDUE_LEVEL_TEXT[it.level]}</span>
+                <span className="swr-kind">{RESIDUE_KIND_TEXT[it.kind]}</span>
+                <span className="swr-name">{it.label}</span>
+                {it.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
+                {it.admin ? <span className="swr-tag">需要管理员</span> : null}
+                <span className="swr-size">{it.bytes === null ? '' : formatBytes(it.bytes)}</span>
+              </div>
+              <div className="swr-detail">{it.detail}</div>
+              <div className="swr-path" title={it.path}>
+                {it.path}
+              </div>
             </div>
-            <div className="swr-detail">{it.detail}</div>
-            <div className="swr-path" title={it.path}>
-              {it.path}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
-      <div className="set-note clean-note">{note}</div>
+      <div className="set-note clean-note swr-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
           {scanned ? (
             <>
-              共 <b>{items.length}</b> 项 · 仅检测，不会改动系统
+              共 <b>{items.length}</b> 项 · 可清理 <b>{cleanableCount}</b> 项
+              {selected.size > 0 ? <> · 已选 <b>{selected.size}</b> 项</> : null}
             </>
           ) : (
-            '仅检测，不会改动系统'
+            '只检测，不会改动系统'
           )}
         </div>
         <div className="clean-actions">
+          {canUndo ? (
+            <button type="button" className="set-btn set-btn-quiet" disabled={busy} onClick={() => void undo()}>
+              撤销上次清理
+            </button>
+          ) : null}
           <button
             type="button"
             className="set-btn set-btn-quiet"
-            disabled={scanning || items.length === 0}
-            onClick={() => {
-              void copy()
-            }}
+            disabled={scanning || busy || items.length === 0}
+            onClick={() => void copy()}
           >
             {copied ? '已复制' : '复制清单'}
           </button>
           <button
             type="button"
             className="set-btn set-btn-primary"
-            disabled={scanning}
-            onClick={() => {
-              void refresh()
-            }}
+            disabled={scanning || busy}
+            onClick={() => void refresh()}
           >
             {scanning ? '扫描中…' : scanned ? '重新扫描' : '开始检测'}
           </button>
+          {cleanableCount > 0 || selected.size > 0 ? (
+            <button
+              type="button"
+              className="set-btn set-btn-primary"
+              disabled={busy || selected.size === 0}
+              onClick={() => void runCleanup()}
+            >
+              {busy ? '处理中…' : confirming ? '确认清理' : '清理选中项（需要管理员）'}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

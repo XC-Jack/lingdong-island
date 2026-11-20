@@ -9,6 +9,7 @@ import type {
   SoftwareResidueScanResult
 } from '../shared/types'
 import { runPowerShellRaw } from './runPs'
+import { runResidueCleanup, undoLastResidueCleanup } from './softwareResidueCleanup'
 import { errText, existsConservative, rawFs } from './fsUtil'
 
 /**
@@ -527,7 +528,16 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
     label: string,
     path: string,
     detail: string,
-    opts: { company?: string; product?: string; bytes?: number | null; running?: boolean; admin?: boolean } = {}
+    opts: {
+      company?: string
+      product?: string
+      bytes?: number | null
+      taskPath?: string
+      startMode?: string
+      displayName?: string
+      running?: boolean
+      admin?: boolean
+    } = {}
   ): void => {
     items.push({
       id: idOf(kind, path),
@@ -539,8 +549,16 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
       company: opts.company ?? '',
       product: opts.product ?? '',
       bytes: opts.bytes ?? null,
+      taskPath: opts.taskPath,
+      startMode: opts.startMode,
+      displayName: opts.displayName,
       running: opts.running ?? false,
-      admin: opts.admin ?? false
+      admin: opts.admin ?? false,
+      // 只有「程序确实不存在」的服务/计划任务和真正的空目录允许清理；
+      // 驱动、非空目录一律只报告（SPEC-space-residue-cleanup）
+      cleanable:
+        level === 'definite' &&
+        (kind === 'service' || kind === 'task' || (kind === 'folder' && opts.bytes === 0))
     })
   }
 
@@ -564,6 +582,8 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
         `服务程序已不存在（${s.state}，${startModeText(s.startMode)}）${owner}${tail}`,
         {
           company: s.company,
+          startMode: s.startMode,
+          displayName: s.display,
           running: s.state === 'Running',
           admin: true
         }
@@ -629,6 +649,7 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
     if (/^\\Microsoft\\/i.test(t.path)) continue
     if (await exeExists(t.exe)) continue
     push('task', 'definite', t.task, t.exe, `计划任务「${t.path}${t.task}」的动作程序已不存在`, {
+      taskPath: t.path,
       admin: true
     })
   }
@@ -774,6 +795,13 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
   return { items, scannedAt: Date.now(), warnings }
 }
 
+/** 最近一次扫描结果：清理时只认这里出现过的条目，不接受渲染层编的 id */
+let lastScan: SoftwareResidueScanResult | null = null
+
+export function getLastResidueScan(): SoftwareResidueScanResult | null {
+  return lastScan
+}
+
 export async function scanSoftwareResidue(): Promise<SoftwareResidueScanResult> {
   const warnings: string[] = []
   try {
@@ -784,7 +812,9 @@ export async function scanSoftwareResidue(): Promise<SoftwareResidueScanResult> 
     if (r.code !== 0) warnings.push('部分系统信息没读全，结果可能不全。')
     if (asArray(raw.store).length === 0) warnings.push('没读到应用商店应用清单，结果可能偏多。')
     const res = await classify(raw)
-    return { ...res, warnings: [...warnings, ...res.warnings] }
+    const out = { ...res, warnings: [...warnings, ...res.warnings] }
+    lastScan = out
+    return out
   } catch (e) {
     return { items: [], scannedAt: Date.now(), warnings: [`扫描失败：${errText(e)}`] }
   }
@@ -793,4 +823,7 @@ export async function scanSoftwareResidue(): Promise<SoftwareResidueScanResult> 
 /** 注册 IPC，必须在 app.whenReady 后调用 */
 export function setupSoftwareResidueStore(): void {
   ipcMain.handle('software-residue:scan', () => scanSoftwareResidue())
+  // 清理与撤销放在 softwareResidueCleanup 里，这里只挂 IPC（SPEC-space-residue-cleanup）
+  ipcMain.handle('software-residue:cleanup', (_e, ids: unknown) => runResidueCleanup(ids))
+  ipcMain.handle('software-residue:undo', () => undoLastResidueCleanup())
 }
