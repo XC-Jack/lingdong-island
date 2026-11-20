@@ -1182,7 +1182,7 @@ function ResidueSection(): ReactElement {
       <div className="clean-group-head">
         <h3 className="clean-group-title">残留</h3>
         <p className="clean-lead">
-          已经卸载、但还留下东西的软件，两类混在一张清单里：当前用户的失效卸载项、死快捷方式和空的开始菜单文件夹，以及全机的死服务、计划任务和无主目录。全部先备份再删——卸载残留直接进备份区，软件残留只有确定级能勾选、清理时要一次管理员授权。结果都在最下面的「清理备份」里，可按批次撤销。
+          已卸载软件留下的痕迹：当前用户的失效卸载项、死快捷方式、空的开始菜单文件夹，以及全机的死服务、计划任务和无主目录。只有确定级能勾选，清理前都会备份，可在下方「清理备份」里撤销。
         </p>
       </div>
       <ResiduePanel onChanged={onChanged} refresh={refresh} />
