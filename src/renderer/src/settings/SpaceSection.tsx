@@ -22,6 +22,11 @@ import type {
  * 立即渲染，每项算出大小就替换成实际数字，慢的那项自己转「计算中…」。
  */
 
+/** 勾选的行排到最上面；其它保持原顺序（sort 是稳定排序） */
+function selectedFirst<T>(rows: T[], isOn: (row: T) => boolean): T[] {
+  return [...rows].sort((a, b) => Number(isOn(b)) - Number(isOn(a)))
+}
+
 function formatBytes(n: number): string {
   if (n <= 0) return '无'
   if (n < 1024) return `${n} B`
@@ -173,7 +178,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新计算」再试。'}
           </div>
         ) : null}
-        {rows.map((row) => {
+        {selectedFirst(rows, (r) => selected.has(r.id)).map((row) => {
           const on = selected.has(row.id)
           const known = row.bytes !== null
           return (
@@ -484,7 +489,7 @@ function JunkPanel(): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新读取」再试。'}
           </div>
         ) : null}
-        {rows.map((row) => {
+        {selectedFirst(rows, (r) => selected.has(r.id)).map((row) => {
           const on = selected.has(row.id)
           const pending = row.known && row.bytes === null
           const empty = row.known && row.bytes === 0 && !row.exists
@@ -544,11 +549,6 @@ function JunkPanel(): ReactElement {
           )
         })}
       </div>
-      {rows.some((r) => !r.known) ? (
-        <div className="clean-hint clean-unknown">
-          标「无法统计」的项，大小要管理员权限或系统接口才读得到；不影响清理，能统计到的会在清完后报释放量。
-        </div>
-      ) : null}
       <div className="set-note clean-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
@@ -912,7 +912,7 @@ function ResiduePanel({
         {scanning ? <div className="clean-empty">正在扫描卸载残留和软件残留，需要十几秒…</div> : null}
         {!scanning && !scanned ? <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div> : null}
         {!scanning && scanned && rows.length === 0 ? <div className="clean-empty">没有发现残留。</div> : null}
-        {rows.map((row) => {
+        {selectedFirst(rows, (r) => selected.has(r.key)).map((row) => {
           const on = selected.has(row.key)
           return (
             <div
@@ -1214,7 +1214,7 @@ export default function SpaceSection(): ReactElement {
         <div className="clean-group-head">
           <h3 className="clean-group-title">系统</h3>
           <p className="clean-lead">
-            Windows 和其他软件留下的临时文件。带琥珀色人形标记的项需要管理员授权。
+            Windows 和其他软件留下的临时文件。带琥珀色人形标记的项需要管理员授权；显示「无法统计」的项，大小要管理员权限或系统接口才读得到，不影响清理。
           </p>
         </div>
         <JunkPanel />

@@ -997,10 +997,6 @@ div.pm-row[draggable='true'] {
   line-height: 1.55;
   color: rgba(242, 243, 245, 0.45);
 }
-/* 系统垃圾里「无法统计」的原因说明：只在出现读不到大小的项时显示 */
-.clean-hint.clean-unknown {
-  margin-top: -4px;
-}
 
 .clean-size {
   flex: 0 0 auto;
