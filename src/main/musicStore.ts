@@ -88,6 +88,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 let cache: MusicState = { ...EMPTY_STATE }
 /** 桥接子进程最近一次报的原始状态 */
 let bridgeState: MusicState = { ...EMPTY_STATE }
+
+/** 「桥接判暂停但峰值不是 0」的诊断日志上次写入时间（30 秒限流） */
+let fallbackPauseLogAt = 0
 /** 网易云 CDP 最近一次读到的状态；null = 没连上（端口没开 / 进程没起） */
 let cdpState: NeteaseCdpState | null = null
 /** CDP 拿到的封面（data URL）及其对应的歌，免每秒重复下载 */
@@ -335,6 +338,17 @@ function handleLine(text: string): void {
     sources: parseSources(msg.sources),
     pinnedExe: pinExe,
     pinnedMissing: false
+  }
+  // 排错（2026-11-20 用户朋友反馈「一直在放歌、按钮一直显示播放三角」）：
+  // 桥接判成暂停、但音频峰值不是 0，说明阈值可能没对上那台机器。30 秒最多记一条。
+  if (msg.fallback === true && msg.playing !== true) {
+    const peak = Number(msg.peak)
+    if (Number.isFinite(peak) && peak > 0 && Date.now() - fallbackPauseLogAt > 30000) {
+      fallbackPauseLogAt = Date.now()
+      startupLog(
+        `[music] 桥接判暂停但 peak=${peak} thr=${Number(msg.thr ?? 0)} app=${next.app}`
+      )
+    }
   }
   bridgeState = next
   recompute()

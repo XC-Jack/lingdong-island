@@ -177,6 +177,9 @@ body {
   overflow-y: auto;
   /* 设置是固定宽度排版，永远不该横向滚；纵向滚动保留 */
   overflow-x: clip;
+  /* 关掉浏览器的滚动锚定：清单重排（勾选置顶）时不要替我们挪滚动位置，
+     位置由 SpaceSection 的 keepScroll 自己还原，否则会和锚定互相打架 */
+  overflow-anchor: none;
   padding: 18px 22px 22px;
 }
 /* 滚动条跟深色底配，别用系统亮色那条 */

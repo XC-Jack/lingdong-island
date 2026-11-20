@@ -1280,6 +1280,8 @@ function GetAppVolume($app) {
 $script:fbExe = ""
 $script:fbPct = -1.0
 $script:fbPlaying = $false
+# 「在播」判据的参考峰值（见 GetFallback 里的相对阈值说明）：最近见过的最大音频峰值
+$script:peakRef = 0.0
 # 不是音乐播放器、但会挂音频会话的进程（2026-11-19 用户截图实测）：
 # OBS 录制时 obs64 的音频会话 state=1，窗口标题是「OBS 33.0.1 - 配置文件: 未命名 - 场景: 未命名」，
 # 既满足「有会话」也满足「标题带 ' - '」，降级路径就把它当成在放歌，音乐页显示 OBS 并
@@ -1593,22 +1595,30 @@ function GetFallback() {
   $pct = GetBarPct $title $exe
   $peak = -1.0
   try { $peak = [double][IslandAppVol.AppVol]::Peak($exe) } catch { $peak = -1.0 }
-  # 判「在播/暂停」：以**音频峰值**为准（实测这台机器上它极其干净：在播 0.002~0.005，
-  # 暂停恒为 0.00000，相差三个数量级）。
-  # 不能再用「进度在前进」当在播证据：网易云暂停时不会立刻把音频会话撤掉（state 仍为 1），
-  # 而进度条的读数在两帧之间可能刚好前进了 0.005（暂停发生在两次采样之间），
-  # 那样会把「已经暂停」误判成「在播」，界面按钮就一直显示暂停图标。
-  # 峰值取不到（<0，说明没匹配到会话）时才退回进度判据。
+  # 判「在播/暂停」：以**音频峰值**为准。
+  # 原来用的是写死的绝对阈值（在播 > 0.0008、暂停 ≤ 0.0002），只在开发机上调过：
+  # 那台机器在播 0.002~0.009、暂停恒为 0。但峰值随音量缩放，用户朋友的电脑音量小或
+  # 输出设备不同，峰值一直落在 0.0002~0.0008 之间 ⇒ 两个分支都不命中、只能沿用上一帧，
+  # 结果是「歌一直在放，岛上的按钮永远显示播放三角」（2026-11-20 用户反馈，功能正常）。
+  # 现在改成相对阈值：拿最近 30 秒见过的最大峰值当参考，峰值超过它的 1%（且不低于
+  # 2e-5）就算在播。参考值每帧衰减 0.5%，长期安静后会落回地板值——
+  # 暂停时峰值本来就是 0，地板值再低也不会误判成在播。
+  if ($peak -gt $script:peakRef) { $script:peakRef = $peak } else { $script:peakRef = $script:peakRef * 0.995 }
+  $thr = [Math]::Max(0.00002, $script:peakRef * 0.01)
+  $quiet = [Math]::Max(0.000005, $thr * 0.25)
+  # 进度前进只作兜底证据：网易云暂停时不会立刻撤音频会话（state 仍为 1），
+  # 而进度读数在两帧之间可能刚好前进了 0.005（暂停发生在两次采样之间），
+  # 单靠它会把「已经暂停」误判成「在播」，界面就停在暂停图标上。
   $playing = $script:fbPlaying
   if (-not [bool]$best.live) {
     # 会话都不在了 = 播放器自己撤了音频流 = 暂停。这时不能沿用上一帧的 true，
     # 否则歌词会一直滚（实测过：暂停后歌词还在走，比不放歌更迷惑）。
     # 例外：记住的曲目 + 窗口收起来时，没有 SMTC 会话也没有标题，但用户可能用媒体键
     # 继续播了——峰值还在就照实显示在播，别把正在响的音乐显示成暂停。
-    if ([bool]$best.remembered -and $peak -gt 0.0008) { $playing = $true } else { $playing = $false }
-  } elseif ($peak -gt 0.0008) {
+    if ([bool]$best.remembered -and $peak -gt $thr) { $playing = $true } else { $playing = $false }
+  } elseif ($peak -gt $thr) {
     $playing = $true
-  } elseif ($peak -ge 0 -and $peak -le 0.0002) {
+  } elseif ($peak -ge 0 -and $peak -le $quiet) {
     $playing = $false
   } elseif ($pct -ge 0 -and $script:fbPct -ge 0 -and ($pct - $script:fbPct) -gt 0.0008) {
     $playing = $true
@@ -1625,7 +1635,9 @@ function GetFallback() {
   if (-not [bool]$best.remembered) {
     try { $known = [IslandBarClick]::RowKnown() } catch { $known = $false }
   }
-  return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct; known = $known }
+  # peak / thr 只为排错回传：用户朋友的电脑出现过「一直在放歌、按钮一直是播放三角」，
+  # 主进程会把它们按 30 秒一条写进 startup.log，下次再遇到能直接看读数。
+  return @{ exe = $exe; title = $song; artist = $artist; playing = $playing; pct = $pct; known = $known; peak = $peak; thr = $thr }
 }
 
 $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
@@ -1828,6 +1840,9 @@ while ($true) {
           position = 0
           duration = 0
           playing = [bool]$fbLive
+          # 排错用：判「在播」用的峰值与当时阈值（见 musicStore 的 30 秒限流日志）
+          peak = [math]::Round([double]$fb.peak, 6)
+          thr = [math]::Round([double]$fb.thr, 6)
           app = $fb.exe
           shuffle = $false
           repeat = 0

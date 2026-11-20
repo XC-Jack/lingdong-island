@@ -22,7 +22,11 @@ import type {
  * 立即渲染，每项算出大小就替换成实际数字，慢的那项自己转「计算中…」。
  */
 
-/** 勾选的行置顶，最近勾选的排最前；未勾选的保持原顺序 */
+/**
+ * 勾选的行置顶；组内按勾选先后从早到晚排（最近勾的落在组末）。
+ * 默认勾选的项没有勾选记录（rank -1），排在最前并按清单原顺序稳定排列。
+ * 2026-11-20 用户更正：先做成「最近勾的最前」，用户要的是「后勾选排后面」。
+ */
 function checkedFirst<T>(
   rows: T[],
   keyOf: (row: T) => string,
@@ -32,9 +36,25 @@ function checkedFirst<T>(
   const rank = new Map(recent.map((k, i) => [k, i]))
   const on = rows
     .filter((r) => selected.has(keyOf(r)))
-    .sort((a, b) => (rank.get(keyOf(b)) ?? -1) - (rank.get(keyOf(a)) ?? -1))
+    .sort((a, b) => (rank.get(keyOf(a)) ?? -1) - (rank.get(keyOf(b)) ?? -1))
   const off = rows.filter((r) => !selected.has(keyOf(r)))
   return [...on, ...off]
+}
+
+/**
+ * 勾选后行会重排，可视区跟着上下窜；用户每次都得重新滚。
+ * 记下右侧内容区的滚动位置，重排后的下一帧还原（两帧是为了等 React 提交完）。
+ */
+function keepScroll(run: () => void): void {
+  const el = document.querySelector<HTMLElement>('.set-content')
+  const top = el ? el.scrollTop : 0
+  run()
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const now = document.querySelector<HTMLElement>('.set-content')
+      if (now) now.scrollTop = top
+    })
+  })
 }
 
 function formatBytes(n: number): string {
@@ -121,21 +141,23 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   /** 已选中的「默认不勾」项：删除不可恢复，要先问一句 */
   const risky = rows.filter((r) => selected.has(r.id) && !r.defaultChecked)
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
   const toggle = (id: CleanupTargetId): void => {
-    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
-    if (confirming) setNote('')
-    setConfirming(false)
-    rememberPick(id, selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+    keepScroll(() => {
+      // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+      if (confirming) setNote('')
+      setConfirming(false)
+      rememberPick(id, selected.has(id))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
     })
   }
 
@@ -384,21 +406,23 @@ function JunkPanel(): ReactElement {
   /** 已选中的「默认不勾」项（回收站）：删除不可恢复，要先问一句 */
   const risky = selectedRows.filter((r) => !r.defaultChecked)
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
   const toggle = (id: string): void => {
-    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
-    if (confirming) setNote('')
-    setConfirming(false)
-    rememberPick(id, selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+    keepScroll(() => {
+      // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+      if (confirming) setNote('')
+      setConfirming(false)
+      rememberPick(id, selected.has(id))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
     })
   }
 
@@ -798,23 +822,25 @@ function ResiduePanel({
     }
   }
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
   const toggle = (row: MergedResidueRow): void => {
     if (!row.cleanable || busy || scanning) return
-    rememberPick(row.key, selected.has(row.key))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(row.key)) next.delete(row.key)
-      else next.add(row.key)
-      return next
+    keepScroll(() => {
+      rememberPick(row.key, selected.has(row.key))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(row.key)) next.delete(row.key)
+        else next.add(row.key)
+        return next
+      })
+      // 勾选一变，之前的确认就作废
+      setConfirming(false)
+      setNote('')
     })
-    // 勾选一变，之前的确认就作废
-    setConfirming(false)
-    setNote('')
   }
 
   /**
