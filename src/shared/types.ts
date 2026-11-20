@@ -55,7 +55,30 @@ export type SettingsSection = 'general' | 'pages' | 'space' | 'focus' | 'pet' | 
  * 清单写死在主进程 `cleanupStore.ts`：渲染层只能传 id，主进程按白名单过滤，
  * 任何时候都不接受任意路径——清理功能一旦能被传入路径，就等于把删除权交给了页面。
  */
-export type CleanupTargetId = 'update-cache' | 'web-cache' | 'lyrics' | 'logs'
+/**
+ * 清理范围：app=灵动岛自己的缓存；system=Windows 与其它软件留下的系统垃圾。
+ * 两组在设置页各占一块，互相独立，各自扫描、各自清理。
+ */
+export type CleanupScope = 'app' | 'system'
+
+/** 灵动岛自己的清理项（SPEC-space-cleanup） */
+export type AppCleanupId = 'update-cache' | 'web-cache' | 'lyrics' | 'logs'
+
+/**
+ * 系统垃圾清理项（SPEC-space-system-junk）。
+ * 这一组全部不需要管理员权限；需要提权的 Windows 更新缓存 / Windows.old 明确不做。
+ */
+export type SystemCleanupId = 'temp' | 'crash-dumps' | 'thumb-cache' | 'recycle-bin'
+
+export type CleanupTargetId = AppCleanupId | SystemCleanupId
+
+/** 一条清理项的静态定义（标题、说明、默认勾选），大小另外逐项扫描 */
+export interface CleanupItemDef {
+  id: CleanupTargetId
+  label: string
+  hint: string
+  defaultChecked: boolean
+}
 
 /** 一条清理项的扫描结果 */
 export interface CleanupItem {
@@ -74,8 +97,10 @@ export interface CleanupItem {
 
 /** 一次扫描的结果 */
 export interface CleanupScanResult {
+  /** 这一份结果属于哪一组（页面按它回填对应面板） */
+  scope: CleanupScope
   items: CleanupItem[]
-  /** 全部清理项的占用合计（字节） */
+  /** 本组清理项的占用合计（字节） */
   totalBytes: number
   /** 扫描完成时间戳（毫秒） */
   scannedAt: number

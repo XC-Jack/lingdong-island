@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { CleanupScanResult, CleanupTargetId } from '../../../shared/types'
+import type { CleanupItemDef, CleanupScope, CleanupTargetId } from '../../../shared/types'
 
 /**
- * 设置「空间」页（SPEC-space-cleanup）。
+ * 设置「空间」页（SPEC-space-cleanup / SPEC-space-system-junk）。
  *
- * 第一阶段只清灵动岛自己的缓存和日志。清单与路径全部在主进程
- * `cleanupStore.ts` 里写死，这里只负责展示、勾选和发 id——
+ * 两组：灵动岛自己的缓存、系统垃圾。清单与路径全部在主进程
+ * `cleanupStore.ts` 里写死，这里只负责展示、勾选和发 scope + id——
  * 页面上不存在「传路径」的入口，避免清理功能被页面错误驱动。
+ *
+ * 扫描是「先出骨架、再逐项填数字」：%TEMP% 大的机器递归统计要好几秒，
+ * 如果等全部算完再渲染，整组会长时间停在「正在计算占用…」。现在先拿到清单
+ * 立即渲染，每项算出大小就替换成实际数字，慢的那项自己转「计算中…」。
  */
 
 function formatBytes(n: number): string {
@@ -18,44 +22,68 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-export default function SpaceSection(): ReactElement {
-  const [scan, setScan] = useState<CleanupScanResult | null>(null)
+/** 页面上的一行：定义来自主进程，bytes=null 表示这一项还在计算 */
+interface Row extends CleanupItemDef {
+  bytes: number | null
+}
+
+interface PanelProps {
+  scope: CleanupScope
+  title: string
+  lead: string
+}
+
+/** 一组清理项：独立的扫描结果、勾选、提示与按钮 */
+function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
+  const [rows, setRows] = useState<Row[]>([])
   const [selected, setSelected] = useState<Set<CleanupTargetId>>(new Set())
+  const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
 
-  /** 扫描结果落地时，把勾选重置为「默认勾选且有内容」——清理后不会残留空选项 */
-  const applyScan = useCallback((r: CleanupScanResult): void => {
-    setScan(r)
-    setSelected(
-      new Set(
-        r.items
-          .filter((i) => i.defaultChecked && i.bytes > 0)
-          .map((i) => i.id)
-      )
-    )
-  }, [])
-
+  /** 全量扫描：先出清单，再并行逐项取大小 */
   const refresh = useCallback(async (): Promise<void> => {
-    setBusy(true)
+    setScanning(true)
+    setNote('')
     try {
-      applyScan(await window.island.cleanupScan())
+      const defs = await window.island.cleanupItems(scope)
+      setRows(defs.map((d) => ({ ...d, bytes: null })))
+      setSelected(new Set(defs.filter((d) => d.defaultChecked).map((d) => d.id)))
+      await Promise.all(
+        defs.map(async (d) => {
+          let bytes = 0
+          try {
+            bytes = await window.island.cleanupScanItem(scope, d.id)
+          } catch {
+            bytes = 0
+          }
+          setRows((prev) => prev.map((r) => (r.id === d.id ? { ...r, bytes } : r)))
+          // 算出来是 0 的项自动取消勾选，避免把空项算进「已选」
+          if (bytes === 0) {
+            setSelected((prev) => {
+              if (!prev.has(d.id)) return prev
+              const next = new Set(prev)
+              next.delete(d.id)
+              return next
+            })
+          }
+        })
+      )
     } catch {
       setNote('读取占用失败，请稍后再试。')
     } finally {
-      setBusy(false)
+      setScanning(false)
     }
-  }, [applyScan])
+  }, [scope])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
 
-  const items = scan?.items ?? []
-  const totalBytes = scan?.totalBytes ?? 0
-  const selectedBytes = items
-    .filter((i) => selected.has(i.id))
-    .reduce((n, i) => n + i.bytes, 0)
+  const totalBytes = rows.reduce((n, r) => n + (r.bytes ?? 0), 0)
+  const selectedBytes = rows
+    .filter((r) => selected.has(r.id))
+    .reduce((n, r) => n + (r.bytes ?? 0), 0)
 
   const toggle = (id: CleanupTargetId): void => {
     setSelected((prev) => {
@@ -67,17 +95,26 @@ export default function SpaceSection(): ReactElement {
   }
 
   const run = async (): Promise<void> => {
-    if (busy || selectedBytes === 0) return
+    if (busy || scanning || selectedBytes === 0) return
     setBusy(true)
     // 不清空提示：提示区固定占一行，原地换成「正在清理…」，避免整块底部在点击瞬间上下跳
     setNote('正在清理…')
     const ids = [...selected]
     try {
-      const res = await window.island.cleanupRun(ids)
-      applyScan(res.scan)
+      const res = await window.island.cleanupRun(scope, ids)
+      const afterById = new Map(res.scan.items.map((i) => [i.id, i]))
+      setRows((prev) =>
+        prev.map((r) => (afterById.has(r.id) ? { ...r, bytes: afterById.get(r.id)?.bytes ?? 0 } : r))
+      )
+      setSelected(
+        new Set(
+          res.scan.items.filter((i) => i.defaultChecked && i.bytes > 0).map((i) => i.id)
+        )
+      )
       const head = res.freedBytes > 0 ? `已释放 ${formatBytes(res.freedBytes)}。` : '这次没有释放出空间。'
       // 网页缓存是程序运行时会马上重新写入的，清完再看又有一点属正常，别让用户以为没清掉
-      const webLeft = ids.includes('web-cache') && (res.scan.items.find((i) => i.id === 'web-cache')?.bytes ?? 0) > 0
+      const webLeft =
+        ids.includes('web-cache') && (res.scan.items.find((i) => i.id === 'web-cache')?.bytes ?? 0) > 0
       const tail = webLeft ? '网页缓存会随使用重新生成，刚清完又出现少量是正常的。' : ''
       setNote([head, ...res.warnings, tail].filter(Boolean).join(' '))
     } catch {
@@ -88,25 +125,30 @@ export default function SpaceSection(): ReactElement {
   }
 
   return (
-    <section className="set-page">
-      <h2 className="set-page-title">空间</h2>
-      <p className="clean-lead">
-        只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。
-      </p>
+    <div className="clean-group">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">{title}</h3>
+        <p className="clean-lead">{lead}</p>
+      </div>
       <div className="set-card">
-        {scan === null ? <div className="clean-empty">正在计算占用…</div> : null}
-        {items.map((item) => {
-          const on = selected.has(item.id)
+        {rows.length === 0 ? (
+          <div className="clean-empty">
+            {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新计算」再试。'}
+          </div>
+        ) : null}
+        {rows.map((row) => {
+          const on = selected.has(row.id)
+          const known = row.bytes !== null
           return (
             <button
-              key={item.id}
+              key={row.id}
               type="button"
               role="checkbox"
               aria-checked={on}
-              aria-label={item.label}
+              aria-label={row.label}
               className={`clean-row${on ? ' on' : ''}`}
-              disabled={busy || item.bytes === 0}
-              onClick={() => toggle(item.id)}
+              disabled={busy || !known || row.bytes === 0}
+              onClick={() => toggle(row.id)}
             >
               <span className="clean-check" aria-hidden="true">
                 {on ? (
@@ -116,10 +158,10 @@ export default function SpaceSection(): ReactElement {
                 ) : null}
               </span>
               <span className="clean-text">
-                <span className="clean-name">{item.label}</span>
-                <span className="clean-hint">{item.hint}</span>
+                <span className="clean-name">{row.label}</span>
+                <span className="clean-hint">{row.hint}</span>
               </span>
-              <span className="clean-size">{formatBytes(item.bytes)}</span>
+              <span className="clean-size">{known ? formatBytes(row.bytes ?? 0) : '计算中…'}</span>
             </button>
           )
         })}
@@ -130,12 +172,13 @@ export default function SpaceSection(): ReactElement {
       <div className="clean-foot">
         <div className="clean-total">
           可清理 <b>{formatBytes(totalBytes)}</b> · 已选 <b>{formatBytes(selectedBytes)}</b>
+          {scanning ? <span className="clean-pending">（计算中…）</span> : null}
         </div>
         <div className="clean-actions">
           <button
             type="button"
             className="set-btn set-btn-quiet"
-            disabled={busy}
+            disabled={busy || scanning}
             onClick={() => {
               void refresh()
             }}
@@ -145,15 +188,33 @@ export default function SpaceSection(): ReactElement {
           <button
             type="button"
             className="set-btn set-btn-primary"
-            disabled={busy || selectedBytes === 0}
+            disabled={busy || scanning || selectedBytes === 0}
             onClick={() => {
               void run()
             }}
           >
-            {busy ? '处理中…' : '清理选中项'}
+            {busy ? '处理中…' : scanning ? '计算中…' : '清理选中项'}
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+export default function SpaceSection(): ReactElement {
+  return (
+    <section className="set-page">
+      <h2 className="set-page-title">空间</h2>
+      <CleanupPanel
+        scope="app"
+        title="灵动岛的缓存"
+        lead="只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。"
+      />
+      <CleanupPanel
+        scope="system"
+        title="系统垃圾"
+        lead="Windows 和其他软件留下的临时文件。这一组不需要管理员权限，正在使用的文件会自动跳过。"
+      />
     </section>
   )
 }
