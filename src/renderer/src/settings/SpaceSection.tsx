@@ -775,16 +775,47 @@ function ResiduePanel({
     setNote('')
   }
 
+  /**
+   * 复制一段能直接贴给 AI 助手的提示词：带上清单、每项的判定依据和工具本身的边界，
+   * 让助手判断哪些能删、哪些必须留。只复制文字，不执行任何东西。
+   */
+  const buildPrompt = (): string => {
+    const cleanable = rows.filter((r) => r.cleanable).length
+    const lines = rows.map((r, i) => {
+      const tags = [
+        RESIDUE_LEVEL_TEXT[r.level],
+        r.kindText,
+        r.running ? '运行中' : '',
+        r.admin ? '需要管理员' : '',
+        r.reportOnly ? `工具里不能删：${r.reportOnly}` : ''
+      ].filter(Boolean)
+      const size = r.size === null ? '' : `｜${formatBytes(r.size)}`
+      return `${i + 1}. [${tags.join('｜')}] ${r.label}${size}\n   依据：${r.detail}\n   路径：${r.path}`
+    })
+    return [
+      '我在用一款叫「灵动岛」的 Windows 小工具扫了一遍系统里的「软件残留」，清单在下面。请帮我判断哪些可以安全清理、哪些必须保留，并说明理由。只输出分析和建议，不要给直接执行删除的命令。',
+      '',
+      '## 这份清单是什么',
+      '- 一张清单混了两类：①「卸载项 / 快捷方式 / 开始菜单」= 当前用户下失效的卸载登记、指向空处的快捷方式、只剩死链的开始菜单文件夹；②「服务 / 驱动 / 计划任务 / 目录 / 进程」= 全机范围查到的、可能属于已卸载软件的残留。',
+      '- 等级只表示证据强弱：确定 = 登记还在、但它指向的程序文件已经不存在；很可能 = 程序文件没了、但同一家公司还有别的软件装着；需确认 = 证据不足（运行中但查不到归属、第三方驱动、里面还有内容的无主目录等）。',
+      '- 工具里只有「确定」级的服务、计划任务和空目录可以勾选清理，删前会导出备份、可以撤销；驱动、非空目录、进程和「需确认」项只报告，不提供删除。',
+      '',
+      `## 清单（共 ${rows.length} 项，工具里可勾选 ${cleanable} 项）`,
+      '',
+      ...lines,
+      '',
+      '## 请你输出',
+      '1. 可以清理：按风险从低到高排序，每项一句话理由。',
+      '2. 建议保留：每项一句话理由，尤其是程序可能还在用的、驱动、以及里面还有东西的目录。',
+      '3. 拿不准：写出需要我核实什么（例如某个程序是否还在用），不要猜。',
+      '4. 如果清单里有明显不属于残留的东西，直接指出来。',
+      '',
+      '只依据上面的信息判断；拿不准就说不确定，不要编造清单里没有的程序或路径。'
+    ].join('\n')
+  }
+
   const copy = async (): Promise<void> => {
-    const text =
-      rows
-        .map(
-          (r) =>
-            `${RESIDUE_LEVEL_TEXT[r.level]}｜${r.kindText}｜${r.label}${r.running ? '（运行中）' : ''}${
-              r.reportOnly ? `（${r.reportOnly}）` : ''
-            }\n  ${r.detail}\n  ${r.path}`
-        )
-        .join('\n\n') || '没有发现残留。'
+    const text = rows.length === 0 ? '没有发现残留，不需要分析。' : buildPrompt()
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
@@ -939,9 +970,10 @@ function ResiduePanel({
             type="button"
             className="set-btn set-btn-quiet"
             disabled={scanning || busy || rows.length === 0}
+            title="复制一段带完整清单的提示词，粘贴给 AI 助手，让它判断哪些能删"
             onClick={() => void copy()}
           >
-            {copied ? '已复制' : '复制清单'}
+            {copied ? '已复制' : '复制提示词'}
           </button>
           <button
             type="button"
