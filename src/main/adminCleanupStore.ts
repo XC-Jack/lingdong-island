@@ -163,7 +163,9 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
   } catch (e) {
     await cleanupTemp()
     const msg = errText(e)
-    const canceled = /取消|1223/i.test(msg)
+    // UAC 取消：中文系统报「操作已被用户取消」，英文系统是
+    // "The operation was canceled by the user."，错误码 1223；三种都认。
+    const canceled = /取消|cancel|1223/i.test(msg)
     return {
       ok: false,
       canceled,

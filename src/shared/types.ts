@@ -153,8 +153,12 @@ export interface ResidueCleanResult {
   ok: boolean
   /** 成功清理的项数 */
   removed: number
-  /** 释放的字节（文件/目录占用之和；注册表项算 0） */
-  freedBytes: number
+  /**
+   * 移入备份的字节（文件/目录占用之和；注册表项算 0）。
+   * 注意：备份默认在同一块盘上，这部分空间**清理时并没有释放**，
+   * 要等用户在「备份与撤销」里删除备份才真正腾出来。
+   */
+  movedBytes: number
   /** 清理后重新扫描的结果 */
   scan: ResidueScanResult
   warnings: string[]

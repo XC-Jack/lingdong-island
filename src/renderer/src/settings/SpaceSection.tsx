@@ -298,9 +298,15 @@ function ResiduePanel(): ReactElement {
       const r = await window.island.residueClean([...selected])
       setItems(r.scan.items)
       setSelected(new Set())
+      // 残留清理是「移入备份」，同一块盘上并没有腾出空间；别写「释放」误导用户。
+      // 想真正腾空间，要在下面的「备份与撤销」里删除这批备份。
       const head =
         r.removed > 0
-          ? `已清理 ${r.removed} 项${r.freedBytes > 0 ? `，腾出 ${formatBytes(r.freedBytes)}` : ''}；可以撤销。`
+          ? `已清理 ${r.removed} 项${
+              r.movedBytes > 0
+                ? `，其中 ${formatBytes(r.movedBytes)} 移进了备份（删除备份后才真正腾出空间）`
+                : ''
+            }；可以撤销。`
           : '这次没有清理任何项。'
       setNote([head, ...r.warnings].filter(Boolean).join(' '))
       if (r.backupId) await loadBackups()

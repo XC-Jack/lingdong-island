@@ -339,7 +339,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
     .filter((x): x is ResidueItem => Boolean(x))
   const warnings: string[] = []
   if (picked.length === 0) {
-    return { ok: true, removed: 0, freedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
+    return { ok: true, removed: 0, movedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
   }
 
   // 批次目录：同一秒内重复清理时加序号，绝不覆盖已有备份
@@ -354,7 +354,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
 
   const manifest: Manifest = { createdAt: Date.now(), bytes: 0, files: [], registry: [] }
   let removed = 0
-  let freed = 0
+  let moved = 0
   let seq = 0
 
   for (const item of picked) {
@@ -391,7 +391,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
       manifest.files.push({ kind: item.kind, label: item.label, path: item.path, backup: target })
       manifest.bytes += item.bytes
       removed += 1
-      freed += item.bytes
+      moved += item.bytes
     }
     await writeManifest(dir, manifest)
   }
@@ -399,13 +399,13 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
   if (removed === 0) {
     // 一项都没清成：别在备份区留下一个空批次
     await fs.rm(dir, { recursive: true, force: true })
-    return { ok: true, removed: 0, freedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
+    return { ok: true, removed: 0, movedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
   }
   await writeManifest(dir, manifest)
   return {
     ok: true,
     removed,
-    freedBytes: freed,
+    movedBytes: moved,
     warnings,
     backupId: batchId,
     scan: await scanResidue()
