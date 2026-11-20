@@ -6,7 +6,8 @@ import type {
   CleanupScope,
   CleanupTargetId,
   ResidueBackup,
-  ResidueItem
+  ResidueItem,
+  SoftwareResidueItem
 } from '../../../shared/types'
 
 /**
@@ -833,6 +834,136 @@ function JunkPanel(): ReactElement {
   )
 }
 
+const RESIDUE_LEVEL_TEXT: Record<SoftwareResidueItem['level'], string> = {
+  definite: '确定',
+  likely: '很可能',
+  check: '需确认'
+}
+
+const RESIDUE_KIND_TEXT: Record<SoftwareResidueItem['kind'], string> = {
+  service: '服务',
+  driver: '驱动',
+  task: '计划任务',
+  folder: '目录',
+  process: '进程'
+}
+
+/**
+ * 软件残留（SPEC-space-software-residue）：只检测、只展示。
+ * 这张卡片没有任何停止/删除入口，避免第一版误伤。
+ */
+function SoftwareResiduePanel(): ReactElement {
+  const [items, setItems] = useState<SoftwareResidueItem[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [scanned, setScanned] = useState(false)
+  const [note, setNote] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    setScanning(true)
+    setNote('')
+    try {
+      const r = await window.island.softwareResidueScan()
+      setItems(r.items)
+      setNote(r.warnings.join(' '))
+      setScanned(true)
+    } catch {
+      setNote('扫描失败，请稍后再试。')
+    } finally {
+      setScanning(false)
+    }
+  }, [])
+
+  // 扫描要读服务、驱动和各个盘符下的目录，十几秒起步，不随设置页打开自动跑
+
+  const copy = async (): Promise<void> => {
+    const text =
+      items
+        .map(
+          (i) =>
+            `${RESIDUE_LEVEL_TEXT[i.level]}｜${RESIDUE_KIND_TEXT[i.kind]}｜${i.label}${i.running ? '（运行中）' : ''}\n  ${i.detail}\n  ${i.path}`
+        )
+        .join('\n\n') || '没有发现软件残留。'
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setNote('复制失败，请手动选中文本。')
+    }
+  }
+
+  return (
+    <div className="clean-group swr-group">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">软件残留（仅检测）</h3>
+        <p className="clean-lead">
+          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。只检测，不会停止或删除任何东西；标「需确认」的项不要直接当成垃圾。
+        </p>
+      </div>
+      <div className="swr-list">
+        {scanning ? <div className="clean-empty">正在扫描服务、驱动、计划任务和目录，需要十几秒…</div> : null}
+        {!scanning && !scanned ? (
+          <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div>
+        ) : null}
+        {!scanning && scanned && items.length === 0 ? (
+          <div className="clean-empty">没有发现软件残留。</div>
+        ) : null}
+        {items.map((it) => (
+          <div key={it.id} className={`swr-row swr-${it.level}`}>
+            <div className="swr-head">
+              <span className={`swr-level swr-level-${it.level}`}>{RESIDUE_LEVEL_TEXT[it.level]}</span>
+              <span className="swr-kind">{RESIDUE_KIND_TEXT[it.kind]}</span>
+              <span className="swr-name">{it.label}</span>
+              {it.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
+              {it.admin ? <span className="swr-tag">需要管理员</span> : null}
+              <span className="swr-size">{it.bytes === null ? '' : formatBytes(it.bytes)}</span>
+            </div>
+            <div className="swr-detail">{it.detail}</div>
+            <div className="swr-path" title={it.path}>
+              {it.path}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="set-note clean-note">{note}</div>
+      <div className="clean-foot">
+        <div className="clean-total">
+          {scanned ? (
+            <>
+              共 <b>{items.length}</b> 项 · 仅检测，不会改动系统
+            </>
+          ) : (
+            '仅检测，不会改动系统'
+          )}
+        </div>
+        <div className="clean-actions">
+          <button
+            type="button"
+            className="set-btn set-btn-quiet"
+            disabled={scanning || items.length === 0}
+            onClick={() => {
+              void copy()
+            }}
+          >
+            {copied ? '已复制' : '复制清单'}
+          </button>
+          <button
+            type="button"
+            className="set-btn set-btn-primary"
+            disabled={scanning}
+            onClick={() => {
+              void refresh()
+            }}
+          >
+            {scanning ? '扫描中…' : scanned ? '重新扫描' : '开始检测'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
@@ -855,6 +986,8 @@ export default function SpaceSection(): ReactElement {
         <JunkPanel />
         <ResiduePanel />
       </div>
+      {/* 第三张卡：只读的软件残留检测（SPEC-space-software-residue），没有停止/删除入口 */}
+      <SoftwareResiduePanel />
     </section>
   )
 }

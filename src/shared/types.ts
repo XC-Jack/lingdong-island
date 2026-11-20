@@ -191,6 +191,44 @@ export interface ResidueBackup {
   restored: boolean
 }
 
+/* ---------- 软件残留检测（SPEC-space-software-residue） ---------- */
+
+export type SoftwareResidueKind = 'service' | 'driver' | 'task' | 'process' | 'folder'
+
+/**
+ * 判断强度：
+ * - definite：引用的程序文件已不存在，或空壳目录且无任何引用
+ * - likely：同公司软件还在但路径旧了；第三方驱动无对应软件/进程
+ * - check：判断不了归属，只提示
+ */
+export type SoftwareResidueLevel = 'definite' | 'likely' | 'check'
+
+export interface SoftwareResidueItem {
+  id: string
+  kind: SoftwareResidueKind
+  level: SoftwareResidueLevel
+  /** 服务名 / 驱动名 / 任务名 / 进程名 / 目录名 */
+  label: string
+  /** 判定依据，直接展示给用户 */
+  detail: string
+  path: string
+  company: string
+  product: string
+  /** 目录大小；非目录为 null */
+  bytes: number | null
+  /** 采集时是否在运行 */
+  running: boolean
+  /** 处理它是否需要管理员权限 */
+  admin: boolean
+}
+
+export interface SoftwareResidueScanResult {
+  items: SoftwareResidueItem[]
+  scannedAt: number
+  /** 没扫成的部分（例如 PowerShell 报错），给用户看的说明 */
+  warnings: string[]
+}
+
 /* ---------- 系统清理（需要管理员，SPEC-space-admin-cleanup） ---------- */
 
 export type AdminCleanupId =

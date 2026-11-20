@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, SoftwareResidueScanResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, SoftwareResidueScanResult, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -124,6 +124,13 @@ const api = {
    */
   cleanupRun(scope: CleanupScope, ids: CleanupTargetId[]): Promise<CleanupRunResult> {
     return ipcRenderer.invoke('cleanup:run', scope, ids)
+  },
+  /**
+   * 「空间」页·软件残留（SPEC-space-software-residue）：扫描服务、驱动、计划任务、
+   * 运行中进程与无主目录。只读，不停止、不删除任何东西。
+   */
+  softwareResidueScan(): Promise<SoftwareResidueScanResult> {
+    return ipcRenderer.invoke('software-residue:scan')
   },
   /** 「空间」页·卸载残留（SPEC-space-residue）：扫描当前用户的失效卸载项与死快捷方式，只读 */
   residueScan(): Promise<ResidueScanResult> {

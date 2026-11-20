@@ -9,6 +9,22 @@ import { spawn } from 'node:child_process'
  * - 退出码非 0 时抛 stderr 文本；调用方只能拿它写日志/兜底文案，**不直接展示给用户**。
  */
 export function runPowerShell(script: string, timeoutMs = 25_000): Promise<string> {
+  return runPowerShellRaw(script, timeoutMs).then((r) => {
+    if (r.code === 0) return r.stdout
+    throw new Error(r.stderr || `PowerShell 退出码 ${r.code}`)
+  })
+}
+
+/**
+ * 同上，但把退出码和 stdout/stderr 一起交回。
+ *
+ * 软件残留检测用得到：采集脚本很长，某一段失败就会让退出码非 0，
+ * 但只要最后那行 JSON 还写出来了，就应该拿这份结果继续判断，而不是整次作废。
+ */
+export function runPowerShellRaw(
+  script: string,
+  timeoutMs = 25_000
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   // Windows PowerShell 5.1 默认按系统代码页（中文系统是 GBK）写 stdout/stderr，
   // Node 按 UTF-8 解码会把中文报错变成乱码。先切到 UTF-8 再执行原脚本。
   const wrapped = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${script}`
@@ -36,8 +52,7 @@ export function runPowerShell(script: string, timeoutMs = 25_000): Promise<strin
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      if (code === 0) resolve(out.trim())
-      else reject(new Error(err.trim() || `PowerShell 退出码 ${code}`))
+      resolve({ code, stdout: out.trim(), stderr: err.trim() })
     })
   })
 }

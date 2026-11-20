@@ -15,6 +15,7 @@ import { openSettings, setupSettingsWindow } from './settingsWindow'
 import { setupCleanupStore } from './cleanupStore'
 import { setupResidueStore } from './residueStore'
 import { setupAdminCleanupStore } from './adminCleanupStore'
+import { setupSoftwareResidueStore } from './softwareResidueStore'
 import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
@@ -396,6 +397,7 @@ app.whenReady().then(() => {
   setupCleanupStore()
   setupResidueStore()
   setupAdminCleanupStore()
+  setupSoftwareResidueStore()
   // 自动更新（SPEC-auto-update）：注册 IPC 与定时检查；开发版只登记「不支持」状态
   setupUpdater()
   // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。
