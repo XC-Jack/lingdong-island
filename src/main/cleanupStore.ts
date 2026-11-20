@@ -176,7 +176,7 @@ const TARGETS: Target[] = [
     id: 'update-cache',
     scope: 'app',
     label: '更新安装包缓存',
-    hint: '可以删。下载新版本时留下的安装包，通常一百多 MB；删了不影响已安装的版本，下次更新重新下载。',
+    hint: '下载新版本时留下的安装包；删了不影响已安装的版本，下次更新会重新下载。',
     defaultChecked: true,
     scan: bytesOnly(() => sumPaths([updateCacheDir()])),
     clean: async () => {
@@ -188,7 +188,7 @@ const TARGETS: Target[] = [
     id: 'web-cache',
     scope: 'app',
     label: '网页缓存',
-    hint: '可以删。界面渲染用的网页与脚本缓存；删了不影响数据，下次打开会自己重建。',
+    hint: '界面渲染用的网页与脚本缓存；删了不影响数据，下次打开会重建。',
     defaultChecked: true,
     scan: bytesOnly(() =>
       sumPaths([join(userDataDir(), 'Cache'), join(userDataDir(), 'Code Cache')])
@@ -209,7 +209,7 @@ const TARGETS: Target[] = [
     id: 'lyrics',
     scope: 'app',
     label: '歌词缓存',
-    hint: '可以删。查过的歌词存在本机；删了下次播放时联网重查，断网时会暂时显示「暂无歌词」。',
+    hint: '查过的歌词存在本机；删了下次播放时联网重查，断网时暂时显示「暂无歌词」。',
     defaultChecked: true,
     scan: bytesOnly(() => sumPaths([join(userDataDir(), 'lyrics')])),
     clean: async () => {
@@ -221,7 +221,7 @@ const TARGETS: Target[] = [
     id: 'logs',
     scope: 'app',
     label: '诊断日志',
-    hint: '可以删，删了不影响使用；但以后真出故障时就没有记录可查，所以默认没勾。',
+    hint: '删了不影响使用，但以后出故障时没有记录可查，默认没勾。',
     defaultChecked: false,
     scan: bytesOnly(() =>
       sumPaths([join(userDataDir(), 'startup.log'), join(userDataDir(), 'collapse-log.txt')])
@@ -241,7 +241,7 @@ const TARGETS: Target[] = [
     id: 'temp',
     scope: 'system',
     label: '临时文件',
-    hint: '可以删。各类软件运行时留下的临时文件；正在被使用的会自动跳过。',
+    hint: '各类软件运行时留下的临时文件；正在使用的会自动跳过。',
     defaultChecked: true,
     scan: bytesOnly(() => sumPaths([app.getPath('temp')])),
     clean: async () => {
@@ -255,7 +255,7 @@ const TARGETS: Target[] = [
     id: 'crash-dumps',
     scope: 'system',
     label: '崩溃转储与错误报告',
-    hint: '可以删。程序崩溃时生成的记录文件，删了不影响系统和其他软件。',
+    hint: '程序崩溃时的记录文件，删了不影响系统和其他软件。',
     defaultChecked: true,
     scan: bytesOnly(() =>
       sumPaths([
@@ -281,7 +281,7 @@ const TARGETS: Target[] = [
     id: 'thumb-cache',
     scope: 'system',
     label: '缩略图缓存',
-    hint: '可以删。资源管理器为图片和视频生成的预览图；被资源管理器占用的会自动跳过。',
+    hint: '资源管理器为图片和视频生成的预览图；正被占用的会自动跳过。',
     defaultChecked: true,
     scan: bytesOnly(async () => {
       const files = await thumbCacheFiles()
@@ -317,7 +317,7 @@ const TARGETS: Target[] = [
     id: 'recycle-bin',
     scope: 'system',
     label: '回收站',
-    hint: '会永久删除你放进回收站的文件，清空后不能恢复，所以默认没勾。',
+    hint: '永久删除回收站里的文件，不能恢复，默认没勾。',
     defaultChecked: false,
     scan: recycleBinStats,
     clean: () => emptyRecycleBin()

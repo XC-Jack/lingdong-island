@@ -593,15 +593,15 @@ const RESIDUE_LEVEL_TEXT: Record<SoftwareResidueItem['level'], string> = {
 const RESIDUE_LEVEL_INFO: Record<SoftwareResidueItem['level'], { brief: string; full: string }> = {
   definite: {
     brief: '程序文件已不存在',
-    full: '登记还在，但它指向的程序文件已经不存在了，基本可以断定是卸载留下的死登记。只有这一级的服务、计划任务和空目录可以勾选清理。'
+    full: '登记还在，但它指向的程序文件已经不存在了。只有这一级的服务、计划任务和空目录能勾选。'
   },
   likely: {
     brief: '程序没了，同公司还有软件',
-    full: '程序文件已经不在了，但同一家公司还有别的软件装着，也可能是那家软件的残留。只报告，不提供删除。'
+    full: '程序文件没了，但同一家公司还有别的软件装着。只报告，不能删。'
   },
   check: {
     brief: '有疑点，需你看一眼',
-    full: '有疑点：程序还在、目录里有内容或来源不明，需要你自己看一眼再决定。只报告，不提供删除。'
+    full: '有疑点：程序还在、目录里有内容或来源不明。只报告，不能删。'
   }
 }
 
@@ -838,7 +838,7 @@ function ResiduePanel({
       setNote(
         `将清理 ${pickedSoftware.length} 项软件残留：${names}${more}。${
           pickedUninstall.length > 0 ? `另有 ${pickedUninstall.length} 项卸载残留一起清理。` : ''
-        }会先导出备份，可在下方「清理备份」里撤销；软件残留需要一次管理员授权。再点一次「确认清理」执行。`
+        }删前会备份、可撤销；需要一次管理员授权。再点一次「确认清理」。`
       )
       return
     }
@@ -886,7 +886,7 @@ function ResiduePanel({
   return (
     <div className="clean-group clean-part swr-group">
       <div className="swr-legend">
-        <span className="swr-legend-title">等级只看证据强弱，不等于能不能删：</span>
+        <span className="swr-legend-title">等级表示证据强弱，不代表能不能删：</span>
         {RESIDUE_LEVELS.map((lv) => (
           <span key={lv} className="swr-legend-item" title={RESIDUE_LEVEL_INFO[lv].full}>
             <span className={`swr-level swr-level-${lv}`}>{RESIDUE_LEVEL_TEXT[lv]}</span>
@@ -970,7 +970,7 @@ function ResiduePanel({
             type="button"
             className="set-btn set-btn-quiet"
             disabled={scanning || busy || rows.length === 0}
-            title="复制一段带完整清单的提示词，粘贴给 AI 助手，让它判断哪些能删"
+            title="复制一段带清单的提示词，贴给 AI 判断哪些能删"
             onClick={() => void copy()}
           >
             {copied ? '已复制' : '复制提示词'}
@@ -1125,7 +1125,7 @@ function ResidueBackupsPanel({
       <div className="residue-backups-head">
         <h4 className="clean-group-title">清理备份</h4>
         <span className="clean-hint">
-          两类清理都先放在这里：卸载残留的文件和注册表会搬回原位置，软件残留的服务、计划任务和空目录会重新登记。删除备份后才会真正腾出空间，且不能恢复。
+          清理的东西先存这里，撤销会恢复原样。删掉备份才真正腾出空间，且不能恢复。
         </span>
       </div>
       {loaded && rows.length === 0 ? <div className="clean-empty">还没有备份。</div> : null}
@@ -1182,7 +1182,7 @@ function ResidueSection(): ReactElement {
       <div className="clean-group-head">
         <h3 className="clean-group-title">残留</h3>
         <p className="clean-lead">
-          已卸载软件留下的痕迹：当前用户的失效卸载项、死快捷方式、空的开始菜单文件夹，以及全机的死服务、计划任务和无主目录。只有确定级能勾选，清理前都会备份，可在下方「清理备份」里撤销。
+          已卸载软件留下的痕迹：失效卸载项、死快捷方式、空的开始菜单文件夹，以及死服务、计划任务和无主目录。只有确定级能勾选，删前备份，可撤销。
         </p>
       </div>
       <ResiduePanel onChanged={onChanged} refresh={refresh} />
@@ -1201,13 +1201,13 @@ export default function SpaceSection(): ReactElement {
       <CleanupPanel
         scope="app"
         title="灵动岛"
-        lead="只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。"
+        lead="只清理灵动岛自己的缓存和日志，不会动待办、日程、置物架和设置。"
       />
       <div className="clean-group clean-group-space">
         <div className="clean-group-head">
           <h3 className="clean-group-title">系统</h3>
           <p className="clean-lead">
-            Windows 和其他软件留下的临时文件、卸载残留。名字后面带琥珀色人形标记的几项，清理时需要管理员授权，其余不需要。
+            Windows 和其他软件留下的临时文件、卸载残留。带琥珀色人形标记的项需要管理员授权。
           </p>
         </div>
         <JunkPanel />
