@@ -186,6 +186,15 @@ const CLOCK_META: Record<ClockFormat, { label: string; desc: string }> = {
 export default function SettingsApp(): ReactElement {
   // 首帧就落在菜单要求的分区（模块级订阅可能在 render 之前已经收到一条）
   const [section, setSection] = useState<SettingsSection>(pendingSection ?? 'general')
+  // 窗口是否最大化：标题栏第二个按钮据此在「最大化 / 还原」之间切换
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    void window.island
+      .settingsMaximized()
+      .then(setMaximized)
+      .catch(() => {})
+    return window.island.onSettingsMaximized(setMaximized)
+  }, [])
   // 偏好先落默认全开，mount 后异步回填真实值——与岛内「先默认后异步回填」同一模式
   const [pagesCustom, setPagesCustom] = useState<PagesCustom>(defaultPagesCustom)
   // 用户一旦在这里改过（dirty）就不再接受启动回填，避免覆盖用户刚点的操作
@@ -474,17 +483,48 @@ export default function SettingsApp(): ReactElement {
     <div className="set-root">
       <header className="set-titlebar">
         <span className="set-title">设置</span>
-        <button
-          type="button"
-          className="set-close"
-          title="关闭"
-          aria-label="关闭设置"
-          onClick={() => window.island.closeSettings()}
-        >
-          <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4">
-            <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" strokeLinecap="round" />
-          </svg>
-        </button>
+        <div className="set-winbtns">
+          <button
+            type="button"
+            className="set-winbtn"
+            title="最小化"
+            aria-label="最小化"
+            onClick={() => window.island.minimizeSettings()}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M2.5 8.5h7" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="set-winbtn"
+            title={maximized ? '还原' : '最大化'}
+            aria-label={maximized ? '还原窗口' : '最大化窗口'}
+            onClick={() => window.island.toggleMaximizeSettings()}
+          >
+            {maximized ? (
+              <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <rect x="2" y="3.6" width="6.4" height="6.4" rx="1" />
+                <path d="M4.2 3.6V2.9a.9.9 0 0 1 .9-.9h4a.9.9 0 0 1 .9.9v4a.9.9 0 0 1-.9.9h-.7" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3">
+                <rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="button"
+            className="set-close"
+            title="关闭"
+            aria-label="关闭设置"
+            onClick={() => window.island.closeSettings()}
+          >
+            <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4">
+              <path d="M2.5 2.5l7 7M9.5 2.5l-7 7" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
       </header>
       <div className="set-body">
         <nav className="set-nav">

@@ -76,6 +76,26 @@ const api = {
   closeSettings(): void {
     ipcRenderer.send('settings:close')
   },
+  /** 最小化设置窗口 */
+  minimizeSettings(): void {
+    ipcRenderer.send('settings:minimize')
+  },
+  /** 最大化 / 还原设置窗口 */
+  toggleMaximizeSettings(): void {
+    ipcRenderer.send('settings:toggle-maximize')
+  },
+  /** 设置窗口当前是否最大化（标题栏初始化图标用） */
+  settingsMaximized(): Promise<boolean> {
+    return ipcRenderer.invoke('settings:is-maximized')
+  },
+  /** 主进程通知最大化状态变化（最大化 / 还原）。返回取消订阅函数 */
+  onSettingsMaximized(cb: (value: boolean) => void): () => void {
+    const h = (_e: Electron.IpcRendererEvent, value: boolean): void => cb(value)
+    ipcRenderer.on('settings:maximized', h)
+    return () => {
+      ipcRenderer.removeListener('settings:maximized', h)
+    }
+  },
   /** 设置窗口：主进程要求切分区（菜单「设置…」/「页面管理…」直达）。返回取消订阅函数 */
   onSettingsSection(cb: (s: SettingsSection) => void): () => void {
     const h = (_e: Electron.IpcRendererEvent, s: SettingsSection): void => cb(s)
