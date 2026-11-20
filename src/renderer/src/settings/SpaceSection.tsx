@@ -898,7 +898,7 @@ function SoftwareResiduePanel(): ReactElement {
       <div className="clean-group-head">
         <h3 className="clean-group-title">软件残留（仅检测）</h3>
         <p className="clean-lead">
-          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。只检测，不会停止或删除任何东西；标「需确认」的项不要直接当成垃圾。
+          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。这是线索清单，不是待删清单：徽标只表示证据强弱，不代表删掉安全（驱动和非空目录尤其不要直接删）。只检测，不会停止或删除任何东西。
         </p>
       </div>
       <div className="swr-list">

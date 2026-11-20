@@ -194,6 +194,17 @@ function nkey(s: string): string {
   return s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
 }
 
+/** 启动方式中文化（WMI 给的是 Auto / Manual / Disabled / Unknown） */
+function startModeText(mode: string): string {
+  const m = (mode || '').toLowerCase()
+  if (m === 'auto') return '自动启动'
+  if (m === 'manual') return '手动启动'
+  if (m === 'disabled') return '已禁用'
+  if (m === 'boot') return '引导启动'
+  if (m === 'system') return '系统启动'
+  return '启动方式未知'
+}
+
 function idOf(kind: SoftwareResidueKind, path: string): string {
   return createHash('sha1').update(`${kind}\0${path.toLowerCase()}`).digest('hex').slice(0, 16)
 }
@@ -471,11 +482,19 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
       const ownerLoc = appLocs.find((l) => under(s.exe, l))
       const level: SoftwareResidueLevel = ownerLoc ? 'likely' : 'definite'
       const tail = ownerLoc ? `；同公司软件仍安装在 ${ownerLoc}` : ''
-      push('service', level, s.name, s.exe, `服务程序已不存在（${s.state}）${tail}`, {
-        company: s.company,
-        running: s.state === 'Running',
-        admin: true
-      })
+      const owner = s.company ? `；公司：${s.company}` : ''
+      push(
+        'service',
+        level,
+        s.name,
+        s.exe,
+        `服务程序已不存在（${s.state}，${startModeText(s.startMode)}）${owner}${tail}`,
+        {
+          company: s.company,
+          running: s.state === 'Running',
+          admin: true
+        }
+      )
       continue
     }
     if (s.state !== 'Running') continue
@@ -495,11 +514,18 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
     if (!p || !isAbs(p)) continue
     const gone = !(await existsConservative(p))
     if (gone) {
-      push('driver', 'definite', d.name, p, `驱动文件已不存在（${d.state}）`, {
-        company: d.company,
-        running: d.state === 'Running',
-        admin: true
-      })
+      push(
+        'driver',
+        'definite',
+        d.name,
+        p,
+        `驱动文件已不存在（${d.state}，${startModeText(d.startMode)}）${d.company ? `；公司：${d.company}` : ''}`,
+        {
+          company: d.company,
+          running: d.state === 'Running',
+          admin: true
+        }
+      )
       continue
     }
     // 只关心 System32\drivers 下的第三方驱动；DriverStore 由系统管理
@@ -515,7 +541,7 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
       'check',
       d.name,
       p,
-      `第三方驱动（${d.state}），未找到同公司的软件、服务或进程${tail}`,
+      `第三方驱动（${d.state}，${startModeText(d.startMode)}），公司：${d.company}，未找到同公司的软件、服务或进程${tail}`,
       { company: d.company, running: d.state === 'Running', admin: true }
     )
   }
@@ -525,7 +551,9 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
     if (!t.exe || !isAbs(t.exe)) continue
     if (/^\\Microsoft\\/i.test(t.path)) continue
     if (await exeExists(t.exe)) continue
-    push('task', 'definite', t.task, t.exe, `计划任务动作的程序已不存在（${t.path}）`, { admin: true })
+    push('task', 'definite', t.task, t.exe, `计划任务「${t.path}${t.task}」的动作程序已不存在`, {
+      admin: true
+    })
   }
 
   /* ---------- 4. 运行中的进程 ---------- */

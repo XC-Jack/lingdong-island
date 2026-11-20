@@ -1119,7 +1119,7 @@ div.pm-row[draggable='true'] {
   background: rgba(255, 255, 255, 0.03);
 }
 .swr-row.swr-definite {
-  background: rgba(255, 138, 128, 0.07);
+  background: rgba(140, 170, 255, 0.06);
 }
 .swr-head {
   display: flex;
@@ -1133,9 +1133,10 @@ div.pm-row[draggable='true'] {
   border-radius: 4px;
   font-weight: 600;
 }
+/* 等级只表示证据强弱，不表示危险程度：不用红色，免得被当成待删清单 */
 .swr-level-definite {
-  background: rgba(255, 138, 128, 0.16);
-  color: #ff8a80;
+  background: rgba(140, 170, 255, 0.16);
+  color: #9db4ff;
 }
 .swr-level-likely {
   background: rgba(255, 183, 77, 0.16);
