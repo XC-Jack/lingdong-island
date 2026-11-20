@@ -528,7 +528,10 @@ function JunkPanel(): ReactElement {
                 <span className="clean-hint">{row.hint}</span>
               </span>
               {/* 「无法统计」说的是大小，不是「要管理员才能用」 */}
-              <span className="clean-size">
+              <span
+                className="clean-size"
+                title={row.known ? undefined : '这项的大小要管理员权限或系统接口才能读到；不影响清理。'}
+              >
                 {!row.known
                   ? '无法统计'
                   : pending
@@ -541,6 +544,11 @@ function JunkPanel(): ReactElement {
           )
         })}
       </div>
+      {rows.some((r) => !r.known) ? (
+        <div className="clean-hint clean-unknown">
+          标「无法统计」的项，大小要管理员权限或系统接口才读得到；不影响清理，能统计到的会在清完后报释放量。
+        </div>
+      ) : null}
       <div className="set-note clean-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
