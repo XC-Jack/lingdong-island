@@ -50,7 +50,7 @@ const TARGETS: TargetDef[] = [
   {
     id: 'update-cache',
     label: '更新安装包缓存',
-    hint: '下载新版本时留下的安装包，通常一百多 MB。删了不影响已装的版本，下次更新重新下载。',
+    hint: '可以删。下载新版本时留下的安装包，通常一百多 MB；删了不影响已安装的版本，下次更新重新下载。',
     kind: 'fs',
     defaultChecked: true,
     paths: () => [updateCacheDir()]
@@ -58,7 +58,7 @@ const TARGETS: TargetDef[] = [
   {
     id: 'web-cache',
     label: '网页缓存',
-    hint: '界面渲染用的网页与脚本缓存，删了下次打开会自己重建，不碰任何数据。',
+    hint: '可以删。界面渲染用的网页与脚本缓存；删了不影响数据，下次打开会自己重建。',
     kind: 'web-cache',
     defaultChecked: true,
     paths: () => [join(userDataDir(), 'Cache'), join(userDataDir(), 'Code Cache')]
@@ -66,7 +66,7 @@ const TARGETS: TargetDef[] = [
   {
     id: 'lyrics',
     label: '歌词缓存',
-    hint: '查过的歌词存在本机，删了下次播放时联网重查；断网时会显示「暂无歌词」。',
+    hint: '可以删。查过的歌词存在本机；删了下次播放时联网重查，断网时会暂时显示「暂无歌词」。',
     kind: 'fs',
     defaultChecked: true,
     paths: () => [join(userDataDir(), 'lyrics')]
@@ -74,7 +74,7 @@ const TARGETS: TargetDef[] = [
   {
     id: 'logs',
     label: '诊断日志',
-    hint: '启动记录和收起记录，只在排查问题时有用。一般不用清，删了出问题就查不到现场。',
+    hint: '可以删，删了不影响使用；但以后真出故障时就没有记录可查，所以默认没勾。',
     kind: 'fs',
     defaultChecked: false,
     paths: () => [join(userDataDir(), 'startup.log'), join(userDataDir(), 'collapse-log.txt')]
