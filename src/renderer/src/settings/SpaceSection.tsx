@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { CleanupScanResult, CleanupTargetId } from '../../../shared/types'
+import type { CleanupScanResult, CleanupScope, CleanupTargetId } from '../../../shared/types'
 
 /**
- * 设置「空间」页（SPEC-space-cleanup）。
+ * 设置「空间」页（SPEC-space-cleanup / SPEC-space-system-junk）。
  *
- * 第一阶段只清灵动岛自己的缓存和日志。清单与路径全部在主进程
- * `cleanupStore.ts` 里写死，这里只负责展示、勾选和发 id——
+ * 两组：灵动岛自己的缓存、系统垃圾。清单与路径全部在主进程
+ * `cleanupStore.ts` 里写死，这里只负责展示、勾选和发 scope + id——
  * 页面上不存在「传路径」的入口，避免清理功能被页面错误驱动。
  */
 
@@ -18,7 +18,14 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-export default function SpaceSection(): ReactElement {
+interface PanelProps {
+  scope: CleanupScope
+  title: string
+  lead: string
+}
+
+/** 一组清理项：独立的扫描结果、勾选、提示与按钮 */
+function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   const [scan, setScan] = useState<CleanupScanResult | null>(null)
   const [selected, setSelected] = useState<Set<CleanupTargetId>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -39,13 +46,13 @@ export default function SpaceSection(): ReactElement {
   const refresh = useCallback(async (): Promise<void> => {
     setBusy(true)
     try {
-      applyScan(await window.island.cleanupScan())
+      applyScan(await window.island.cleanupScan(scope))
     } catch {
       setNote('读取占用失败，请稍后再试。')
     } finally {
       setBusy(false)
     }
-  }, [applyScan])
+  }, [applyScan, scope])
 
   useEffect(() => {
     void refresh()
@@ -73,11 +80,12 @@ export default function SpaceSection(): ReactElement {
     setNote('正在清理…')
     const ids = [...selected]
     try {
-      const res = await window.island.cleanupRun(ids)
+      const res = await window.island.cleanupRun(scope, ids)
       applyScan(res.scan)
       const head = res.freedBytes > 0 ? `已释放 ${formatBytes(res.freedBytes)}。` : '这次没有释放出空间。'
       // 网页缓存是程序运行时会马上重新写入的，清完再看又有一点属正常，别让用户以为没清掉
-      const webLeft = ids.includes('web-cache') && (res.scan.items.find((i) => i.id === 'web-cache')?.bytes ?? 0) > 0
+      const webLeft =
+        ids.includes('web-cache') && (res.scan.items.find((i) => i.id === 'web-cache')?.bytes ?? 0) > 0
       const tail = webLeft ? '网页缓存会随使用重新生成，刚清完又出现少量是正常的。' : ''
       setNote([head, ...res.warnings, tail].filter(Boolean).join(' '))
     } catch {
@@ -88,11 +96,11 @@ export default function SpaceSection(): ReactElement {
   }
 
   return (
-    <section className="set-page">
-      <h2 className="set-page-title">空间</h2>
-      <p className="clean-lead">
-        只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。
-      </p>
+    <div className="clean-group">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">{title}</h3>
+        <p className="clean-lead">{lead}</p>
+      </div>
       <div className="set-card">
         {scan === null ? <div className="clean-empty">正在计算占用…</div> : null}
         {items.map((item) => {
@@ -154,6 +162,24 @@ export default function SpaceSection(): ReactElement {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+export default function SpaceSection(): ReactElement {
+  return (
+    <section className="set-page">
+      <h2 className="set-page-title">空间</h2>
+      <CleanupPanel
+        scope="app"
+        title="灵动岛的缓存"
+        lead="只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。"
+      />
+      <CleanupPanel
+        scope="system"
+        title="系统垃圾"
+        lead="Windows 和其他软件留下的临时文件。这一组不需要管理员权限，正在使用的文件会自动跳过。"
+      />
     </section>
   )
 }

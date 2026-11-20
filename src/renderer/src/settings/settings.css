@@ -863,9 +863,30 @@ div.pm-row[draggable='true'] {
 
 /* ===== 空间清理（SPEC-space-cleanup） ===== */
 
-/* 页面开头的一句说明：告诉用户这里只动什么、绝不动什么 */
+/* 一组清理项（灵动岛缓存 / 系统垃圾），各自有标题、列表、提示与按钮 */
+.clean-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.clean-group + .clean-group {
+  margin-top: 10px;
+}
+.clean-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.clean-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: rgba(242, 243, 245, 0.92);
+}
+
+/* 组开头的一句说明：告诉用户这里只动什么、绝不动什么 */
 .clean-lead {
-  margin: -4px 0 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.7;
   color: rgba(242, 243, 245, 0.5);
