@@ -69,7 +69,8 @@ export default function SpaceSection(): ReactElement {
   const run = async (): Promise<void> => {
     if (busy || selectedBytes === 0) return
     setBusy(true)
-    setNote('')
+    // 不清空提示：提示区固定占一行，原地换成「正在清理…」，避免整块底部在点击瞬间上下跳
+    setNote('正在清理…')
     const ids = [...selected]
     try {
       const res = await window.island.cleanupRun(ids)
@@ -123,7 +124,9 @@ export default function SpaceSection(): ReactElement {
           )
         })}
       </div>
-      {note ? <div className="set-note">{note}</div> : null}
+      {/* 提示区始终占位（.clean-note 有最小高度）：反复清理时底部按钮不会因为
+          提示出现/消失而上下移动，避免在鼠标底下跳动 */}
+      <div className="set-note clean-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
           可清理 <b>{formatBytes(totalBytes)}</b> · 已选 <b>{formatBytes(selectedBytes)}</b>

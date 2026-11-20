@@ -951,6 +951,17 @@ div.pm-row[draggable='true'] {
   font-variant-numeric: tabular-nums;
 }
 
+/* 结果提示固定占一行（空着也占位），反复清理时底部不会跳 */
+.clean-note {
+  min-height: 19px;
+}
+
+/* 主按钮两种文案（清理选中项 / 处理中…）锁死同宽：
+   否则点击瞬间按钮会横向收缩，正好在鼠标底下抖一下 */
+.clean-actions .set-btn-primary {
+  min-width: 88px;
+}
+
 /* 底部合计与按钮 */
 .clean-foot {
   display: flex;
