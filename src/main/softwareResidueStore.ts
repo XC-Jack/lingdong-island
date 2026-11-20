@@ -364,12 +364,13 @@ async function isEmptyDir(dir: string): Promise<boolean> {
 async function sizeWithin(
   dir: string,
   budgetMs: number
-): Promise<{ bytes: number; truncated: boolean }> {
+): Promise<{ bytes: number; truncated: boolean; exes: string[] }> {
   const deadline = Date.now() + budgetMs
   let bytes = 0
+  const exes: string[] = []
   const stack: string[] = [dir]
   while (stack.length > 0) {
-    if (Date.now() > deadline) return { bytes, truncated: true }
+    if (Date.now() > deadline) return { bytes, truncated: true, exes }
     const cur = stack.pop() as string
     let entries: Dirent[]
     try {
@@ -384,6 +385,7 @@ async function sizeWithin(
         stack.push(full)
         continue
       }
+      if (exes.length < 4 && /\.exe$/i.test(e.name)) exes.push(full)
       try {
         bytes += (await rawFs.lstat(full)).size
       } catch {
@@ -391,7 +393,58 @@ async function sizeWithin(
       }
     }
   }
-  return { bytes, truncated: false }
+  return { bytes, truncated: false, exes }
+}
+
+interface ExeInfo {
+  path?: string
+  name: string
+  company: string
+  product: string
+}
+
+/**
+ * 批量读 exe 的版本信息（公司 / 产品）。
+ *
+ * 目录名和安装登记经常对不上，但目录里的 exe 通常带着发行公司，
+ * 拿它和已安装软件的公司比对，就能给出「这是谁的目录」这类线索。
+ * 路径是遍历目录时顺手收集的，这里只读版本信息，不再重复遍历。
+ */
+async function readExeVersions(paths: string[]): Promise<Map<string, ExeInfo>> {
+  const map = new Map<string, ExeInfo>()
+  const uniq = [...new Set(paths)].slice(0, 160)
+  if (uniq.length === 0) return map
+  const list = uniq.map((p) => `'${p.replace(/'/g, "''")}'`).join(',')
+  const script = String.raw`
+$files=@(${list})
+$out=@()
+foreach($p in $files){
+  if(-not (Test-Path -LiteralPath $p)){ continue }
+  $v=(Get-Item -LiteralPath $p).VersionInfo
+  $out += [pscustomobject]@{ path=[string]$p; name=[string](Split-Path -Leaf $p); company=[string]$v.CompanyName; product=[string]$v.ProductName }
+}
+[Console]::Out.Write((ConvertTo-Json -InputObject ([pscustomobject]@{ items=@($out) }) -Depth 4 -Compress))
+`
+  try {
+    const r = await runPowerShellRaw(script, 30_000)
+    const parsed = JSON.parse(r.stdout || '{}') as { items?: ExeInfo | ExeInfo[] }
+    for (const it of asArray(parsed.items)) {
+      if (it.path) map.set(norm(it.path), it)
+    }
+  } catch {
+    /* 读不到就少一条线索，不影响主结果 */
+  }
+  return map
+}
+
+/** 目录最近修改时间的年月，用于判断是不是多年没动过的旧东西 */
+async function mtimeText(dir: string): Promise<string> {
+  try {
+    const st = await rawFs.stat(dir)
+    return `${st.mtime.getFullYear()}-${String(st.mtime.getMonth() + 1).padStart(2, '0')}`
+  } catch {
+    return ''
+  }
 }
 
 async function topLevelDirs(root: string): Promise<string[]> {
@@ -418,6 +471,23 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
   // 目录名大多对不上软件显示名（「Tencent」vs「QQ」），发行商和图标程序的版本信息往往能对上
   const publisherNames = apps.flatMap((a) => [a.publisher, a.company, a.product]).filter(Boolean)
   const ownerKeys = [...appNames, ...publisherNames].map(nkey).filter((k) => k.length >= 2)
+
+  // 公司/产品 → 已安装软件名，用来回答「这条残留原来是哪个软件的」
+  const ownerEntries: { key: string; name: string }[] = []
+  for (const a of apps) {
+    for (const field of [a.company, a.product, a.publisher]) {
+      const k = nkey(field)
+      if (k.length >= 3) ownerEntries.push({ key: k, name: a.name })
+    }
+  }
+  const findOwner = (company: string): string | null => {
+    const k = nkey(company)
+    if (k.length < 3) return null
+    const hit = ownerEntries.find(
+      (o) => o.key === k || (k.length >= 4 && o.key.includes(k)) || (o.key.length >= 4 && k.includes(o.key))
+    )
+    return hit ? hit.name : null
+  }
 
   const appLocCandidates = [
     ...apps.map((a) => a.loc),
@@ -482,7 +552,10 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
       const ownerLoc = appLocs.find((l) => under(s.exe, l))
       const level: SoftwareResidueLevel = ownerLoc ? 'likely' : 'definite'
       const tail = ownerLoc ? `；同公司软件仍安装在 ${ownerLoc}` : ''
-      const owner = s.company ? `；公司：${s.company}` : ''
+      const byCompany = s.company ? findOwner(s.company) : null
+      const owner = s.company
+        ? `；公司：${s.company}${byCompany ? `，同公司已安装软件：${byCompany}` : '，未找到同公司已安装软件'}`
+        : ''
       push(
         'service',
         level,
@@ -536,12 +609,16 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
     // 所以一律标「需确认」，不给「很可能」的结论
     const shared = SHARED_DRIVER.test(d.name)
     const tail = shared ? '；这类驱动常被多个软件共用，不能仅凭它判断' : ''
+    const byCompany = findOwner(d.company)
+    const ownerText = byCompany
+      ? `，同公司已安装软件：${byCompany}`
+      : '，未找到同公司已安装软件'
     push(
       'driver',
       'check',
       d.name,
       p,
-      `第三方驱动（${d.state}，${startModeText(d.startMode)}），公司：${d.company}，未找到同公司的软件、服务或进程${tail}`,
+      `第三方驱动（${d.state}，${startModeText(d.startMode)}）；公司：${d.company}${ownerText}；也没有同公司的服务或进程在运行${tail}`,
       { company: d.company, running: d.state === 'Running', admin: true }
     )
   }
@@ -609,6 +686,7 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
   }
 
   const seen = new Set<string>()
+  const folders: { dir: string; base: string; admin: boolean; empty: boolean }[] = []
   for (const root of roots) {
     for (const dir of await topLevelDirs(root.path)) {
       const base = basename(dir)
@@ -620,28 +698,66 @@ async function classify(raw: RawData): Promise<SoftwareResidueScanResult> {
       if (isReferenced(dir)) continue
       if (nameClaimed(base)) continue
       if (await hasUninstaller(dir)) continue
-      if (await isEmptyDir(dir)) {
-        push('folder', 'definite', base, dir, '空目录：没有任何文件，也没有被软件、服务或任务引用', {
-          bytes: 0,
-          admin: root.admin
-        })
+      const empty = await isEmptyDir(dir)
+      if (empty) {
+        folders.push({ dir, base, admin: root.admin, empty: true })
         continue
       }
       // 非系统盘根目录、AppData 下多半是用户资料或各软件的正常缓存，
       // 不列出来免得吓人；只报「空目录」这种能明确判断的
       if (root.emptyOnly) continue
-      const { bytes, truncated } = await sizeWithin(dir, 2000)
+      folders.push({ dir, base, admin: root.admin, empty: false })
+    }
+  }
+
+  // 先算占用的同时顺手收集目录里的 exe，再一次性读它们的公司信息
+  const sized: { dir: string; base: string; admin: boolean; bytes: number; truncated: boolean; exes: string[] }[] = []
+  for (const f of folders) {
+    if (f.empty) {
+      const modified = await mtimeText(f.dir)
       push(
         'folder',
-        'check',
-        base,
-        dir,
-        truncated
-          ? '没有被已安装软件、服务、计划任务或快捷方式引用；目录太大，占用按已统计部分估算'
-          : '没有被已安装软件、服务、计划任务或快捷方式引用；但安装登记不一定写全路径，需要你自己确认',
-        { bytes, admin: root.admin }
+        'definite',
+        f.base,
+        f.dir,
+        `空目录：没有任何文件，也没有被软件、服务或任务引用${modified ? `；最近修改 ${modified}` : ''}`,
+        { bytes: 0, admin: f.admin }
       )
+      continue
     }
+    const s = await sizeWithin(f.dir, 2000)
+    sized.push({ dir: f.dir, base: f.base, admin: f.admin, ...s })
+  }
+
+  const versions = await readExeVersions(sized.flatMap((s) => s.exes))
+  for (const s of sized) {
+    const modified = await mtimeText(s.dir)
+    const when = modified ? `；最近修改 ${modified}` : ''
+    const infos = s.exes
+      .map((p) => versions.get(norm(p)))
+      .filter((v): v is ExeInfo => Boolean(v))
+    const withCompany = infos.find((e) => e.company)
+    const byCompany = withCompany ? findOwner(withCompany.company) : null
+    const inside = withCompany
+      ? `；目录里有程序 ${withCompany.name}（公司：${withCompany.company}）${
+          byCompany ? `，同公司已安装软件：${byCompany}` : '，未找到同公司已安装软件'
+        }`
+      : infos.length > 0
+        ? `；目录里有程序 ${infos
+            .map((e) => e.name)
+            .slice(0, 2)
+            .join('、')}，但读不到公司信息`
+        : '；目录里没有读取到程序文件'
+    push(
+      'folder',
+      'check',
+      s.base,
+      s.dir,
+      `没有被已安装软件、服务、计划任务或快捷方式引用${inside}${when}${
+        s.truncated ? '；目录太大，占用按已统计部分估算' : ''
+      }`,
+      { bytes: s.bytes, admin: s.admin }
+    )
   }
 
   if (items.length === 0) warnings.push('没有发现软件残留。')
