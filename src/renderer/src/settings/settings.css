@@ -177,19 +177,38 @@ body {
   overflow-y: auto;
   /* 设置是固定宽度排版，永远不该横向滚；纵向滚动保留 */
   overflow-x: clip;
+  /* 关掉浏览器的滚动锚定：清单重排（勾选置顶）时不要替我们挪滚动位置，
+     位置由 SpaceSection 的 keepScroll 自己还原，否则会和锚定互相打架 */
+  overflow-anchor: none;
   padding: 18px 22px 22px;
 }
-/* 滚动条跟深色底配，别用系统亮色那条 */
-.set-content::-webkit-scrollbar {
+/* 滚动条跟深色底配：轨道整个透明（不再露系统那条浅色带和上下三角按钮），
+   只留一块很淡的滑块，悬停时略亮。内容区与残留清单共用这一份。 */
+.set-content::-webkit-scrollbar,
+.swr-list::-webkit-scrollbar {
   width: 10px;
+  background: transparent;
 }
-.set-content::-webkit-scrollbar-thumb {
+.set-content::-webkit-scrollbar-button,
+.swr-list::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+}
+.set-content::-webkit-scrollbar-track,
+.swr-list::-webkit-scrollbar-track,
+.set-content::-webkit-scrollbar-corner,
+.swr-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.set-content::-webkit-scrollbar-thumb,
+.swr-list::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 6px;
   background-clip: content-box;
   background-color: rgba(255, 255, 255, 0.16);
 }
-.set-content::-webkit-scrollbar-thumb:hover {
+.set-content::-webkit-scrollbar-thumb:hover,
+.swr-list::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.26);
 }
 
@@ -1118,6 +1137,8 @@ div.pm-row[draggable='true'] {
   gap: 8px;
   max-height: 460px;
   overflow-y: auto;
+  /* 清单自己就是滚动区，勾选重排时同样不许浏览器做滚动锚定 */
+  overflow-anchor: none;
 }
 /* 图例：等级含义直接写在面板里，不用靠说明文档 */
 .swr-legend {

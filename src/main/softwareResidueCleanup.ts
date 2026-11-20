@@ -1,7 +1,7 @@
 import { app } from 'electron'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type {
   ResidueCleanupBackup,
   ResidueCleanupItemResult,
@@ -24,7 +24,9 @@ import { getLastResidueScan, scanSoftwareResidue } from './softwareResidueStore'
  * 安全边界：
  * - 渲染层只传 id，主进程拿最近一次扫描结果核对；不接受任何路径或名字。
  * - 删之前先备份（服务导出注册表、任务导出 XML），备份失败就不删。
- * - 提权脚本用 -EncodedCommand 传入，不落 .ps1 中间文件（同 SPEC-space-admin-cleanup）。
+ * - 提权脚本正文落成随机名 .ps1，命令行只放「路径 + SHA-256」的短加载器：
+ *   项数一多，整段脚本编码进命令行会撞 Windows 32767 字符上限（见 `runElevated`）。
+ *   提权进程执行前自校验哈希，同用户进程换掉文件也对不上。
  * - 结果文件随机名，读前确认是普通文件，读完即删。
  */
 
@@ -261,22 +263,73 @@ interface ElevatedOutcome {
   raw: RawResult[]
 }
 
-/** 用一次 UAC 执行脚本，返回解析后的逐项结果 */
+/** 加载器的两种拒绝退出码：91 读不到脚本文件，92 哈希对不上（文件被换过） */
+const EXIT_SCRIPT_UNREADABLE = 91
+const EXIT_SCRIPT_TAMPERED = 92
+
+/**
+ * 用一次 UAC 执行脚本，返回解析后的逐项结果。
+ *
+ * 脚本正文**不能**整段编码进命令行：Windows 单条命令行上限 32767 字符，
+ * 19 项残留编码后是 46,776 字符，`spawn` 阶段就抛 ENAMETOOLONG，PowerShell 起不来、
+ * UAC 也不会弹，于是每一项都落成「没有返回结果」。
+ *
+ * 现在正文落成随机名 .ps1，命令行只放「路径 + SHA-256」的短加载器。提权进程读到文件后
+ * 自己按 UTF-8 复算哈希，对不上就退 92 不执行：同用户进程即使在 UAC 等待窗里换掉文件，
+ * 也拿不到满足已钉死在命令行里的哈希，和原来「不留中间文件」的防护等价。
+ */
 async function runElevated(script: string, resultPath: string): Promise<ElevatedOutcome> {
+  const scriptPath = join(dirname(resultPath), `script-${randomBytes(8).toString('hex')}.ps1`)
   const cleanupTemp = async (): Promise<void> => {
     await fs.rm(resultPath, { force: true })
+    await fs.rm(scriptPath, { force: true })
   }
+
+  let exitCode: number | null = null
   try {
-    const encoded = Buffer.from(script, 'utf16le').toString('base64')
-    await runPowerShell(
+    await fs.writeFile(scriptPath, script, 'utf8')
+    const hash = createHash('sha256').update(script, 'utf8').digest('hex')
+    // 加载器里只有字面量，没有任何来自渲染层或外部的拼接
+    const loader = [
+      "$ErrorActionPreference = 'Stop'",
+      `$f = ${psq(scriptPath)}`,
+      `$h = '${hash}'`,
+      `try { $t = [System.IO.File]::ReadAllText($f, (New-Object System.Text.UTF8Encoding($false))) } catch { exit ${EXIT_SCRIPT_UNREADABLE} }`,
+      '$sha = [System.Security.Cryptography.SHA256]::Create()',
+      '$got = [System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($t))).Replace("-", "").ToLowerInvariant()',
+      `if ($got -ne $h) { exit ${EXIT_SCRIPT_TAMPERED} }`,
+      'Invoke-Expression $t'
+    ].join('\n')
+    const encoded = Buffer.from(loader, 'utf16le').toString('base64')
+    const out = await runPowerShell(
       `$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}' -Verb RunAs -Wait -PassThru; [Console]::Out.Write([string]$p.ExitCode)`,
       600_000
     )
+    const n = Number.parseInt(out.trim(), 10)
+    exitCode = Number.isFinite(n) ? n : null
   } catch (e) {
     await cleanupTemp()
     const msg = errText(e)
-    const canceled = /取消|cancel|1223/i.test(msg)
-    return { canceled, error: canceled ? '' : msg, raw: [] }
+    if (/取消|cancel|1223/i.test(msg)) return { canceled: true, error: '', raw: [] }
+    // spawn 层的系统错误（命令行长、找不到 powershell 等）用户读不懂，先说结论再附技术信息
+    return { canceled: false, error: `提权脚本没能启动，这次没有做任何改动。（${msg}）`, raw: [] }
+  }
+
+  if (exitCode === EXIT_SCRIPT_TAMPERED) {
+    await cleanupTemp()
+    return {
+      canceled: false,
+      error: '提权脚本的校验没通过（执行前被改动过），这次没有执行任何操作。',
+      raw: []
+    }
+  }
+  if (exitCode === EXIT_SCRIPT_UNREADABLE) {
+    await cleanupTemp()
+    return {
+      canceled: false,
+      error: '提权脚本读不到（临时文件被删或不可读），这次没有执行任何操作。',
+      raw: []
+    }
   }
 
   let raw: RawResult[] = []
@@ -361,12 +414,13 @@ export async function runResidueCleanup(rawIds: unknown): Promise<ResidueCleanup
   const scan = await scanSoftwareResidue()
 
   if (outcome.canceled) {
+    await dropUnusedBackup(backupDir)
     return {
       ok: false,
       canceled: true,
       items: [],
       warnings: ['已取消管理员授权，没有删除任何东西。'],
-      backupDir,
+      backupDir: '',
       scan
     }
   }
@@ -382,7 +436,28 @@ export async function runResidueCleanup(rawIds: unknown): Promise<ResidueCleanup
     return { id: it.id, label: it.label, ok: Boolean(r.ok), message: String(r.message ?? '') }
   })
 
-  return { ok: true, canceled: false, items, warnings, backupDir, scan }
+  // 一项都没成功（提权脚本压根没跑起来等）：备份目录里只剩 manifest.json，
+  // 留着会在「清理备份」里显示成一批实际什么也没备份的批次，还可能被点「撤销」。
+  const anyOk = items.some((x) => x.ok)
+  let backupDirOut = backupDir
+  if (!anyOk && (await dropUnusedBackup(backupDir))) backupDirOut = ''
+
+  return { ok: true, canceled: false, items, warnings, backupDir: backupDirOut, scan }
+}
+
+/**
+ * 删掉只剩 manifest.json 的备份目录，返回是否删掉了。
+ * 只在「这次没删成任何东西」时调用——失败时生成的批次没有实际备份，留着只会误导。
+ */
+async function dropUnusedBackup(dir: string): Promise<boolean> {
+  try {
+    const names = await fs.readdir(dir)
+    if (names.some((n) => n !== 'manifest.json')) return false
+    await fs.rm(dir, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 备份目录名固定为 residue-<时间戳>-<随机 2 字节>，用来拒绝任意路径 */

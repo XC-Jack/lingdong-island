@@ -22,19 +22,71 @@ import type {
  * 立即渲染，每项算出大小就替换成实际数字，慢的那项自己转「计算中…」。
  */
 
-/** 勾选的行置顶，最近勾选的排最前；未勾选的保持原顺序 */
-function checkedFirst<T>(
+/**
+ * 勾选的行置顶；组内按勾选先后从早到晚排（最近勾的落在组末）。
+ * 默认勾选的项没有勾选记录（rank -1），排在最前并按清单原顺序稳定排列。
+ * 2026-11-20 用户更正：先做成「最近勾的最前」，用户要的是「后勾选排后面」。
+ */
+function checkedOrder<T>(
   rows: T[],
   keyOf: (row: T) => string,
   selected: Set<string>,
   recent: string[]
-): T[] {
-  const rank = new Map(recent.map((k, i) => [k, i]))
+): Map<string, number> {
+  const seq = new Map(recent.map((k, i) => [k, i]))
   const on = rows
     .filter((r) => selected.has(keyOf(r)))
-    .sort((a, b) => (rank.get(keyOf(b)) ?? -1) - (rank.get(keyOf(a)) ?? -1))
-  const off = rows.filter((r) => !selected.has(keyOf(r)))
-  return [...on, ...off]
+    .sort((a, b) => (seq.get(keyOf(a)) ?? -1) - (seq.get(keyOf(b)) ?? -1))
+  // 用 flex 的 order 排视觉位置，DOM 顺序保持原样：节点不动，浏览器就不会
+  // 因为「获得焦点的元素被移走」把滚动条拉回被移走的那一行（用户实测的跳屏）。
+  const order = new Map<string, number>()
+  on.forEach((r, i) => order.set(keyOf(r), i))
+  let next = on.length
+  for (const r of rows) {
+    const k = keyOf(r)
+    if (!order.has(k)) order.set(k, next++)
+  }
+  return order
+}
+
+/**
+ * 勾选后行会重排（勾选的排到组首），可视区跟着上下窜；用户勾一个就得重新滚。
+ * 做法：把这一行所有能滚的祖先（残留清单 `.swr-list` 自己就是一个滚动区，
+ * 外层还有 `.set-content`）的 scrollTop 都记下来，重排后还原。
+ * 浏览器在元素获得焦点/移动后可能晚一两帧才把焦点元素滚进视野，所以还原两次：
+ * 双 rAF 之后一次、60ms 后再补一次（后者与用户滚轮冲突的概率很低）。
+ */
+function keepScroll(from: Element | null, run: () => void): void {
+  const scrollers: HTMLElement[] = []
+  let node: Element | null = from?.parentElement ?? null
+  while (node) {
+    const el = node as HTMLElement
+    if (el.scrollHeight > el.clientHeight + 1) scrollers.push(el)
+    node = node.parentElement
+  }
+  const content = document.querySelector<HTMLElement>('.set-content')
+  if (content && !scrollers.includes(content)) scrollers.push(content)
+  const tops = scrollers.map((el) => el.scrollTop)
+  // 关键：Chromium 会把「获得焦点又被移走的元素」滚进视野（实测点勾选后内层清单
+  // 从 3608 直接被拉到 0）。先让被点的那一行失焦，重排就不会触发这个滚动；
+  // 重排完成后再用 preventScroll 把焦点还回去，键盘用户也不会丢焦点。
+  const wasFocused = from instanceof HTMLElement && document.activeElement === from
+  if (wasFocused) (from as HTMLElement).blur()
+  run()
+  const restore = (): void => {
+    scrollers.forEach((el, i) => {
+      if (el.isConnected) el.scrollTop = tops[i]
+    })
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      restore()
+      if (wasFocused && from instanceof HTMLElement && from.isConnected) {
+        from.focus({ preventScroll: true })
+      }
+    })
+  })
+  setTimeout(restore, 60)
 }
 
 function formatBytes(n: number): string {
@@ -121,21 +173,23 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   /** 已选中的「默认不勾」项：删除不可恢复，要先问一句 */
   const risky = rows.filter((r) => selected.has(r.id) && !r.defaultChecked)
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
-  const toggle = (id: CleanupTargetId): void => {
-    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
-    if (confirming) setNote('')
-    setConfirming(false)
-    rememberPick(id, selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  const toggle = (id: CleanupTargetId, from?: Element | null): void => {
+    keepScroll(from ?? null, () => {
+      // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+      if (confirming) setNote('')
+      setConfirming(false)
+      rememberPick(id, selected.has(id))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
     })
   }
 
@@ -184,6 +238,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
     }
   }
 
+  const order = checkedOrder(rows, (r) => r.id, selected, recent)
   return (
     <div className="clean-group">
       <div className="clean-group-head">
@@ -196,7 +251,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新计算」再试。'}
           </div>
         ) : null}
-        {checkedFirst(rows, (r) => r.id, selected, recent).map((row) => {
+        {rows.map((row) => {
           const on = selected.has(row.id)
           const known = row.bytes !== null
           return (
@@ -206,9 +261,10 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
               role="checkbox"
               aria-checked={on}
               aria-label={row.label}
+              style={{ order: order.get(row.id) ?? 0 }}
               className={`clean-row${on ? ' on' : ''}`}
               disabled={busy || !known || (row.bytes === 0 && !row.exists)}
-              onClick={() => toggle(row.id)}
+              onClick={(e) => toggle(row.id, e.currentTarget)}
             >
               <span className="clean-check" aria-hidden="true">
                 {on ? (
@@ -384,21 +440,23 @@ function JunkPanel(): ReactElement {
   /** 已选中的「默认不勾」项（回收站）：删除不可恢复，要先问一句 */
   const risky = selectedRows.filter((r) => !r.defaultChecked)
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
-  const toggle = (id: string): void => {
-    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
-    if (confirming) setNote('')
-    setConfirming(false)
-    rememberPick(id, selected.has(id))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
+  const toggle = (id: string, from?: Element | null): void => {
+    keepScroll(from ?? null, () => {
+      // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+      if (confirming) setNote('')
+      setConfirming(false)
+      rememberPick(id, selected.has(id))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
     })
   }
 
@@ -504,6 +562,7 @@ function JunkPanel(): ReactElement {
     }
   }
 
+  const order = checkedOrder(rows, (r) => r.id, selected, recent)
   return (
     <div className="clean-group clean-part">
       <div className="clean-group-head">
@@ -515,7 +574,7 @@ function JunkPanel(): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新读取」再试。'}
           </div>
         ) : null}
-        {checkedFirst(rows, (r) => r.id, selected, recent).map((row) => {
+        {rows.map((row) => {
           const on = selected.has(row.id)
           const pending = row.known && row.bytes === null
           const empty = row.known && row.bytes === 0 && !row.exists
@@ -526,9 +585,10 @@ function JunkPanel(): ReactElement {
               role="checkbox"
               aria-checked={on}
               aria-label={row.label}
+              style={{ order: order.get(row.id) ?? 0 }}
               className={`clean-row${on ? ' on' : ''}`}
               disabled={busy || pending || empty}
-              onClick={() => toggle(row.id)}
+              onClick={(e) => toggle(row.id, e.currentTarget)}
             >
               <span className="clean-check" aria-hidden="true">
                 {on ? (
@@ -798,23 +858,25 @@ function ResiduePanel({
     }
   }
 
-  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  /** 记下勾选先后：新勾的追加到末尾（组内顺序就是勾选顺序）；取消勾选就移掉 */
   const rememberPick = (id: string, wasOn: boolean): void => {
     setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
   }
 
-  const toggle = (row: MergedResidueRow): void => {
+  const toggle = (row: MergedResidueRow, from?: Element | null): void => {
     if (!row.cleanable || busy || scanning) return
-    rememberPick(row.key, selected.has(row.key))
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(row.key)) next.delete(row.key)
-      else next.add(row.key)
-      return next
+    keepScroll(from ?? null, () => {
+      rememberPick(row.key, selected.has(row.key))
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(row.key)) next.delete(row.key)
+        else next.add(row.key)
+        return next
+      })
+      // 勾选一变，之前的确认就作废
+      setConfirming(false)
+      setNote('')
     })
-    // 勾选一变，之前的确认就作废
-    setConfirming(false)
-    setNote('')
   }
 
   /**
@@ -925,6 +987,7 @@ function ResiduePanel({
 
   const cleanableCount = rows.filter((r) => r.cleanable).length
 
+  const order = checkedOrder(rows, (r) => r.key, selected, recent)
   return (
     <div className="swr-group">
       <div className="swr-legend">
@@ -946,11 +1009,12 @@ function ResiduePanel({
         {scanning ? <div className="clean-empty">正在扫描卸载残留和软件残留，需要十几秒…</div> : null}
         {!scanning && !scanned ? <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div> : null}
         {!scanning && scanned && rows.length === 0 ? <div className="clean-empty">没有发现残留。</div> : null}
-        {checkedFirst(rows, (r) => r.key, selected, recent).map((row) => {
+        {rows.map((row) => {
           const on = selected.has(row.key)
           return (
             <div
               key={row.key}
+              style={{ order: order.get(row.key) ?? 0 }}
               className={`swr-row swr-lv-${row.level}${on ? ' on' : ''}${row.cleanable ? ' swr-selectable' : ''}`}
             >
               <div className="swr-head">
@@ -962,7 +1026,7 @@ function ResiduePanel({
                     aria-label={row.label}
                     className="swr-check"
                     disabled={busy || scanning}
-                    onClick={() => toggle(row)}
+                    onClick={(e) => toggle(row, e.currentTarget)}
                   >
                     <span className="clean-check" aria-hidden="true">
                       {on ? (
