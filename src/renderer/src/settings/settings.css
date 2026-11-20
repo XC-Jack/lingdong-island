@@ -182,17 +182,33 @@ body {
   overflow-anchor: none;
   padding: 18px 22px 22px;
 }
-/* 滚动条跟深色底配，别用系统亮色那条 */
-.set-content::-webkit-scrollbar {
+/* 滚动条跟深色底配：轨道整个透明（不再露系统那条浅色带和上下三角按钮），
+   只留一块很淡的滑块，悬停时略亮。内容区与残留清单共用这一份。 */
+.set-content::-webkit-scrollbar,
+.swr-list::-webkit-scrollbar {
   width: 10px;
+  background: transparent;
 }
-.set-content::-webkit-scrollbar-thumb {
+.set-content::-webkit-scrollbar-button,
+.swr-list::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+}
+.set-content::-webkit-scrollbar-track,
+.swr-list::-webkit-scrollbar-track,
+.set-content::-webkit-scrollbar-corner,
+.swr-list::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.set-content::-webkit-scrollbar-thumb,
+.swr-list::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 6px;
   background-clip: content-box;
   background-color: rgba(255, 255, 255, 0.16);
 }
-.set-content::-webkit-scrollbar-thumb:hover {
+.set-content::-webkit-scrollbar-thumb:hover,
+.swr-list::-webkit-scrollbar-thumb:hover {
   background-color: rgba(255, 255, 255, 0.26);
 }
 
