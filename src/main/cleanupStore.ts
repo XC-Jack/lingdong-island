@@ -6,6 +6,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
   CleanupItem,
+  CleanupItemDef,
   CleanupRunResult,
   CleanupScanResult,
   CleanupScope,
@@ -364,8 +365,43 @@ const TARGETS: Target[] = [
   }
 ]
 
+/**
+ * 最近一次扫描到的各项大小（键 `scope:id`）。
+ *
+ * 为什么需要：`%TEMP%` 大的时候递归统计要好几秒（本机实测 10.7 GB / 约 7 秒）。
+ * 清理时如果为了算「释放了多少」再扫一遍，点击后要干等同样的时间。
+ * 页面刚扫过的数字直接拿来当「清理前」的基准，清理后只重扫一次，就够准了。
+ */
+const lastSizes = new Map<string, number>()
+
+function sizeKey(scope: CleanupScope, id: CleanupTargetId): string {
+  return `${scope}:${id}`
+}
+
 function normalizeScope(v: unknown): CleanupScope {
   return v === 'system' ? 'system' : 'app'
+}
+
+/** 某一组的清理项定义（不含大小）；页面先拿它渲染，「计算中…」逐项替换成实际数字 */
+export function cleanupItems(rawScope: unknown): CleanupItemDef[] {
+  const scope = normalizeScope(rawScope)
+  return TARGETS.filter((t) => t.scope === scope).map(({ id, label, hint, defaultChecked }) => ({
+    id,
+    label,
+    hint,
+    defaultChecked
+  }))
+}
+
+/** 扫描某一项；不存在或不属于该组时返回 0 */
+export async function scanCleanupItem(rawScope: unknown, rawId: unknown): Promise<number> {
+  const scope = normalizeScope(rawScope)
+  if (!isTargetId(rawId)) return 0
+  const t = TARGETS.find((x) => x.id === rawId && x.scope === scope)
+  if (!t) return 0
+  const bytes = await t.scan()
+  lastSizes.set(sizeKey(scope, t.id), bytes)
+  return bytes
 }
 
 function isTargetId(v: unknown): v is CleanupTargetId {
@@ -379,6 +415,7 @@ export async function scanCleanup(rawScope: unknown): Promise<CleanupScanResult>
   for (const t of TARGETS) {
     if (t.scope !== scope) continue
     const bytes = await t.scan()
+    lastSizes.set(sizeKey(scope, t.id), bytes)
     items.push({
       id: t.id,
       label: t.label,
@@ -417,17 +454,37 @@ export async function runCleanup(rawScope: unknown, rawIds: unknown): Promise<Cl
     warnings.push('更新包正在下载或已下好等着安装，这一项这次没清。')
   }
 
-  const before = await scanCleanup(scope)
+  const selected = TARGETS.filter((t) => t.scope === scope && wanted.has(t.id))
 
-  for (const t of TARGETS) {
-    if (t.scope !== scope || !wanted.has(t.id)) continue
+  // 「清理前」优先用页面刚扫描到的数字；没有缓存才退回实测。
+  // 慢目录（%TEMP%）只在页面打开时扫一次，点清理不再干等一遍。
+  let beforeTotal = 0
+  let haveAll = selected.length > 0
+  for (const t of selected) {
+    const cached = lastSizes.get(sizeKey(scope, t.id))
+    if (cached === undefined) {
+      haveAll = false
+      break
+    }
+    beforeTotal += cached
+  }
+  if (!haveAll) {
+    beforeTotal = 0
+    for (const t of selected) beforeTotal += await t.scan()
+  }
+
+  for (const t of selected) {
     warnings.push(...(await t.clean()))
   }
 
   const after = await scanCleanup(scope)
+  const afterById = new Map(after.items.map((i) => [i.id, i.bytes]))
+  let afterTotal = 0
+  for (const t of selected) afterTotal += afterById.get(t.id) ?? 0
+
   return {
     ok: true,
-    freedBytes: Math.max(0, before.totalBytes - after.totalBytes),
+    freedBytes: Math.max(0, beforeTotal - afterTotal),
     scan: after,
     warnings
   }
@@ -435,6 +492,7 @@ export async function runCleanup(rawScope: unknown, rawIds: unknown): Promise<Cl
 
 /** 注册 IPC，必须在 app.whenReady 后调用 */
 export function setupCleanupStore(): void {
-  ipcMain.handle('cleanup:scan', (_e, scope: unknown) => scanCleanup(scope))
+  ipcMain.handle('cleanup:items', (_e, scope: unknown) => cleanupItems(scope))
+  ipcMain.handle('cleanup:scan-item', (_e, scope: unknown, id: unknown) => scanCleanupItem(scope, id))
   ipcMain.handle('cleanup:run', (_e, scope: unknown, ids: unknown) => runCleanup(scope, ids))
 }

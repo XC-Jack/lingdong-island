@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupRunResult, CleanupScanResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupRunResult, CleanupScanResult, CleanupScope, CleanupTargetId }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -105,11 +105,18 @@ const api = {
     return ipcRenderer.invoke('settings:open-github')
   },
   /**
-   * 「空间」页（SPEC-space-cleanup / SPEC-space-system-junk）：扫描某一组的占用。
-   * scope='app' 是灵动岛自己的缓存，'system' 是系统垃圾。只读，不改任何文件。
+   * 「空间」页（SPEC-space-cleanup / SPEC-space-system-junk）：取某一组的清理项定义。
+   * scope='app' 是灵动岛自己的缓存，'system' 是系统垃圾。只读，不含大小。
    */
-  cleanupScan(scope: CleanupScope): Promise<CleanupScanResult> {
-    return ipcRenderer.invoke('cleanup:scan', scope)
+  cleanupItems(scope: CleanupScope): Promise<CleanupItemDef[]> {
+    return ipcRenderer.invoke('cleanup:items', scope)
+  },
+  /**
+   * 扫描某一项的占用。逐项调用，页面可以先把快的项显示出来，
+   * 慢的（比如很大的 %TEMP%）单独显示「计算中…」。只读，不改任何文件。
+   */
+  cleanupScanItem(scope: CleanupScope, id: CleanupTargetId): Promise<number> {
+    return ipcRenderer.invoke('cleanup:scan-item', scope, id)
   },
   /**
    * 「空间」页：清理某一组里选中的项目。

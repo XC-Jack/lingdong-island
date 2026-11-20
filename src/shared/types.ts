@@ -72,6 +72,14 @@ export type SystemCleanupId = 'temp' | 'crash-dumps' | 'thumb-cache' | 'recycle-
 
 export type CleanupTargetId = AppCleanupId | SystemCleanupId
 
+/** 一条清理项的静态定义（标题、说明、默认勾选），大小另外逐项扫描 */
+export interface CleanupItemDef {
+  id: CleanupTargetId
+  label: string
+  hint: string
+  defaultChecked: boolean
+}
+
 /** 一条清理项的扫描结果 */
 export interface CleanupItem {
   id: CleanupTargetId
