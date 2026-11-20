@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupRunResult, CleanupScanResult, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupRunResult, CleanupScanResult, CleanupTargetId }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -103,6 +103,20 @@ const api = {
   /** 「关于」页：用系统浏览器打开仓库地址（地址固定在主进程） */
   openGithub(): Promise<boolean> {
     return ipcRenderer.invoke('settings:open-github')
+  },
+  /**
+   * 「空间」页（SPEC-space-cleanup）：扫描本应用自己的缓存占用。
+   * 只读，不改任何文件。
+   */
+  cleanupScan(): Promise<CleanupScanResult> {
+    return ipcRenderer.invoke('cleanup:scan')
+  },
+  /**
+   * 「空间」页：清理选中的项目。
+   * 只传 id，路径由主进程按白名单决定，渲染层无法指定任意路径。
+   */
+  cleanupRun(ids: CleanupTargetId[]): Promise<CleanupRunResult> {
+    return ipcRenderer.invoke('cleanup:run', ids)
   },
   /** 自动更新（SPEC-auto-update）：当前状态快照 */
   updateGetState(): Promise<UpdateState> {

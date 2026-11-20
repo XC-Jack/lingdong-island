@@ -62,6 +62,15 @@ let activeToken: CancellationToken | null = null
 let cancelMode: 'pause' | 'cancel' | null = null
 
 /**
+ * 当前更新阶段（只读，供「空间」页清理前判断）。
+ * 下载中 / 已暂停 / 已下好等安装这三种状态下，绝对不能删更新缓存目录，
+ * 否则会把正在写的临时文件或等着安装的安装包一起删掉。
+ */
+export function getUpdateStage(): UpdateState['stage'] {
+  return state.stage
+}
+
+/**
  * electron-updater 的下载临时目录。
  * 路径规则见其 AppAdapter.getAppCacheDir：Windows 是 %LOCALAPPDATA%\<app.name>-updater，
  * 半截文件在 pending\temp-*.exe；取消时 electron-updater 只清理最终文件、不清临时文件，

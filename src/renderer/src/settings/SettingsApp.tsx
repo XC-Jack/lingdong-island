@@ -8,6 +8,7 @@ import PageManagerSection, {
   type PagesCustom
 } from './PageManagerSection'
 import DeskPetSection from './DeskPetSection'
+import SpaceSection from './SpaceSection'
 
 /**
  * 设置窗口的根组件（SPEC-settings-shell）。
@@ -41,6 +42,17 @@ const NAV: { key: SettingsSection; label: string; icon: () => ReactElement }[] =
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3">
         <rect x="2" y="3" width="12" height="10" rx="1.6" />
         <path d="M6 3v10" strokeLinecap="round" />
+      </svg>
+    )
+  },
+  {
+    key: 'space',
+    label: '空间',
+    icon: () => (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3">
+        <rect x="2" y="3.6" width="12" height="8.8" rx="1.8" />
+        <path d="M2 9.2h12" strokeLinecap="round" />
+        <circle cx="5" cy="11" r="0.8" fill="currentColor" stroke="none" />
       </svg>
     )
   },
@@ -676,6 +688,8 @@ export default function SettingsApp(): ReactElement {
                 <PageManagerSection pagesCustom={pagesCustom} onChange={changePages} />
               </div>
             </section>
+          ) : section === 'space' ? (
+            <SpaceSection />
           ) : section === 'pet' ? (
             <section className="set-page">
               <h2 className="set-page-title">桌宠</h2>

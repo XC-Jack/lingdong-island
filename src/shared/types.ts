@@ -44,9 +44,54 @@ export interface ShelfRevealResult {
 /**
  * 设置窗口的左导航分区（SPEC-settings-shell）。
  * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、
- * focus=专注·喝水（占位）、pet=桌宠（SPEC-deskpet-skin）、about=关于（SPEC-settings-about）
+ * space=空间（SPEC-space-cleanup，清理本应用自己的缓存）、focus=专注·喝水（占位）、
+ * pet=桌宠（SPEC-deskpet-skin）、about=关于（SPEC-settings-about）
  */
-export type SettingsSection = 'general' | 'pages' | 'focus' | 'pet' | 'about'
+export type SettingsSection = 'general' | 'pages' | 'space' | 'focus' | 'pet' | 'about'
+
+/**
+ * 「空间」页的清理项目（SPEC-space-cleanup）。
+ *
+ * 清单写死在主进程 `cleanupStore.ts`：渲染层只能传 id，主进程按白名单过滤，
+ * 任何时候都不接受任意路径——清理功能一旦能被传入路径，就等于把删除权交给了页面。
+ */
+export type CleanupTargetId = 'update-cache' | 'web-cache' | 'lyrics' | 'logs'
+
+/** 一条清理项的扫描结果 */
+export interface CleanupItem {
+  id: CleanupTargetId
+  /** 显示名，如「更新安装包缓存」 */
+  label: string
+  /** 一句说明：这是什么、删了会怎样 */
+  hint: string
+  /** 当前占用字节；0 表示没有可清理内容 */
+  bytes: number
+  /** 默认是否勾选（安全项 true、诊断日志 false） */
+  defaultChecked: boolean
+  /** 目标是否存在（0 字节但文件仍在时为 true） */
+  exists: boolean
+}
+
+/** 一次扫描的结果 */
+export interface CleanupScanResult {
+  items: CleanupItem[]
+  /** 全部清理项的占用合计（字节） */
+  totalBytes: number
+  /** 扫描完成时间戳（毫秒） */
+  scannedAt: number
+}
+
+/** 一次清理的结果 */
+export interface CleanupRunResult {
+  /** 是否执行完成（单项失败只进 warnings，不置 false） */
+  ok: boolean
+  /** 实际释放的字节（清理前后重新扫描的差值） */
+  freedBytes: number
+  /** 清理后重新扫描的结果，界面直接用它刷新 */
+  scan: CleanupScanResult
+  /** 未清理成功或被跳过的项，给用户看的中文说明 */
+  warnings: string[]
+}
 
 /**
  * 可选的桌宠皮肤 id（SPEC-deskpet-skin）。
