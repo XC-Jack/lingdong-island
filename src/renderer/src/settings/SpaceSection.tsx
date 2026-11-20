@@ -884,7 +884,7 @@ function ResiduePanel({
   const cleanableCount = rows.filter((r) => r.cleanable).length
 
   return (
-    <div className="clean-group clean-part swr-group">
+    <div className="swr-group">
       <div className="swr-legend">
         <span className="swr-legend-title">等级表示证据强弱，不代表能不能删：</span>
         {RESIDUE_LEVELS.map((lv) => (
@@ -1178,7 +1178,7 @@ function ResidueSection(): ReactElement {
   }, [])
 
   return (
-    <div className="clean-group clean-part">
+    <div className="clean-group">
       <div className="clean-group-head">
         <h3 className="clean-group-title">残留</h3>
         <p className="clean-lead">
@@ -1195,9 +1195,8 @@ export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
       <h2 className="set-page-title">空间</h2>
-      {/* 两张卡片：灵动岛自己的东西一张，系统相关的一张。
-          系统卡里两节：系统垃圾（普通项与需要管理员项合成一张清单）、残留
-          （卸载残留与软件残留两段清单，共用下面一块「清理备份」，SPEC-space-residue-merge） */}
+      {/* 三张卡片：灵动岛自己的东西、系统垃圾、残留（两张清单合一张表 + 共用清理备份，
+          SPEC-space-residue-merge） */}
       <CleanupPanel
         scope="app"
         title="灵动岛"
@@ -1207,12 +1206,12 @@ export default function SpaceSection(): ReactElement {
         <div className="clean-group-head">
           <h3 className="clean-group-title">系统</h3>
           <p className="clean-lead">
-            Windows 和其他软件留下的临时文件、卸载残留。带琥珀色人形标记的项需要管理员授权。
+            Windows 和其他软件留下的临时文件。带琥珀色人形标记的项需要管理员授权。
           </p>
         </div>
         <JunkPanel />
-        <ResidueSection />
       </div>
+      <ResidueSection />
     </section>
   )
 }
