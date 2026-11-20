@@ -408,9 +408,6 @@ async function readManifestFile(id: string): Promise<ManifestFile | null> {
   }
 }
 
-async function writeManifestFile(id: string, m: ManifestFile): Promise<void> {
-  await fs.writeFile(join(backupRoot(), id, 'manifest.json'), JSON.stringify(m, null, 2), 'utf8')
-}
 
 /** 备份批次列表，时间倒序。只读清单，不碰备份内容 */
 export async function listResidueBackups(): Promise<ResidueCleanupBackup[]> {
@@ -486,12 +483,13 @@ export async function undoResidueCleanup(rawId: unknown): Promise<ResidueUndoRes
     else if (r.message) warnings.push(`「${e.label}」：${r.message}`)
   }
 
-  // 全部恢复成功才标记「已撤销」；部分成功保留可再试一次
-  if (warnings.length === 0) {
+  // 全部恢复成功就把这批备份删掉（用户要求「复原之后备份不要留」）；
+  // 部分成功保留，处理掉冲突后还能再点一次撤销
+  if (warnings.length === 0 && dir) {
     try {
-      await writeManifestFile(id, { ...m, restored: true })
+      await fs.rm(dir, { recursive: true, force: true })
     } catch {
-      warnings.push('恢复已完成，但没能把「已撤销」写进备份清单。')
+      warnings.push('恢复已完成，但备份目录没删掉，可以手动删除。')
     }
   }
 

@@ -630,6 +630,8 @@ interface MergedResidueRow {
   running: boolean
   admin: boolean
   cleanable: boolean
+  /** 没有勾选框时给一句原因；可勾选为空字符串 */
+  reportOnly: string
 }
 
 /**
@@ -702,7 +704,8 @@ function ResiduePanel({
       level: 'definite' as const,
       running: false,
       admin: false,
-      cleanable: true
+      cleanable: true,
+      reportOnly: ''
     })),
     ...softwareItems.map((it) => ({
       key: `s:${it.id}`,
@@ -716,7 +719,16 @@ function ResiduePanel({
       level: it.level,
       running: it.running,
       admin: it.admin,
-      cleanable: it.cleanable
+      cleanable: it.cleanable,
+      reportOnly: it.cleanable
+        ? ''
+        : it.kind === 'driver'
+          ? '驱动删错可能让硬件不能用，只报告'
+          : it.kind === 'process'
+            ? '正在运行的进程不结束，只报告'
+            : it.kind === 'folder'
+              ? '目录里有内容，不自动删'
+              : '证据不足，只报告'
     }))
   ]
 
@@ -768,7 +780,9 @@ function ResiduePanel({
       rows
         .map(
           (r) =>
-            `${RESIDUE_LEVEL_TEXT[r.level]}｜${r.kindText}｜${r.label}${r.running ? '（运行中）' : ''}\n  ${r.detail}\n  ${r.path}`
+            `${RESIDUE_LEVEL_TEXT[r.level]}｜${r.kindText}｜${r.label}${r.running ? '（运行中）' : ''}${
+              r.reportOnly ? `（${r.reportOnly}）` : ''
+            }\n  ${r.detail}\n  ${r.path}`
         )
         .join('\n\n') || '没有发现残留。'
     try {
@@ -891,6 +905,11 @@ function ResiduePanel({
                 </span>
                 <span className="swr-kind">{row.kindText}</span>
                 <span className="swr-name">{row.label}</span>
+                {row.reportOnly ? (
+                  <span className="swr-tag swr-tag-report" title={row.reportOnly}>
+                    只报告
+                  </span>
+                ) : null}
                 {row.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
                 {row.admin ? <span className="swr-tag">需要管理员</span> : null}
                 <span className="swr-size">{row.size === null ? '' : formatBytes(row.size)}</span>

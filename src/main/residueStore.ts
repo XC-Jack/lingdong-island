@@ -516,11 +516,16 @@ export async function undoResidueBackup(
     }
   }
 
-  // 只有全部恢复成功才标记已撤销；有没恢复的（比如原位置已有同名文件）就把批次留着，
-  // 用户处理掉冲突后还能再点一次
-  m.restored = warnings.length === 0
-  await writeManifest(dir, m)
-  return { ok: m.restored, warnings, backups: await listResidueBackups() }
+  // 全部恢复成功就把整批备份删掉——用户明确要求「复原之后备份不要留」；
+  // 有没恢复的（比如原位置已有同名文件）就把批次留着，处理掉冲突后还能再点一次
+  if (warnings.length === 0) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true })
+    } catch (e) {
+      warnings.push(`已全部恢复，但备份目录没删掉：${errText(e)}`)
+    }
+  }
+  return { ok: warnings.length === 0, warnings, backups: await listResidueBackups() }
 }
 
 export async function discardResidueBackup(
