@@ -47,10 +47,13 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  /** 已勾选「默认不勾」的项，正在等第二次点击；勾选一变就作废 */
+  const [confirming, setConfirming] = useState(false)
 
   /** 全量扫描：先出清单，再并行逐项取大小 */
   const refresh = useCallback(async (): Promise<void> => {
     setScanning(true)
+    setConfirming(false)
     setNote('')
     try {
       const defs = await window.island.cleanupItems(scope)
@@ -92,7 +95,13 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
     .filter((r) => selected.has(r.id))
     .reduce((n, r) => n + (r.bytes ?? 0), 0)
 
+  /** 已选中的「默认不勾」项：删除不可恢复，要先问一句 */
+  const risky = rows.filter((r) => selected.has(r.id) && !r.defaultChecked)
+
   const toggle = (id: CleanupTargetId): void => {
+    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+    if (confirming) setNote('')
+    setConfirming(false)
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -103,6 +112,15 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
 
   const run = async (): Promise<void> => {
     if (busy || scanning || selectedBytes === 0) return
+    // 第一次只提示，第二次才执行；勾选变化会把 confirming 置回 false
+    if (risky.length > 0 && !confirming) {
+      setConfirming(true)
+      setNote(
+        `已选「${risky.map((r) => r.label).join('、')}」，默认不勾选，删除后不能恢复。再点一次「确认清理」才会执行。`
+      )
+      return
+    }
+    setConfirming(false)
     setBusy(true)
     // 不清空提示：提示区固定占一行，原地换成「正在清理…」，避免整块底部在点击瞬间上下跳
     setNote('正在清理…')
@@ -200,7 +218,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
               void run()
             }}
           >
-            {busy ? '处理中…' : scanning ? '计算中…' : '清理选中项'}
+            {busy ? '处理中…' : scanning ? '计算中…' : confirming ? '确认清理' : '清理选中项'}
           </button>
         </div>
       </div>
@@ -496,10 +514,13 @@ function JunkPanel(): ReactElement {
   const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  /** 已勾选「默认不勾」的项，正在等第二次点击；勾选一变就作废 */
+  const [confirming, setConfirming] = useState(false)
 
   /** 全量扫描：先出清单（普通项 + 管理员项），再并行逐项算普通项的大小 */
   const refresh = useCallback(async (): Promise<void> => {
     setScanning(true)
+    setConfirming(false)
     setNote('')
     try {
       const [defs, admin] = await Promise.all([
@@ -562,8 +583,13 @@ function JunkPanel(): ReactElement {
   const selectedRows = rows.filter((r) => selected.has(r.id))
   const selectedBytes = selectedRows.reduce((n, r) => n + (r.bytes ?? 0), 0)
   const adminPicked = selectedRows.some((r) => r.admin)
+  /** 已选中的「默认不勾」项（回收站）：删除不可恢复，要先问一句 */
+  const risky = selectedRows.filter((r) => !r.defaultChecked)
 
   const toggle = (id: string): void => {
+    // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
+    if (confirming) setNote('')
+    setConfirming(false)
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -599,6 +625,15 @@ function JunkPanel(): ReactElement {
 
   const run = async (): Promise<void> => {
     if (busy || scanning || selected.size === 0) return
+    // 第一次只提示，第二次才执行；勾选变化会把 confirming 置回 false
+    if (risky.length > 0 && !confirming) {
+      setConfirming(true)
+      setNote(
+        `已选「${risky.map((r) => r.label).join('、')}」，默认不勾选，删除后不能恢复。再点一次「确认清理」才会执行。`
+      )
+      return
+    }
+    setConfirming(false)
     const picked = rows.filter((r) => selected.has(r.id))
     const normalIds = picked.filter((r) => !r.admin).map((r) => r.id) as CleanupTargetId[]
     const adminIds = picked.filter((r) => r.admin).map((r) => r.id) as AdminCleanupId[]
@@ -745,7 +780,15 @@ function JunkPanel(): ReactElement {
               void run()
             }}
           >
-            {busy ? (adminPicked ? '等待授权…' : '处理中…') : scanning ? '计算中…' : '清理选中项'}
+            {busy
+              ? adminPicked
+                ? '等待授权…'
+                : '处理中…'
+              : scanning
+                ? '计算中…'
+                : confirming
+                  ? '确认清理'
+                  : '清理选中项'}
           </button>
         </div>
       </div>
