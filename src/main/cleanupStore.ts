@@ -1,7 +1,6 @@
 import { app, ipcMain, session } from 'electron'
 import { promises as fs } from 'node:fs'
 import type { Dirent } from 'node:fs'
-import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
@@ -13,6 +12,7 @@ import type {
   CleanupTargetId
 } from '../shared/types'
 import { getUpdateStage } from './updater'
+import { runPowerShell } from './runPs'
 
 /**
  * 设置「空间」页的扫描与清理（SPEC-space-cleanup / SPEC-space-system-junk）。
@@ -141,37 +141,6 @@ async function thumbCacheFiles(): Promise<string[]> {
 }
 
 /* ---------- 回收站（PowerShell + Shell COM） ---------- */
-
-function runPowerShell(script: string, timeoutMs = 25_000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { windowsHide: true }
-    )
-    let out = ''
-    let err = ''
-    const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error('PowerShell 超时'))
-    }, timeoutMs)
-    child.stdout?.on('data', (d) => {
-      out += d.toString('utf8')
-    })
-    child.stderr?.on('data', (d) => {
-      err += d.toString('utf8')
-    })
-    child.on('error', (e) => {
-      clearTimeout(timer)
-      reject(e)
-    })
-    child.on('close', (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolve(out.trim())
-      else reject(new Error(err.trim() || `PowerShell 退出码 ${code}`))
-    })
-  })
-}
 
 /** 用 Shell 的回收站命名空间统计总大小（Namespace(10) = 回收站） */
 async function recycleBinSize(): Promise<number> {

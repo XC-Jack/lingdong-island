@@ -118,6 +118,64 @@ export interface CleanupRunResult {
   warnings: string[]
 }
 
+/* ---------- 卸载残留（SPEC-space-residue） ---------- */
+
+/**
+ * 残留类别：
+ * - uninstall=失效的卸载注册项（HKCU，卸载程序已不存在）
+ * - shortcut=失效快捷方式（用户桌面 / 用户开始菜单，目标已不存在）
+ * - folder=空的开始菜单文件夹（里面所有 .lnk 都是死链且无其它文件）
+ */
+export type ResidueKind = 'uninstall' | 'shortcut' | 'folder'
+
+/** 一条残留。路径只用于展示与主进程内部操作，渲染层回传时只给 id */
+export interface ResidueItem {
+  id: string
+  kind: ResidueKind
+  /** 显示名：程序名 / 快捷方式名 / 文件夹名 */
+  label: string
+  /** 判定依据，例如「卸载程序 C:\...\unins000.exe 已不存在」 */
+  detail: string
+  /** 文件系统路径，或 `HKCU\Software\...\Uninstall\<子键>` */
+  path: string
+  /** 文件/目录占用字节；注册表项为 0 */
+  bytes: number
+}
+
+export interface ResidueScanResult {
+  items: ResidueItem[]
+  scannedAt: number
+  /** 扫描过程中没做成的部分（例如某段注册表读不到），给用户看的说明 */
+  warnings: string[]
+}
+
+export interface ResidueCleanResult {
+  ok: boolean
+  /** 成功清理的项数 */
+  removed: number
+  /** 释放的字节（文件/目录占用之和；注册表项算 0） */
+  freedBytes: number
+  /** 清理后重新扫描的结果 */
+  scan: ResidueScanResult
+  warnings: string[]
+  /** 本次清理生成的备份批次；没清理任何东西时为 null */
+  backupId: string | null
+}
+
+/** 备份批次（清理前把内容移到这里，撤销时搬回去） */
+export interface ResidueBackup {
+  id: string
+  createdAt: number
+  /** 文件 / 快捷方式 / 文件夹项数 */
+  files: number
+  /** 注册表项数 */
+  registry: number
+  /** 这批备份占用的字节 */
+  bytes: number
+  /** 是否已经撤销过 */
+  restored: boolean
+}
+
 /**
  * 可选的桌宠皮肤 id（SPEC-deskpet-skin）。
  *
