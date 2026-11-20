@@ -11,7 +11,7 @@ import type {
 } from '../shared/types'
 import { adminTargets, buildAdminScript } from './adminScript'
 import type { AdminTarget } from './adminScript'
-import { errText } from './fsUtil'
+import { errText, rawFs } from './fsUtil'
 import { runPowerShell } from './runPs'
 
 /**
@@ -47,7 +47,7 @@ interface DirStats {
 async function dirStats(p: string): Promise<DirStats> {
   let st
   try {
-    st = await fs.lstat(p)
+    st = await rawFs.lstat(p)
   } catch {
     return { bytes: 0, readable: true } // 不存在 = 0，不算读不到
   }
@@ -56,7 +56,7 @@ async function dirStats(p: string): Promise<DirStats> {
 
   let entries: Dirent[]
   try {
-    entries = await fs.readdir(p, { withFileTypes: true })
+    entries = await rawFs.readdir(p, { withFileTypes: true })
   } catch {
     return { bytes: 0, readable: false }
   }
@@ -70,7 +70,7 @@ async function dirStats(p: string): Promise<DirStats> {
       readable = readable && r.readable
     } else if (e.isFile()) {
       try {
-        bytes += (await fs.lstat(full)).size
+        bytes += (await rawFs.lstat(full)).size
       } catch {
         readable = false
       }
@@ -154,8 +154,10 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
   // 提权执行：等它结束并拿退出码。UAC 被拒绝时 Start-Process 会抛错（1223 /「已被用户取消」）
   let exitCode = 0
   try {
+    // 外层命令用单引号包住整段参数，路径里的单引号必须翻倍，否则会提前结束字符串
+    const scriptArg = scriptPath.replaceAll("'", "''")
     const out = await runPowerShell(
-      `$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"' -Verb RunAs -Wait -PassThru; [Console]::Out.Write([string]$p.ExitCode)`,
+      `$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptArg}"' -Verb RunAs -Wait -PassThru; [Console]::Out.Write([string]$p.ExitCode)`,
       600_000
     )
     const n = Number.parseInt(out.trim(), 10)

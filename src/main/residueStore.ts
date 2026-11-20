@@ -10,7 +10,7 @@ import type {
   ResidueScanResult
 } from '../shared/types'
 import { runCommand, runPowerShell } from './runPs'
-import { errText, existsConservative } from './fsUtil'
+import { errText, existsConservative, rawFs } from './fsUtil'
 
 /**
  * 卸载残留（SPEC-space-residue）。
@@ -70,6 +70,24 @@ function desktopDir(): string {
 
 function isAbsolutePath(p: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(p) || /^\\\\/.test(p)
+}
+
+/**
+ * 目标所在的卷现在能不能访问。
+ * 网络盘没连、U 盘没插时，`stat` 也报 ENOENT——和「文件真的被删了」长得一样，
+ * 直接判死链会误伤，所以先看根路径在不在；卷不在就不下结论。
+ */
+async function volumeAvailable(p: string): Promise<boolean> {
+  const drive = /^[a-zA-Z]:[\\/]/.exec(p)
+  const unc = /^\\\\[^\\/]+[\\/][^\\/]+/.exec(p)
+  const root = drive ? drive[0] : unc ? unc[0] : ''
+  if (!root) return true
+  try {
+    await rawFs.stat(root)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 从 UninstallString 里取出 exe 路径；取不出（winget、appx 等命令）返回 null */
@@ -145,9 +163,13 @@ async function listShortcuts(): Promise<RawShortcut[]> {
 async function judgeUninstall(e: RawUninstall): Promise<string | null> {
   const exe = exeFromCommand(e.uninstall)
   if (!exe || !isAbsolutePath(exe)) return null
+  if (!(await volumeAvailable(exe))) return null
   if (await existsConservative(exe)) return null
   const loc = e.loc.trim()
-  if (loc && isAbsolutePath(loc) && (await existsConservative(loc))) return null
+  if (loc && isAbsolutePath(loc)) {
+    if (!(await volumeAvailable(loc))) return null
+    if (await existsConservative(loc)) return null
+  }
   return `卸载程序 ${exe} 已不存在`
 }
 
@@ -231,6 +253,8 @@ export async function scanResidue(): Promise<ResidueScanResult> {
   for (const s of shortcuts) {
     const t = s.target.trim()
     if (!t || !isAbsolutePath(t)) continue
+    // 网络盘/U 盘不在时不能判死链（见 volumeAvailable）
+    if (!(await volumeAvailable(t))) continue
     if (await existsConservative(t)) continue
     deadLnks.add(s.lnk.toLowerCase())
     deadList.push({ lnk: s.lnk, target: t })

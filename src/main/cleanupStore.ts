@@ -1,5 +1,4 @@
 import { app, ipcMain, session } from 'electron'
-import { promises as fs } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
@@ -12,7 +11,7 @@ import type {
 } from '../shared/types'
 import { getUpdateStage } from './updater'
 import { runPowerShell } from './runPs'
-import { errText, removeChildren, sumPaths } from './fsUtil'
+import { errText, rawFs, removeChildren, sumPaths } from './fsUtil'
 
 /**
  * 设置「空间」页的扫描与清理（SPEC-space-cleanup / SPEC-space-system-junk）。
@@ -48,7 +47,7 @@ function updateCacheDir(): string {
 /** 删除一个文件/目录；返回失败原因（成功为 null） */
 async function removePath(target: string): Promise<string | null> {
   try {
-    await fs.rm(target, { recursive: true, force: true })
+    await rawFs.rm(target, { recursive: true, force: true })
     return null
   } catch (e) {
     return errText(e)
@@ -66,7 +65,7 @@ const THUMB_FILE_RE = /^(thumbcache|iconcache).*\.db$/i
 async function thumbCacheFiles(): Promise<string[]> {
   const dir = explorerCacheDir()
   try {
-    const entries = await fs.readdir(dir, { withFileTypes: true })
+    const entries = await rawFs.readdir(dir, { withFileTypes: true })
     const files: string[] = []
     for (const e of entries) {
       if (e.isFile() && THUMB_FILE_RE.test(e.name)) files.push(join(dir, e.name))
@@ -235,7 +234,7 @@ const TARGETS: Target[] = [
       let total = 0
       for (const f of files) {
         try {
-          total += (await fs.lstat(f)).size
+          total += (await rawFs.lstat(f)).size
         } catch {
           /* 文件刚好被回收，跳过 */
         }
@@ -247,7 +246,7 @@ const TARGETS: Target[] = [
       const warnings: string[] = []
       for (const f of await thumbCacheFiles()) {
         try {
-          await fs.rm(f, { force: true })
+          await rawFs.rm(f, { force: true })
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code ?? ''
           if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') skipped += 1
@@ -271,19 +270,6 @@ const TARGETS: Target[] = [
   }
 ]
 
-/**
- * 最近一次扫描到的各项大小（键 `scope:id`）。
- *
- * 为什么需要：`%TEMP%` 大的时候递归统计要好几秒（本机实测 10.7 GB / 约 7 秒）。
- * 清理时如果为了算「释放了多少」再扫一遍，点击后要干等同样的时间。
- * 页面刚扫过的数字直接拿来当「清理前」的基准，清理后只重扫一次，就够准了。
- */
-const lastSizes = new Map<string, number>()
-
-function sizeKey(scope: CleanupScope, id: CleanupTargetId): string {
-  return `${scope}:${id}`
-}
-
 function normalizeScope(v: unknown): CleanupScope {
   return v === 'system' ? 'system' : 'app'
 }
@@ -305,9 +291,7 @@ export async function scanCleanupItem(rawScope: unknown, rawId: unknown): Promis
   if (!isTargetId(rawId)) return 0
   const t = TARGETS.find((x) => x.id === rawId && x.scope === scope)
   if (!t) return 0
-  const bytes = await t.scan()
-  lastSizes.set(sizeKey(scope, t.id), bytes)
-  return bytes
+  return t.scan()
 }
 
 function isTargetId(v: unknown): v is CleanupTargetId {
@@ -321,7 +305,6 @@ export async function scanCleanup(rawScope: unknown): Promise<CleanupScanResult>
   for (const t of TARGETS) {
     if (t.scope !== scope) continue
     const bytes = await t.scan()
-    lastSizes.set(sizeKey(scope, t.id), bytes)
     items.push({
       id: t.id,
       label: t.label,
@@ -362,22 +345,11 @@ export async function runCleanup(rawScope: unknown, rawIds: unknown): Promise<Cl
 
   const selected = TARGETS.filter((t) => t.scope === scope && wanted.has(t.id))
 
-  // 「清理前」优先用页面刚扫描到的数字；没有缓存才退回实测。
-  // 慢目录（%TEMP%）只在页面打开时扫一次，点清理不再干等一遍。
+  // 「清理前」现场重测，不复用页面打开时扫到的数字。
+  // 复用会让外部在页面停留期间删掉/新增的文件算进本次释放量（虚报或漏报）；
+  // 代价只是点「清理选中项」后多等这一次统计（本机 %TEMP% 约 7 秒）。
   let beforeTotal = 0
-  let haveAll = selected.length > 0
-  for (const t of selected) {
-    const cached = lastSizes.get(sizeKey(scope, t.id))
-    if (cached === undefined) {
-      haveAll = false
-      break
-    }
-    beforeTotal += cached
-  }
-  if (!haveAll) {
-    beforeTotal = 0
-    for (const t of selected) beforeTotal += await t.scan()
-  }
+  for (const t of selected) beforeTotal += await t.scan()
 
   for (const t of selected) {
     warnings.push(...(await t.clean()))

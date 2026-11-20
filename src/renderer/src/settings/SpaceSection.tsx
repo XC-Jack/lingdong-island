@@ -609,6 +609,7 @@ function JunkPanel(): ReactElement {
     const warnings: string[] = []
     let freed = 0
     let canceled = false
+    let adminFailed = false
     try {
       if (normalIds.length > 0) {
         const r = await window.island.cleanupRun('system', normalIds)
@@ -625,6 +626,10 @@ function JunkPanel(): ReactElement {
         if (r.canceled) {
           canceled = true
           parts.push('已取消管理员授权，需要管理员的那几项没有动。')
+        } else if (!r.ok) {
+          // 提权没跑起来（不是用户取消）：别在提示里说「清理完成」
+          adminFailed = true
+          warnings.push(...r.warnings)
         } else {
           freed += r.freedBytes
           warnings.push(...r.warnings)
@@ -636,8 +641,15 @@ function JunkPanel(): ReactElement {
           }
         }
       }
-      const head =
-        freed > 0 ? `已释放 ${formatBytes(freed)}。` : canceled ? '' : '清理完成，没有可统计的释放量。'
+      const head = canceled
+        ? ''
+        : adminFailed
+          ? normalIds.length > 0
+            ? '普通项已清理，管理员项没有执行。'
+            : '管理员项没有执行。'
+          : freed > 0
+            ? `已释放 ${formatBytes(freed)}。`
+            : '清理完成，没有可统计的释放量。'
       setNote([head, ...parts, ...warnings].filter(Boolean).join(' '))
     } catch {
       setNote('清理失败，请稍后再试。')
