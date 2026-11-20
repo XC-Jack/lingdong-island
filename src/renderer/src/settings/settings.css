@@ -867,7 +867,7 @@ div.pm-row[draggable='true'] {
 .clean-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
@@ -912,6 +912,7 @@ div.pm-row[draggable='true'] {
 .clean-list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 /* 组开头的一句说明：告诉用户这里只动什么、绝不动什么 */
@@ -923,7 +924,7 @@ div.pm-row[draggable='true'] {
 }
 
 .clean-empty {
-  padding: 16px 0;
+  padding: 8px 0;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.45);
 }
@@ -932,19 +933,22 @@ div.pm-row[draggable='true'] {
 .clean-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 0;
+  gap: 12px;
+  /* 左右各拉出 8px 再补内边距：悬停底色能贴到卡片内侧的边，文字仍与标题对齐 */
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 9px 8px;
   border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
   background: transparent;
   font-family: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 120ms ease;
 }
-.clean-row:last-child {
-  border-bottom: none;
+.clean-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.035);
 }
 .clean-row:hover:not(:disabled) .clean-name {
   color: #ffffff;
@@ -1043,11 +1047,11 @@ div.pm-row[draggable='true'] {
   gap: 8px;
 }
 
-/* 需要管理员：行名后面一把小锁，不占宽度也不抢注意力 */
-.clean-lock {
+/* 需要管理员：行名后面一个人形标记，用琥珀色区分，不写文字也不占宽度 */
+.clean-admin-icon {
   margin-left: 6px;
-  vertical-align: -1px;
-  color: rgba(242, 243, 245, 0.4);
+  vertical-align: -2px;
+  color: #f5b544;
 }
 
 /* 卸载残留：行内的类别标签（注册表 / 快捷方式 / 文件夹） */
@@ -1063,14 +1067,14 @@ div.pm-row[draggable='true'] {
 
 /* 卸载残留：备份与撤销区 */
 .residue-backups {
-  margin-top: 6px;
-  padding-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
+/* 与其它小节标题同样的排法：标题一行，说明在下一行，不再挤在同一基线上 */
 .residue-backups-head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 8px;
 }
 .residue-backups-head .clean-group-title {

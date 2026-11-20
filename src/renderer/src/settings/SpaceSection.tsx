@@ -676,25 +676,19 @@ function JunkPanel(): ReactElement {
               <span className="clean-text">
                 <span className="clean-name">
                   {row.label}
-                  {/* 需要管理员只用一把小锁表示，文字说明放在卡片开头和 title 里 */}
+                  {/* 需要管理员只用一个人形标记表示（琥珀色），文字说明在卡片开头和 title 里 */}
                   {row.admin ? (
                     <svg
-                      className="clean-lock"
+                      className="clean-admin-icon"
                       viewBox="0 0 16 16"
-                      width="11"
-                      height="11"
+                      width="12"
+                      height="12"
                       role="img"
                       aria-label="需要管理员授权"
                     >
                       <title>需要管理员授权</title>
-                      <path
-                        d="M4.6 7V5.3a3.4 3.4 0 0 1 6.8 0V7"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                      />
-                      <rect x="3" y="7" width="10" height="6.6" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                      <circle cx="8" cy="4.6" r="2.8" fill="currentColor" />
+                      <path d="M3.1 13.8a4.9 4.9 0 0 1 9.8 0Z" fill="currentColor" />
                     </svg>
                   ) : null}
                 </span>
@@ -757,7 +751,7 @@ export default function SpaceSection(): ReactElement {
         <div className="clean-group-head">
           <h3 className="clean-group-title">系统</h3>
           <p className="clean-lead">
-            Windows 和其他软件留下的临时文件、卸载残留。带锁标记的几项清理时要管理员授权，其余不需要。
+            Windows 和其他软件留下的临时文件、卸载残留。名字后面带琥珀色人形标记的几项，清理时需要管理员授权，其余不需要。
           </p>
         </div>
         <JunkPanel />
