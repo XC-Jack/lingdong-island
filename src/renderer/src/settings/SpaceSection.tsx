@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type {
+  AdminCleanupId,
+  AdminCleanupItem,
   CleanupItemDef,
   CleanupScope,
   CleanupTargetId,
@@ -470,6 +472,156 @@ function ResiduePanel(): ReactElement {
   )
 }
 
+/**
+ * 第四组：系统清理（需要管理员，SPEC-space-admin-cleanup）。
+ *
+ * 扫描不提权；点清理才会弹一次 UAC。拒绝授权就什么都别删——
+ * 这一组删的是系统目录，宁可多一次确认。
+ */
+function AdminPanel(): ReactElement {
+  const [items, setItems] = useState<AdminCleanupItem[] | null>(null)
+  const [selected, setSelected] = useState<Set<AdminCleanupId>>(new Set())
+  const [scanning, setScanning] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  const applyScan = (list: AdminCleanupItem[]): void => {
+    setItems(list)
+    setSelected(new Set(list.filter((i) => i.defaultChecked).map((i) => i.id)))
+  }
+
+  const scan = useCallback(async (): Promise<void> => {
+    setScanning(true)
+    setNote('')
+    try {
+      const r = await window.island.adminCleanupScan()
+      applyScan(r.items)
+    } catch {
+      setNote('扫描失败，请稍后再试。')
+    } finally {
+      setScanning(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void scan()
+  }, [scan])
+
+  const list = items ?? []
+  const selectedKnown = list
+    .filter((i) => selected.has(i.id) && i.known)
+    .reduce((n, i) => n + i.bytes, 0)
+
+  const toggle = (id: AdminCleanupId): void => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const run = async (): Promise<void> => {
+    if (busy || scanning || selected.size === 0) return
+    setBusy(true)
+    setNote('正在等待管理员授权…')
+    try {
+      const r = await window.island.adminCleanupRun([...selected])
+      applyScan(r.scan.items)
+      if (r.canceled) {
+        setNote('已取消管理员授权，没有删除任何东西。')
+      } else {
+        // 传递优化缓存的大小靠系统接口读，接口没给结果时说明一句，
+        // 免得「没有释放量」被理解成没清
+        const unmeasured = r.items.filter((i) => !i.measured).map((i) => i.label)
+        const parts: string[] = [
+          r.freedBytes > 0 ? `已释放 ${formatBytes(r.freedBytes)}。` : '清理完成，没有可统计的释放量。'
+        ]
+        if (unmeasured.length > 0) {
+          parts.push(`${unmeasured.join('、')}交给系统接口清理，这次没统计到大小。`)
+        }
+        setNote([...parts, ...r.warnings].filter(Boolean).join(' '))
+      }
+    } catch {
+      setNote('清理失败，请稍后再试。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="clean-group">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">系统清理（需要管理员）</h3>
+        <p className="clean-lead">
+          这些目录普通权限删不动。浏览和扫描不会弹窗；点「清理选中项」时系统会弹一次管理员授权，拒绝则什么都不删。
+        </p>
+      </div>
+      <div className="set-card">
+        {items === null ? <div className="clean-empty">正在读取…</div> : null}
+        {list.map((item) => {
+          const on = selected.has(item.id)
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="checkbox"
+              aria-checked={on}
+              aria-label={item.label}
+              className={`clean-row${on ? ' on' : ''}`}
+              disabled={busy || scanning}
+              onClick={() => toggle(item.id)}
+            >
+              <span className="clean-check" aria-hidden="true">
+                {on ? (
+                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M2.4 6.2 5 8.7l4.6-5.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : null}
+              </span>
+              <span className="clean-text">
+                <span className="clean-name">{item.label}</span>
+                <span className="clean-hint">{item.hint}</span>
+              </span>
+              {/* 「无法统计」说的是大小，不是「要管理员才能用」——这一组本来就要管理员，
+                  写成「需管理员」会让人以为点了没生效 */}
+              <span className="clean-size">{item.known ? formatBytes(item.bytes) : '无法统计'}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="set-note clean-note">{note}</div>
+      <div className="clean-foot">
+        <div className="clean-total">
+          已选 <b>{selected.size}</b> 项 · 可计算占用 <b>{formatBytes(selectedKnown)}</b>
+        </div>
+        <div className="clean-actions">
+          <button
+            type="button"
+            className="set-btn set-btn-quiet"
+            disabled={busy || scanning}
+            onClick={() => {
+              void scan()
+            }}
+          >
+            {scanning ? '读取中…' : '重新读取'}
+          </button>
+          <button
+            type="button"
+            className="set-btn set-btn-primary"
+            disabled={busy || scanning || selected.size === 0}
+            onClick={() => {
+              void run()
+            }}
+          >
+            {busy ? '等待授权…' : '清理选中项'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
@@ -485,6 +637,7 @@ export default function SpaceSection(): ReactElement {
         lead="Windows 和其他软件留下的临时文件。这一组不需要管理员权限，正在使用的文件会自动跳过。"
       />
       <ResiduePanel />
+      <AdminPanel />
     </section>
   )
 }

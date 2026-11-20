@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -146,6 +146,14 @@ const api = {
     id: string
   ): Promise<{ ok: boolean; warnings: string[]; backups: ResidueBackup[] }> {
     return ipcRenderer.invoke('residue:discard', id)
+  },
+  /** 「空间」页·系统清理（需要管理员）：只读扫描，不提权 */
+  adminCleanupScan(): Promise<AdminCleanupScanResult> {
+    return ipcRenderer.invoke('adminclean:scan')
+  },
+  /** 清理选中的系统项目：会弹一次 UAC，用户拒绝时 canceled=true 且什么都没删 */
+  adminCleanupRun(ids: AdminCleanupId[]): Promise<AdminCleanupRunResult> {
+    return ipcRenderer.invoke('adminclean:run', ids)
   },
   /** 自动更新（SPEC-auto-update）：当前状态快照 */
   updateGetState(): Promise<UpdateState> {

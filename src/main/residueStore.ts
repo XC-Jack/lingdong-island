@@ -10,6 +10,7 @@ import type {
   ResidueScanResult
 } from '../shared/types'
 import { runCommand, runPowerShell } from './runPs'
+import { errText, existsConservative } from './fsUtil'
 
 /**
  * 卸载残留（SPEC-space-residue）。
@@ -43,10 +44,6 @@ interface RawShortcut {
 /** 上一份扫描结果：清理时按 id 回查，渲染层无法凭空造路径 */
 let lastScan = new Map<string, ResidueItem>()
 
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
-
 function idOf(kind: ResidueKind, path: string): string {
   return createHash('sha1').update(`${kind}\0${path}`).digest('hex').slice(0, 16)
 }
@@ -69,20 +66,6 @@ function startMenuDir(): string {
 /** Windows 用户桌面（走系统已知文件夹，不按 USERPROFILE 拼） */
 function desktopDir(): string {
   return app.getPath('desktop')
-}
-
-/**
- * 保守判断路径是否存在。
- * ENOENT/ENOTDIR = 真的不在；没权限（EPERM/EACCES，例如 WindowsApps）按「存在」处理。
- */
-async function existsConservative(p: string): Promise<boolean> {
-  try {
-    await fs.stat(p)
-    return true
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code ?? ''
-    return code !== 'ENOENT' && code !== 'ENOTDIR'
-  }
 }
 
 function isAbsolutePath(p: string): boolean {
