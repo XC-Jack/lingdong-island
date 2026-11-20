@@ -1043,6 +1043,13 @@ div.pm-row[draggable='true'] {
   gap: 8px;
 }
 
+/* 需要管理员：行名后面一把小锁，不占宽度也不抢注意力 */
+.clean-lock {
+  margin-left: 6px;
+  vertical-align: -1px;
+  color: rgba(242, 243, 245, 0.4);
+}
+
 /* 卸载残留：行内的类别标签（注册表 / 快捷方式 / 文件夹） */
 .clean-badge {
   margin-left: 6px;

@@ -644,9 +644,6 @@ function JunkPanel(): ReactElement {
     <div className="clean-group clean-part">
       <div className="clean-group-head">
         <h4 className="clean-group-title">系统垃圾</h4>
-        <p className="clean-lead">
-          Windows 和其他软件留下的临时文件，正在使用的会自动跳过。标着「需要管理员」的几项，点清理时系统会弹一次授权，拒绝则这几项不动。
-        </p>
       </div>
       <div className="clean-list">
         {rows.length === 0 ? (
@@ -679,7 +676,27 @@ function JunkPanel(): ReactElement {
               <span className="clean-text">
                 <span className="clean-name">
                   {row.label}
-                  {row.admin ? <span className="clean-badge">需要管理员</span> : null}
+                  {/* 需要管理员只用一把小锁表示，文字说明放在卡片开头和 title 里 */}
+                  {row.admin ? (
+                    <svg
+                      className="clean-lock"
+                      viewBox="0 0 16 16"
+                      width="11"
+                      height="11"
+                      role="img"
+                      aria-label="需要管理员授权"
+                    >
+                      <title>需要管理员授权</title>
+                      <path
+                        d="M4.6 7V5.3a3.4 3.4 0 0 1 6.8 0V7"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <rect x="3" y="7" width="10" height="6.6" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
+                    </svg>
+                  ) : null}
                 </span>
                 <span className="clean-hint">{row.hint}</span>
               </span>
@@ -740,7 +757,7 @@ export default function SpaceSection(): ReactElement {
         <div className="clean-group-head">
           <h3 className="clean-group-title">系统</h3>
           <p className="clean-lead">
-            Windows 和其他软件留下的临时文件、卸载残留。标着「需要管理员」的项目要授权才能删，其余不需要。
+            Windows 和其他软件留下的临时文件、卸载残留。带锁标记的几项清理时要管理员授权，其余不需要。
           </p>
         </div>
         <JunkPanel />
