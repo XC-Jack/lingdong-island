@@ -123,12 +123,28 @@ foreach ($i in $items) {
 }
 
 async function emptyRecycleBin(): Promise<string[]> {
-  const script = ["$ErrorActionPreference='Stop'", 'Clear-RecycleBin -Force -Confirm:$false'].join('; ')
+  // 回收站已经是空的时候，Clear-RecycleBin 会抛「系统找不到指定的文件」
+  // （FailedToClearRecycleBin），这是误报。先看条目数；清完再确认一次。
+  const script = `
+$ErrorActionPreference = 'Stop'
+$shell = New-Object -ComObject Shell.Application
+if (@($shell.Namespace(10).Items()).Count -eq 0) { [Console]::Out.Write('EMPTY'); exit 0 }
+try {
+  Clear-RecycleBin -Force -Confirm:$false
+  [Console]::Out.Write('CLEARED')
+} catch {
+  $after = New-Object -ComObject Shell.Application
+  if (@($after.Namespace(10).Items()).Count -eq 0) { [Console]::Out.Write('CLEARED') }
+  else { [Console]::Error.Write('FAILED: ' + $_.Exception.Message); exit 1 }
+}
+`
   try {
     await runPowerShell(script, 60_000)
     return []
   } catch (e) {
-    return [`回收站没清干净：${errText(e)}`]
+    // 只留第一行原因，不把整段 PowerShell 堆栈丢给用户
+    const firstLine = errText(e).split(/\r?\n/)[0].replace(/^FAILED:\s*/, '')
+    return [`回收站没清干净：${firstLine}`]
   }
 }
 

@@ -9,10 +9,13 @@ import { spawn } from 'node:child_process'
  * - 退出码非 0 时抛 stderr 文本；调用方只能拿它写日志/兜底文案，**不直接展示给用户**。
  */
 export function runPowerShell(script: string, timeoutMs = 25_000): Promise<string> {
+  // Windows PowerShell 5.1 默认按系统代码页（中文系统是 GBK）写 stdout/stderr，
+  // Node 按 UTF-8 解码会把中文报错变成乱码。先切到 UTF-8 再执行原脚本。
+  const wrapped = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${script}`
   return new Promise((resolve, reject) => {
     const child = spawn(
       'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', wrapped],
       { windowsHide: true }
     )
     let out = ''
