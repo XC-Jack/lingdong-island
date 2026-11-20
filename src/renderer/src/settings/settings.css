@@ -1121,6 +1121,8 @@ div.pm-row[draggable='true'] {
   gap: 8px;
   max-height: 460px;
   overflow-y: auto;
+  /* 清单自己就是滚动区，勾选重排时同样不许浏览器做滚动锚定 */
+  overflow-anchor: none;
 }
 /* 图例：等级含义直接写在面板里，不用靠说明文档 */
 .swr-legend {

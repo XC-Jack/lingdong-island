@@ -14,16 +14,17 @@
 
 ## 2. 修改范围
 
-- `src/renderer/src/settings/SpaceSection.tsx`：`checkedFirst()` 的组内排序改成按勾选先后**升序**；三个清单（灵动岛 / 系统 / 残留）共用。
+- `src/renderer/src/settings/SpaceSection.tsx`：`checkedFirst()` 改成 `checkedOrder()`，只算每行的视觉序号；渲染仍按清单原顺序 `map`，序号走 flex `order`（DOM 节点不移动）。三个清单（灵动岛 / 系统 / 残留）共用。
 - `src/renderer/src/settings/settings.css`：`.set-content` 加 `overflow-anchor: none`，关掉浏览器滚动锚定。
-- `SpaceSection.tsx`：勾选/取消时记录 `.set-content` 的 `scrollTop`，重排后下一帧还原。
+- `SpaceSection.tsx`：`keepScroll()` 记下被点那一行的所有可滚动祖先（残留清单 `.swr-list` 自己也是滚动区），重排后还原；点选时先让该行失焦，避免浏览器把「被移走的焦点元素」滚进视野。
 - `src/main/smtcScript.ts`：降级路径（网易云不注册 SMTC 时）的「在播/暂停」判据，从**固定峰值阈值**改成**相对阈值** + 进度前进证据。
 
 ## 3. 预期行为
 
 ### 排序
 
-- 勾选的行排在清单最上面，组内按勾选时间从早到晚；新勾的一行落在置顶组的**最后**。
+- 勾选的行在视觉上排到清单最上面，组内按勾选时间从早到晚；新勾的一行落在置顶组的**最后**。
+- 排序只改 flex `order`，DOM 顺序不变，因此浏览器不会因为节点移动而滚动，滚动条位置保持不动。
 - 取消勾选回到原来的位置。
 - 默认勾选的项（扫描后自带）保持清单原顺序。
 
@@ -69,3 +70,17 @@
 
 - 用户朋友那台机器上的真实效果——峰值低于旧阈值导致「一直显示播放三角」，本机复现不了。新判据是相对阈值 + 进度兜底，理论上对「峰值比开发机低一两个数量级」的机器成立，但只能等对方更新后确认。
 - 本机正在播放时的「在播」判定没有当场实测（没有主动去播用户的歌）；改动只换了阈值来源，本机峰值远高于阈值，预期行为不变 [推断]。
+
+## 8. 复盘：第一版没解决「勾一个就往上滚」
+
+第一版只是「记下 `.set-content` 的 scrollTop 再还原」，用户实测仍然会跳。原因有两条：
+
+1. **残留清单自己就是滚动区**（`.swr-list`，`max-height: 460px`），用户滚的是这一层，而第一版只还原了外层 `.set-content`。
+2. 更关键的是**节点被真正移动**：`checkedFirst()` 返回重排后的数组再 `map`，React 把行节点搬到顶部；浏览器会把「获得焦点又被移走的元素」滚进视野，还原会反复和它抢。
+
+最终做法两条一起上：
+
+- 排序只算 flex `order`，DOM 顺序永远不动（节点不移动，浏览器就没有理由滚动）；
+- `keepScroll()` 兜底：记下被点行的所有可滚动祖先，失焦后重排，再在双 rAF 与 60ms 后各还原一次；`.swr-list` 和 `.set-content` 都加 `overflow-anchor: none`。
+
+验证：CDP 9356 用真实鼠标事件（`Input.dispatchMouseEvent`）点残留清单里的勾选框——勾上后 DOM 顺序完全不变，`.swr-list` 与外层 `.set-content` 的 `scrollTop` 前后一致；另一个探针确认视觉顺序仍是「默认勾选 → 先勾 → 后勾」。
