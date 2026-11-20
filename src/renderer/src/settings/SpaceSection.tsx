@@ -6,7 +6,8 @@ import type {
   CleanupScope,
   CleanupTargetId,
   ResidueItem,
-  SoftwareResidueItem
+  SoftwareResidueItem,
+  SoftwareResidueLevel
 } from '../../../shared/types'
 
 /**
@@ -242,188 +243,15 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
 
 /** 残留类别的短标签 */
 const KIND_LABEL: Record<ResidueItem['kind'], string> = {
-  uninstall: '注册表',
+  uninstall: '卸载项',
   shortcut: '快捷方式',
-  folder: '文件夹'
+  folder: '开始菜单'
 }
 
 function timeText(ts: number): string {
   const d = new Date(ts)
   const p = (n: number): string => String(n).padStart(2, '0')
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-/**
- * 第三组：卸载残留（SPEC-space-residue）。
- *
- * 与两组缓存不同，这里删掉的是「别的东西」：失效的卸载注册项、指向空处的快捷方式、
- * 只剩死链的开始菜单文件夹。所以默认一项都不勾，清理一律先进备份区，并能一键撤销。
- */
-function ResiduePanel({
-  onChanged,
-  refreshSignal
-}: {
-  /** 清理产生了新备份：通知共享的备份块重新读取 */
-  onChanged: () => void
-  /** 共享备份块撤销了本类备份：重新扫一遍列表 */
-  refreshSignal: number
-}): ReactElement {
-  /** null = 还没扫描过；[] = 扫过但没有残留 */
-  const [items, setItems] = useState<ResidueItem[] | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [scanning, setScanning] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState('')
-
-  /** 只重扫列表，不动提示行（撤销/清理后由调用方决定写什么提示） */
-  const refreshItems = useCallback(async (): Promise<void> => {
-    const r = await window.island.residueScan()
-    setItems(r.items)
-    setSelected(new Set())
-  }, [])
-
-  const scan = useCallback(async (): Promise<void> => {
-    setScanning(true)
-    setNote('')
-    try {
-      const r = await window.island.residueScan()
-      setItems(r.items)
-      setSelected(new Set())
-      // 「没有发现残留」由列表里的空状态说一次就够了，提示行只放警告
-      setNote(r.warnings.join(' '))
-    } catch {
-      setNote('扫描失败，请稍后再试。')
-    } finally {
-      setScanning(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void scan()
-  }, [scan])
-
-  // 共享备份块撤销了本类备份：静默重扫，别再清掉提示行
-  useEffect(() => {
-    if (refreshSignal > 0) void refreshItems()
-  }, [refreshSignal, refreshItems])
-
-  const list = items ?? []
-  const selectedBytes = list
-    .filter((i) => selected.has(i.id))
-    .reduce((n, i) => n + i.bytes, 0)
-
-  const toggle = (id: string): void => {
-    setSelected((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const run = async (): Promise<void> => {
-    if (busy || scanning || selected.size === 0) return
-    setBusy(true)
-    setNote('正在清理…')
-    try {
-      const r = await window.island.residueClean([...selected])
-      setItems(r.scan.items)
-      setSelected(new Set())
-      // 残留清理是「移入备份」，同一块盘上并没有腾出空间；别写「释放」误导用户。
-      // 想真正腾空间，要在下面的「清理备份」里删除这批备份。
-      const head =
-        r.removed > 0
-          ? `已清理 ${r.removed} 项${
-              r.movedBytes > 0
-                ? `，其中 ${formatBytes(r.movedBytes)} 移进了备份（删除备份后才真正腾出空间）`
-                : ''
-            }；可以撤销。`
-          : '这次没有清理任何项。'
-      setNote([head, ...r.warnings].filter(Boolean).join(' '))
-      if (r.backupId) onChanged()
-    } catch {
-      setNote('清理失败，请稍后再试。')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="clean-group clean-part">
-      <div className="clean-group-head">
-        <h4 className="clean-group-title">卸载残留</h4>
-        <p className="clean-lead">
-          已经卸载、但还剩注册表项或快捷方式的软件。只扫当前用户，不需要管理员；清理一律先进备份区，可以撤销。
-        </p>
-      </div>
-      <div className="clean-list">
-        {items === null ? <div className="clean-empty">正在扫描…</div> : null}
-        {items !== null && list.length === 0 ? (
-          <div className="clean-empty">没有发现卸载残留。</div>
-        ) : null}
-        {list.map((item) => {
-          const on = selected.has(item.id)
-          return (
-            <button
-              key={item.id}
-              type="button"
-              role="checkbox"
-              aria-checked={on}
-              aria-label={item.label}
-              className={`clean-row${on ? ' on' : ''}`}
-              disabled={busy || scanning}
-              onClick={() => toggle(item.id)}
-            >
-              <span className="clean-check" aria-hidden="true">
-                {on ? (
-                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <path d="M2.4 6.2 5 8.7l4.6-5.2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                ) : null}
-              </span>
-              <span className="clean-text">
-                <span className="clean-name">
-                  {item.label}
-                  <span className="clean-badge">{KIND_LABEL[item.kind]}</span>
-                </span>
-                <span className="clean-hint">{item.detail}</span>
-              </span>
-              <span className="clean-size">{item.bytes > 0 ? formatBytes(item.bytes) : '—'}</span>
-            </button>
-          )
-        })}
-      </div>
-      <div className="set-note clean-note">{note}</div>
-      <div className="clean-foot">
-        <div className="clean-total">
-          已选 <b>{selected.size}</b> 项 · 合计 <b>{formatBytes(selectedBytes)}</b>
-        </div>
-        <div className="clean-actions">
-          <button
-            type="button"
-            className="set-btn set-btn-quiet"
-            disabled={busy || scanning}
-            onClick={() => {
-              void scan()
-            }}
-          >
-            {scanning ? '扫描中…' : '重新扫描'}
-          </button>
-          <button
-            type="button"
-            className="set-btn set-btn-primary"
-            disabled={busy || scanning || selected.size === 0}
-            onClick={() => {
-              void run()
-            }}
-          >
-            {busy ? '处理中…' : '清理选中项'}
-          </button>
-        </div>
-      </div>
-
-    </div>
-  )
 }
 
 /**
@@ -787,58 +615,147 @@ const RESIDUE_KIND_TEXT: Record<SoftwareResidueItem['kind'], string> = {
   process: '进程'
 }
 
+/** 清单里的一行：两类残留合成同一种形状（SPEC-space-residue-merge） */
+interface MergedResidueRow {
+  key: string
+  source: 'uninstall' | 'software'
+  /** 原始 id，清理时传回主进程 */
+  id: string
+  kindText: string
+  label: string
+  detail: string
+  path: string
+  size: number | null
+  level: SoftwareResidueLevel
+  running: boolean
+  admin: boolean
+  cleanable: boolean
+}
+
 /**
- * 软件残留（SPEC-space-software-residue）：只检测、只展示。
- * 这张卡片没有任何停止/删除入口，避免第一版误伤。
+ * 残留（SPEC-space-residue / SPEC-space-software-residue / SPEC-space-residue-merge）。
+ *
+ * 一张清单装两类东西：当前用户的卸载残留（失效卸载项、死快捷方式、空的开始菜单文件夹），
+ * 以及全机的软件残留（死服务、计划任务、无主目录等）。两边扫描引擎不同，但都先备份再删，
+ * 所以勾选、清理、备份共用一套：卸载残留直接进备份区；软件残留只有确定级的服务/计划任务/
+ * 空目录能勾，勾了再清会弹一次 UAC。
  */
-function SoftwareResiduePanel({
+function ResiduePanel({
   onChanged,
-  refreshSignal
+  refresh
 }: {
   /** 清理产生了新备份：通知共享的备份块重新读取 */
   onChanged: () => void
-  /** 共享备份块撤销了本类备份：重新扫一遍列表 */
-  refreshSignal: number
+  /** 共享备份块撤销了某一类：把那一类重扫一遍 */
+  refresh: { uninstall: number; software: number }
 }): ReactElement {
-  const [items, setItems] = useState<SoftwareResidueItem[]>([])
+  const [uninstallItems, setUninstallItems] = useState<ResidueItem[]>([])
+  const [softwareItems, setSoftwareItems] = useState<SoftwareResidueItem[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanning, setScanning] = useState(false)
   const [scanned, setScanned] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const [copied, setCopied] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirming, setConfirming] = useState(false)
-  const [busy, setBusy] = useState(false)
 
-  const refresh = useCallback(async (): Promise<void> => {
+  /** 撤销后只重扫对应那一类，别把另一类正在显示的结果也清掉 */
+  const rescanUninstall = useCallback(async (): Promise<void> => {
+    try {
+      const r = await window.island.residueScan()
+      setUninstallItems(r.items)
+      setSelected(new Set())
+    } catch {
+      /* 重扫失败不影响已经做完的撤销 */
+    }
+  }, [])
+
+  const rescanSoftware = useCallback(async (): Promise<void> => {
+    try {
+      const r = await window.island.softwareResidueScan()
+      setSoftwareItems(r.items)
+      setSelected(new Set())
+      setScanned(true)
+    } catch {
+      /* 同上 */
+    }
+  }, [])
+
+  useEffect(() => {
+    if (refresh.uninstall > 0) void rescanUninstall()
+  }, [refresh.uninstall, rescanUninstall])
+
+  useEffect(() => {
+    if (refresh.software > 0) void rescanSoftware()
+  }, [refresh.software, rescanSoftware])
+
+  const rows: MergedResidueRow[] = [
+    ...uninstallItems.map((it) => ({
+      key: `u:${it.id}`,
+      source: 'uninstall' as const,
+      id: it.id,
+      kindText: KIND_LABEL[it.kind],
+      label: it.label,
+      detail: it.detail,
+      path: it.path,
+      size: it.bytes > 0 ? it.bytes : null,
+      level: 'definite' as const,
+      running: false,
+      admin: false,
+      cleanable: true
+    })),
+    ...softwareItems.map((it) => ({
+      key: `s:${it.id}`,
+      source: 'software' as const,
+      id: it.id,
+      kindText: RESIDUE_KIND_TEXT[it.kind],
+      label: it.label,
+      detail: it.detail,
+      path: it.path,
+      size: it.bytes,
+      level: it.level,
+      running: it.running,
+      admin: it.admin,
+      cleanable: it.cleanable
+    }))
+  ]
+
+  const refreshAll = async (): Promise<void> => {
     setScanning(true)
     setNote('')
     setSelected(new Set())
     setConfirming(false)
     try {
-      const r = await window.island.softwareResidueScan()
-      setItems(r.items)
-      setNote(r.warnings.join(' '))
+      const [u, s] = await Promise.allSettled([
+        window.island.residueScan(),
+        window.island.softwareResidueScan()
+      ])
+      const warnings: string[] = []
+      if (u.status === 'fulfilled') {
+        setUninstallItems(u.value.items)
+        warnings.push(...u.value.warnings)
+      } else {
+        warnings.push('卸载残留没扫成。')
+      }
+      if (s.status === 'fulfilled') {
+        setSoftwareItems(s.value.items)
+        warnings.push(...s.value.warnings)
+      } else {
+        warnings.push('软件残留没扫成。')
+      }
+      setNote(warnings.join('\n'))
       setScanned(true)
-    } catch {
-      setNote('扫描失败，请稍后再试。')
     } finally {
       setScanning(false)
     }
-  }, [])
+  }
 
-  // 扫描要读服务、驱动和各个盘符下的目录，十几秒起步，不随设置页打开自动跑
-
-  // 共享备份块撤销了本类备份：重扫一遍，让恢复的项回到清单里
-  useEffect(() => {
-    if (refreshSignal > 0) void refresh()
-  }, [refreshSignal, refresh])
-
-  const toggle = (it: SoftwareResidueItem): void => {
-    if (!it.cleanable || busy) return
+  const toggle = (row: MergedResidueRow): void => {
+    if (!row.cleanable || busy || scanning) return
     setSelected((prev) => {
       const next = new Set(prev)
-      if (next.has(it.id)) next.delete(it.id)
-      else next.add(it.id)
+      if (next.has(row.key)) next.delete(row.key)
+      else next.add(row.key)
       return next
     })
     // 勾选一变，之前的确认就作废
@@ -848,12 +765,12 @@ function SoftwareResiduePanel({
 
   const copy = async (): Promise<void> => {
     const text =
-      items
+      rows
         .map(
-          (i) =>
-            `${RESIDUE_LEVEL_TEXT[i.level]}｜${RESIDUE_KIND_TEXT[i.kind]}｜${i.label}${i.running ? '（运行中）' : ''}\n  ${i.detail}\n  ${i.path}`
+          (r) =>
+            `${RESIDUE_LEVEL_TEXT[r.level]}｜${r.kindText}｜${r.label}${r.running ? '（运行中）' : ''}\n  ${r.detail}\n  ${r.path}`
         )
-        .join('\n\n') || '没有发现软件残留。'
+        .join('\n\n') || '没有发现残留。'
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
@@ -863,35 +780,54 @@ function SoftwareResiduePanel({
     }
   }
 
+  const pickedUninstall = rows.filter((r) => r.source === 'uninstall' && selected.has(r.key))
+  const pickedSoftware = rows.filter((r) => r.source === 'software' && selected.has(r.key))
+
   const runCleanup = async (): Promise<void> => {
-    if (busy || selected.size === 0) return
-    const picked = items.filter((i) => selected.has(i.id))
-    if (!confirming) {
-      const names = picked.slice(0, 5).map((p) => p.label).join('、')
-      const more = picked.length > 5 ? ' 等' : ''
+    if (busy || scanning || selected.size === 0) return
+    // 软件残留要先备份、要 UAC，所以只要选了它们就得点两下；只是卸载残留则直接清
+    if (pickedSoftware.length > 0 && !confirming) {
+      const names = pickedSoftware.slice(0, 5).map((p) => p.label).join('、')
+      const more = pickedSoftware.length > 5 ? ' 等' : ''
       setConfirming(true)
       setNote(
-        `将清理 ${picked.length} 项：${names}${more}。会先导出备份，可在下方「清理备份」里撤销；需要一次管理员授权。再点一次「确认清理」执行。`
+        `将清理 ${pickedSoftware.length} 项软件残留：${names}${more}。${
+          pickedUninstall.length > 0 ? `另有 ${pickedUninstall.length} 项卸载残留一起清理。` : ''
+        }会先导出备份，可在下方「清理备份」里撤销；软件残留需要一次管理员授权。再点一次「确认清理」执行。`
       )
       return
     }
+
     setBusy(true)
-    setNote('正在请求管理员权限，请在弹窗里点「是」…')
+    const lines: string[] = []
+    const warnings: string[] = []
     try {
-      const r = await window.island.softwareResidueCleanup([...selected])
-      setItems(r.scan.items)
-      setScanned(true)
+      if (pickedUninstall.length > 0) {
+        setNote('正在清理卸载残留…')
+        const r = await window.island.residueClean(pickedUninstall.map((x) => x.id))
+        setUninstallItems(r.scan.items)
+        lines.push(
+          r.removed > 0
+            ? `卸载残留：已清理 ${r.removed} 项${
+                r.movedBytes > 0 ? `，${formatBytes(r.movedBytes)} 移进了备份（删除备份后才真正腾出空间）` : ''
+              }。`
+            : '卸载残留：这次没有清理任何项。'
+        )
+        warnings.push(...r.warnings)
+        if (r.backupId) onChanged()
+      }
+      if (pickedSoftware.length > 0) {
+        setNote([...lines, '正在请求管理员权限，请在弹窗里点「是」…'].join('\n'))
+        const r = await window.island.softwareResidueCleanup(pickedSoftware.map((x) => x.id))
+        setSoftwareItems(r.scan.items)
+        const done = r.items.filter((x) => x.ok).length
+        if (!r.canceled) lines.push(`软件残留：本次处理 ${done}/${r.items.length} 项。`)
+        lines.push(...r.items.map((x) => `${x.ok ? '已清理' : '未处理'}：${x.label}${x.message ? `（${x.message}）` : ''}`))
+        warnings.push(...r.warnings)
+        if (done > 0) onChanged()
+      }
+      setNote([...lines, ...warnings].filter(Boolean).join('\n'))
       setSelected(new Set())
-      const lines = r.items.map(
-        (x) => `${x.ok ? '已清理' : '未处理'}：${x.label}${x.message ? `（${x.message}）` : ''}`
-      )
-      const done = r.items.filter((x) => x.ok).length
-      setNote(
-        [r.canceled ? '' : `本次处理 ${done}/${r.items.length} 项。`, ...lines, ...r.warnings]
-          .filter(Boolean)
-          .join('\n')
-      )
-      if (done > 0) onChanged()
     } catch {
       setNote('清理失败，请稍后再试。')
     } finally {
@@ -900,16 +836,10 @@ function SoftwareResiduePanel({
     }
   }
 
-  const cleanableCount = items.filter((i) => i.cleanable).length
+  const cleanableCount = rows.filter((r) => r.cleanable).length
 
   return (
     <div className="clean-group clean-part swr-group">
-      <div className="clean-group-head">
-        <h4 className="clean-group-title">软件残留</h4>
-        <p className="clean-lead">
-          检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。确定级的服务、计划任务和空目录可以勾选清理：会先备份，可用「撤销上次清理」恢复。驱动和非空目录只报告，不提供删除——它们删错可能影响系统或正在用的软件。
-        </p>
-      </div>
       <div className="swr-legend">
         <span className="swr-legend-title">等级只看证据强弱，不等于能不能删：</span>
         {RESIDUE_LEVELS.map((lv) => (
@@ -926,30 +856,26 @@ function SoftwareResiduePanel({
         </span>
       </div>
       <div className="swr-list">
-        {scanning ? <div className="clean-empty">正在扫描服务、驱动、计划任务和目录，需要十几秒…</div> : null}
-        {!scanning && !scanned ? (
-          <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div>
-        ) : null}
-        {!scanning && scanned && items.length === 0 ? (
-          <div className="clean-empty">没有发现软件残留。</div>
-        ) : null}
-        {items.map((it) => {
-          const on = selected.has(it.id)
+        {scanning ? <div className="clean-empty">正在扫描卸载残留和软件残留，需要十几秒…</div> : null}
+        {!scanning && !scanned ? <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div> : null}
+        {!scanning && scanned && rows.length === 0 ? <div className="clean-empty">没有发现残留。</div> : null}
+        {rows.map((row) => {
+          const on = selected.has(row.key)
           return (
             <div
-              key={it.id}
-              className={`swr-row swr-${it.level}${on ? ' on' : ''}${it.cleanable ? ' swr-selectable' : ''}`}
+              key={row.key}
+              className={`swr-row swr-lv-${row.level}${on ? ' on' : ''}${row.cleanable ? ' swr-selectable' : ''}`}
             >
               <div className="swr-head">
-                {it.cleanable ? (
+                {row.cleanable ? (
                   <button
                     type="button"
                     role="checkbox"
                     aria-checked={on}
-                    aria-label={it.label}
+                    aria-label={row.label}
                     className="swr-check"
-                    disabled={busy}
-                    onClick={() => toggle(it)}
+                    disabled={busy || scanning}
+                    onClick={() => toggle(row)}
                   >
                     <span className="clean-check" aria-hidden="true">
                       {on ? (
@@ -960,18 +886,18 @@ function SoftwareResiduePanel({
                     </span>
                   </button>
                 ) : null}
-                <span className={`swr-level swr-level-${it.level}`} title={RESIDUE_LEVEL_INFO[it.level].full}>
-                  {RESIDUE_LEVEL_TEXT[it.level]}
+                <span className={`swr-level swr-level-${row.level}`} title={RESIDUE_LEVEL_INFO[row.level].full}>
+                  {RESIDUE_LEVEL_TEXT[row.level]}
                 </span>
-                <span className="swr-kind">{RESIDUE_KIND_TEXT[it.kind]}</span>
-                <span className="swr-name">{it.label}</span>
-                {it.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
-                {it.admin ? <span className="swr-tag">需要管理员</span> : null}
-                <span className="swr-size">{it.bytes === null ? '' : formatBytes(it.bytes)}</span>
+                <span className="swr-kind">{row.kindText}</span>
+                <span className="swr-name">{row.label}</span>
+                {row.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
+                {row.admin ? <span className="swr-tag">需要管理员</span> : null}
+                <span className="swr-size">{row.size === null ? '' : formatBytes(row.size)}</span>
               </div>
-              <div className="swr-detail">{it.detail}</div>
-              <div className="swr-path" title={it.path}>
-                {it.path}
+              <div className="swr-detail">{row.detail}</div>
+              <div className="swr-path" title={row.path}>
+                {row.path}
               </div>
             </div>
           )
@@ -982,7 +908,7 @@ function SoftwareResiduePanel({
         <div className="clean-total">
           {scanned ? (
             <>
-              共 <b>{items.length}</b> 项 · 可清理 <b>{cleanableCount}</b> 项
+              共 <b>{rows.length}</b> 项 · 可清理 <b>{cleanableCount}</b> 项
               {selected.size > 0 ? <> · 已选 <b>{selected.size}</b> 项</> : null}
             </>
           ) : (
@@ -993,7 +919,7 @@ function SoftwareResiduePanel({
           <button
             type="button"
             className="set-btn set-btn-quiet"
-            disabled={scanning || busy || items.length === 0}
+            disabled={scanning || busy || rows.length === 0}
             onClick={() => void copy()}
           >
             {copied ? '已复制' : '复制清单'}
@@ -1002,7 +928,7 @@ function SoftwareResiduePanel({
             type="button"
             className="set-btn set-btn-primary"
             disabled={scanning || busy}
-            onClick={() => void refresh()}
+            onClick={() => void refreshAll()}
           >
             {scanning ? '扫描中…' : scanned ? '重新扫描' : '开始检测'}
           </button>
@@ -1013,7 +939,13 @@ function SoftwareResiduePanel({
               disabled={busy || selected.size === 0}
               onClick={() => void runCleanup()}
             >
-              {busy ? '处理中…' : confirming ? '确认清理' : '清理选中项（需要管理员）'}
+              {busy
+                ? '处理中…'
+                : confirming
+                  ? '确认清理'
+                  : pickedSoftware.length > 0
+                    ? '清理选中项（需要管理员）'
+                    : '清理选中项'}
             </button>
           ) : null}
         </div>
@@ -1199,11 +1131,10 @@ function ResidueSection(): ReactElement {
       <div className="clean-group-head">
         <h3 className="clean-group-title">残留</h3>
         <p className="clean-lead">
-          已经卸载、但还留下东西的软件。上一类是当前用户的卸载项和死快捷方式，清理会先进备份区；下一类是全机的死服务、计划任务和无主目录，只有确定级能清理，删前先备份。两边的结果都放在最下面的「清理备份」里，可以按批次撤销。
+          已经卸载、但还留下东西的软件，两类混在一张清单里：当前用户的失效卸载项、死快捷方式和空的开始菜单文件夹，以及全机的死服务、计划任务和无主目录。全部先备份再删——卸载残留直接进备份区，软件残留只有确定级能勾选、清理时要一次管理员授权。结果都在最下面的「清理备份」里，可按批次撤销。
         </p>
       </div>
-      <ResiduePanel onChanged={onChanged} refreshSignal={refresh.uninstall} />
-      <SoftwareResiduePanel onChanged={onChanged} refreshSignal={refresh.software} />
+      <ResiduePanel onChanged={onChanged} refresh={refresh} />
       <ResidueBackupsPanel refreshSignal={backupToken} onUndone={onUndone} />
     </div>
   )
