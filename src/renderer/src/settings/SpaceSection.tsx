@@ -22,9 +22,19 @@ import type {
  * 立即渲染，每项算出大小就替换成实际数字，慢的那项自己转「计算中…」。
  */
 
-/** 勾选的行排到最上面；其它保持原顺序（sort 是稳定排序） */
-function selectedFirst<T>(rows: T[], isOn: (row: T) => boolean): T[] {
-  return [...rows].sort((a, b) => Number(isOn(b)) - Number(isOn(a)))
+/** 勾选的行置顶，最近勾选的排最前；未勾选的保持原顺序 */
+function checkedFirst<T>(
+  rows: T[],
+  keyOf: (row: T) => string,
+  selected: Set<string>,
+  recent: string[]
+): T[] {
+  const rank = new Map(recent.map((k, i) => [k, i]))
+  const on = rows
+    .filter((r) => selected.has(keyOf(r)))
+    .sort((a, b) => (rank.get(keyOf(b)) ?? -1) - (rank.get(keyOf(a)) ?? -1))
+  const off = rows.filter((r) => !selected.has(keyOf(r)))
+  return [...on, ...off]
 }
 
 function formatBytes(n: number): string {
@@ -52,6 +62,8 @@ interface PanelProps {
 function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   const [rows, setRows] = useState<Row[]>([])
   const [selected, setSelected] = useState<Set<CleanupTargetId>>(new Set())
+  /** 勾选顺序：最近勾选的排在置顶区最前 */
+  const [recent, setRecent] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -109,10 +121,16 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   /** 已选中的「默认不勾」项：删除不可恢复，要先问一句 */
   const risky = rows.filter((r) => selected.has(r.id) && !r.defaultChecked)
 
+  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  const rememberPick = (id: string, wasOn: boolean): void => {
+    setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
+  }
+
   const toggle = (id: CleanupTargetId): void => {
     // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
     if (confirming) setNote('')
     setConfirming(false)
+    rememberPick(id, selected.has(id))
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -178,7 +196,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新计算」再试。'}
           </div>
         ) : null}
-        {selectedFirst(rows, (r) => selected.has(r.id)).map((row) => {
+        {checkedFirst(rows, (r) => r.id, selected, recent).map((row) => {
           const on = selected.has(row.id)
           const known = row.bytes !== null
           return (
@@ -282,6 +300,8 @@ interface JunkRow {
 function JunkPanel(): ReactElement {
   const [rows, setRows] = useState<JunkRow[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** 勾选顺序：最近勾选的排在置顶区最前 */
+  const [recent, setRecent] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
@@ -364,10 +384,16 @@ function JunkPanel(): ReactElement {
   /** 已选中的「默认不勾」项（回收站）：删除不可恢复，要先问一句 */
   const risky = selectedRows.filter((r) => !r.defaultChecked)
 
+  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  const rememberPick = (id: string, wasOn: boolean): void => {
+    setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
+  }
+
   const toggle = (id: string): void => {
     // 选择变了，之前的确认就不再代表用户当前的选择；对应的提示也一起撤掉
     if (confirming) setNote('')
     setConfirming(false)
+    rememberPick(id, selected.has(id))
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
@@ -489,7 +515,7 @@ function JunkPanel(): ReactElement {
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新读取」再试。'}
           </div>
         ) : null}
-        {selectedFirst(rows, (r) => selected.has(r.id)).map((row) => {
+        {checkedFirst(rows, (r) => r.id, selected, recent).map((row) => {
           const on = selected.has(row.id)
           const pending = row.known && row.bytes === null
           const empty = row.known && row.bytes === 0 && !row.exists
@@ -662,6 +688,8 @@ function ResiduePanel({
   const [uninstallItems, setUninstallItems] = useState<ResidueItem[]>([])
   const [softwareItems, setSoftwareItems] = useState<SoftwareResidueItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  /** 勾选顺序：最近勾选的排在置顶区最前 */
+  const [recent, setRecent] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
   const [scanned, setScanned] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -770,8 +798,14 @@ function ResiduePanel({
     }
   }
 
+  /** 记下勾选顺序：新勾的进末尾（渲染时倒序，所以排最前）；取消勾选就移掉 */
+  const rememberPick = (id: string, wasOn: boolean): void => {
+    setRecent((prev) => (wasOn ? prev.filter((x) => x !== id) : [...prev.filter((x) => x !== id), id]))
+  }
+
   const toggle = (row: MergedResidueRow): void => {
     if (!row.cleanable || busy || scanning) return
+    rememberPick(row.key, selected.has(row.key))
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(row.key)) next.delete(row.key)
@@ -912,7 +946,7 @@ function ResiduePanel({
         {scanning ? <div className="clean-empty">正在扫描卸载残留和软件残留，需要十几秒…</div> : null}
         {!scanning && !scanned ? <div className="clean-empty">还没检测过。点右下角「开始检测」扫一次。</div> : null}
         {!scanning && scanned && rows.length === 0 ? <div className="clean-empty">没有发现残留。</div> : null}
-        {selectedFirst(rows, (r) => selected.has(r.key)).map((row) => {
+        {checkedFirst(rows, (r) => r.key, selected, recent).map((row) => {
           const on = selected.has(row.key)
           return (
             <div
