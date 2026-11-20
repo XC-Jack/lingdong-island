@@ -258,12 +258,32 @@ export interface ResidueCleanupRunResult {
   scan: SoftwareResidueScanResult
 }
 
+/** 软件残留的一批备份：`residue-backup/residue-<时间戳>-<随机>` 下的一个目录 */
+export interface ResidueCleanupBackup {
+  id: string
+  createdAt: number
+  count: number
+  /** 前几项的显示名，给摘要用 */
+  labels: string[]
+  /** 已经撤销过 */
+  restored: boolean
+}
+
 export interface ResidueUndoResult {
   ok: boolean
   canceled: boolean
   restored: number
   warnings: string[]
   scan: SoftwareResidueScanResult
+  /** 操作的批次；编号无效时为空 */
+  backupId: string
+  backups: ResidueCleanupBackup[]
+}
+
+export interface ResidueDiscardBackupResult {
+  ok: boolean
+  warnings: string[]
+  backups: ResidueCleanupBackup[]
 }
 
 /* ---------- 系统清理（需要管理员，SPEC-space-admin-cleanup） ---------- */

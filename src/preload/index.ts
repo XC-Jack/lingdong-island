@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, ResidueCleanupBackup, ResidueDiscardBackupResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, ResidueCleanupBackup, ResidueDiscardBackupResult, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -136,9 +136,17 @@ const api = {
   softwareResidueCleanup(ids: string[]): Promise<ResidueCleanupRunResult> {
     return ipcRenderer.invoke('software-residue:cleanup', ids)
   },
-  /** 撤销上一次清理（从备份恢复） */
-  softwareResidueUndo(): Promise<ResidueUndoResult> {
-    return ipcRenderer.invoke('software-residue:undo')
+  /** 软件残留的备份批次列表（时间倒序，SPEC-space-residue-merge） */
+  softwareResidueBackups(): Promise<ResidueCleanupBackup[]> {
+    return ipcRenderer.invoke('software-residue:backups')
+  },
+  /** 按批次撤销：重新登记服务/计划任务、重建空目录 */
+  softwareResidueUndo(id: string): Promise<ResidueUndoResult> {
+    return ipcRenderer.invoke('software-residue:undo', id)
+  },
+  /** 永久删除一批备份（不可恢复） */
+  softwareResidueDiscardBackup(id: string): Promise<ResidueDiscardBackupResult> {
+    return ipcRenderer.invoke('software-residue:discard', id)
   },
   /** 「空间」页·卸载残留（SPEC-space-residue）：扫描当前用户的失效卸载项与死快捷方式，只读 */
   residueScan(): Promise<ResidueScanResult> {

@@ -9,7 +9,12 @@ import type {
   SoftwareResidueScanResult
 } from '../shared/types'
 import { runPowerShellRaw } from './runPs'
-import { runResidueCleanup, undoLastResidueCleanup } from './softwareResidueCleanup'
+import {
+  discardResidueBackup,
+  listResidueBackups,
+  runResidueCleanup,
+  undoResidueCleanup
+} from './softwareResidueCleanup'
 import { errText, existsConservative, rawFs } from './fsUtil'
 
 /**
@@ -825,5 +830,8 @@ export function setupSoftwareResidueStore(): void {
   ipcMain.handle('software-residue:scan', () => scanSoftwareResidue())
   // 清理与撤销放在 softwareResidueCleanup 里，这里只挂 IPC（SPEC-space-residue-cleanup）
   ipcMain.handle('software-residue:cleanup', (_e, ids: unknown) => runResidueCleanup(ids))
-  ipcMain.handle('software-residue:undo', () => undoLastResidueCleanup())
+  // 按批次撤销：渲染层只传批次 id，路径由主进程按固定格式拼接（SPEC-space-residue-merge）
+  ipcMain.handle('software-residue:backups', () => listResidueBackups())
+  ipcMain.handle('software-residue:undo', (_e, id: unknown) => undoResidueCleanup(id))
+  ipcMain.handle('software-residue:discard', (_e, id: unknown) => discardResidueBackup(id))
 }

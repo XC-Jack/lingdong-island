@@ -3,8 +3,10 @@ import { randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  ResidueCleanupBackup,
   ResidueCleanupItemResult,
   ResidueCleanupRunResult,
+  ResidueDiscardBackupResult,
   ResidueUndoResult,
   SoftwareResidueItem,
   SoftwareResidueScanResult
@@ -383,42 +385,78 @@ export async function runResidueCleanup(rawIds: unknown): Promise<ResidueCleanup
   return { ok: true, canceled: false, items, warnings, backupDir, scan }
 }
 
-async function newestBackupDir(): Promise<string | null> {
+/** 备份目录名固定为 residue-<时间戳>-<随机 2 字节>，用来拒绝任意路径 */
+const BATCH_RE = /^residue-\d{8}-\d{6}-[0-9a-f]{4}$/
+
+interface ManifestFile {
+  createdAt?: number
+  restored?: boolean
+  entries?: ManifestEntry[]
+}
+
+function backupDirOf(id: string): string | null {
+  return BATCH_RE.test(id) ? join(backupRoot(), id) : null
+}
+
+async function readManifestFile(id: string): Promise<ManifestFile | null> {
+  const text = await readRegularFile(join(backupRoot(), id, 'manifest.json'))
+  if (!text) return null
   try {
-    const root = backupRoot()
-    const names = (await fs.readdir(root)).filter((n) => n.startsWith('residue-')).sort()
-    if (names.length === 0) return null
-    return join(root, names[names.length - 1])
+    return JSON.parse(text.replace(/^﻿/, '')) as ManifestFile
   } catch {
     return null
   }
 }
 
-export async function undoLastResidueCleanup(): Promise<ResidueUndoResult> {
-  const dir = await newestBackupDir()
-  const scan = async (): Promise<SoftwareResidueScanResult> => await scanSoftwareResidue()
-  if (!dir) {
-    return { ok: false, canceled: false, restored: 0, warnings: ['没有找到可撤销的备份。'], scan: await scan() }
-  }
+async function writeManifestFile(id: string, m: ManifestFile): Promise<void> {
+  await fs.writeFile(join(backupRoot(), id, 'manifest.json'), JSON.stringify(m, null, 2), 'utf8')
+}
 
-  let entries: ManifestEntry[] = []
+/** 备份批次列表，时间倒序。只读清单，不碰备份内容 */
+export async function listResidueBackups(): Promise<ResidueCleanupBackup[]> {
+  let names: string[] = []
   try {
-    const text = await readRegularFile(join(dir, 'manifest.json'))
-    if (!text) throw new Error('manifest missing')
-    const parsed = JSON.parse(text.replace(/^﻿/, '')) as { entries?: ManifestEntry[] }
-    entries = Array.isArray(parsed.entries) ? parsed.entries : []
+    const entries = await fs.readdir(backupRoot(), { withFileTypes: true })
+    names = entries.filter((e) => e.isDirectory() && BATCH_RE.test(e.name)).map((e) => e.name)
   } catch {
-    return {
-      ok: false,
-      canceled: false,
-      restored: 0,
-      warnings: ['备份清单读不到，无法撤销。'],
-      scan: await scan()
-    }
+    return []
   }
-  if (entries.length === 0) {
-    return { ok: false, canceled: false, restored: 0, warnings: ['备份里没有可恢复的项。'], scan: await scan() }
+  const out: ResidueCleanupBackup[] = []
+  for (const id of names) {
+    const m = await readManifestFile(id)
+    if (!m) continue
+    const list = Array.isArray(m.entries) ? m.entries : []
+    out.push({
+      id,
+      createdAt: typeof m.createdAt === 'number' ? m.createdAt : 0,
+      count: list.length,
+      labels: list.slice(0, 3).map((e) => e.label),
+      restored: Boolean(m.restored)
+    })
   }
+  return out.sort((a, b) => b.createdAt - a.createdAt)
+}
+
+export async function undoResidueCleanup(rawId: unknown): Promise<ResidueUndoResult> {
+  const id = typeof rawId === 'string' ? rawId : ''
+  const dir = backupDirOf(id)
+  const scan = async (): Promise<SoftwareResidueScanResult> => await scanSoftwareResidue()
+  const fail = async (warnings: string[]): Promise<ResidueUndoResult> => ({
+    ok: false,
+    canceled: false,
+    restored: 0,
+    warnings,
+    scan: await scan(),
+    backupId: '',
+    backups: await listResidueBackups()
+  })
+
+  if (!dir) return fail(['备份编号无效。'])
+  const m = await readManifestFile(id)
+  if (!m) return fail(['备份清单读不到，无法撤销。'])
+  if (m.restored) return fail(['这批备份已经撤销过了。'])
+  const entries = Array.isArray(m.entries) ? m.entries : []
+  if (entries.length === 0) return fail(['备份里没有可恢复的项。'])
 
   const workDir = join(app.getPath('userData'), 'residue-cleanup')
   await fs.mkdir(workDir, { recursive: true })
@@ -427,7 +465,15 @@ export async function undoLastResidueCleanup(): Promise<ResidueUndoResult> {
   const outcome = await runElevated(buildUndoScript(entries, dir, resultPath), resultPath)
   const after = await scan()
   if (outcome.canceled) {
-    return { ok: false, canceled: true, restored: 0, warnings: ['已取消管理员授权，没有恢复任何东西。'], scan: after }
+    return {
+      ok: false,
+      canceled: true,
+      restored: 0,
+      warnings: ['已取消管理员授权，没有恢复任何东西。'],
+      scan: after,
+      backupId: id,
+      backups: await listResidueBackups()
+    }
   }
 
   const warnings: string[] = []
@@ -440,5 +486,27 @@ export async function undoLastResidueCleanup(): Promise<ResidueUndoResult> {
     else if (r.message) warnings.push(`「${e.label}」：${r.message}`)
   }
 
-  return { ok: true, canceled: false, restored, warnings, scan: after }
+  // 全部恢复成功才标记「已撤销」；部分成功保留可再试一次
+  if (warnings.length === 0) {
+    try {
+      await writeManifestFile(id, { ...m, restored: true })
+    } catch {
+      warnings.push('恢复已完成，但没能把「已撤销」写进备份清单。')
+    }
+  }
+
+  return { ok: true, canceled: false, restored, warnings, scan: after, backupId: id, backups: await listResidueBackups() }
+}
+
+/** 永久删除一批备份（不可恢复） */
+export async function discardResidueBackup(rawId: unknown): Promise<ResidueDiscardBackupResult> {
+  const id = typeof rawId === 'string' ? rawId : ''
+  const dir = backupDirOf(id)
+  if (!dir) return { ok: false, warnings: ['备份编号无效。'], backups: await listResidueBackups() }
+  try {
+    await fs.rm(dir, { recursive: true, force: true })
+    return { ok: true, warnings: [], backups: await listResidueBackups() }
+  } catch (e) {
+    return { ok: false, warnings: [`删除备份失败：${errText(e)}`], backups: await listResidueBackups() }
+  }
 }

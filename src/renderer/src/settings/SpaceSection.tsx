@@ -5,7 +5,6 @@ import type {
   CleanupItemDef,
   CleanupScope,
   CleanupTargetId,
-  ResidueBackup,
   ResidueItem,
   SoftwareResidueItem
 } from '../../../shared/types'
@@ -260,25 +259,21 @@ function timeText(ts: number): string {
  * 与两组缓存不同，这里删掉的是「别的东西」：失效的卸载注册项、指向空处的快捷方式、
  * 只剩死链的开始菜单文件夹。所以默认一项都不勾，清理一律先进备份区，并能一键撤销。
  */
-function ResiduePanel(): ReactElement {
+function ResiduePanel({
+  onChanged,
+  refreshSignal
+}: {
+  /** 清理产生了新备份：通知共享的备份块重新读取 */
+  onChanged: () => void
+  /** 共享备份块撤销了本类备份：重新扫一遍列表 */
+  refreshSignal: number
+}): ReactElement {
   /** null = 还没扫描过；[] = 扫过但没有残留 */
   const [items, setItems] = useState<ResidueItem[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [scanning, setScanning] = useState(false)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const [backups, setBackups] = useState<ResidueBackup[]>([])
-  const [backupBusy, setBackupBusy] = useState('')
-  /** 正在等二次确认「删除备份」的批次 id；删除不可恢复，所以要按两下 */
-  const [confirmDiscard, setConfirmDiscard] = useState('')
-
-  const loadBackups = useCallback(async (): Promise<void> => {
-    try {
-      setBackups(await window.island.residueBackups())
-    } catch {
-      /* 备份列表读不到不影响扫描；留着上一次的结果 */
-    }
-  }, [])
 
   /** 只重扫列表，不动提示行（撤销/清理后由调用方决定写什么提示） */
   const refreshItems = useCallback(async (): Promise<void> => {
@@ -289,7 +284,6 @@ function ResiduePanel(): ReactElement {
 
   const scan = useCallback(async (): Promise<void> => {
     setScanning(true)
-    setConfirmDiscard('')
     setNote('')
     try {
       const r = await window.island.residueScan()
@@ -306,8 +300,12 @@ function ResiduePanel(): ReactElement {
 
   useEffect(() => {
     void scan()
-    void loadBackups()
-  }, [scan, loadBackups])
+  }, [scan])
+
+  // 共享备份块撤销了本类备份：静默重扫，别再清掉提示行
+  useEffect(() => {
+    if (refreshSignal > 0) void refreshItems()
+  }, [refreshSignal, refreshItems])
 
   const list = items ?? []
   const selectedBytes = list
@@ -332,7 +330,7 @@ function ResiduePanel(): ReactElement {
       setItems(r.scan.items)
       setSelected(new Set())
       // 残留清理是「移入备份」，同一块盘上并没有腾出空间；别写「释放」误导用户。
-      // 想真正腾空间，要在下面的「备份与撤销」里删除这批备份。
+      // 想真正腾空间，要在下面的「清理备份」里删除这批备份。
       const head =
         r.removed > 0
           ? `已清理 ${r.removed} 项${
@@ -342,50 +340,11 @@ function ResiduePanel(): ReactElement {
             }；可以撤销。`
           : '这次没有清理任何项。'
       setNote([head, ...r.warnings].filter(Boolean).join(' '))
-      if (r.backupId) await loadBackups()
+      if (r.backupId) onChanged()
     } catch {
       setNote('清理失败，请稍后再试。')
     } finally {
       setBusy(false)
-    }
-  }
-
-  const undo = async (id: string): Promise<void> => {
-    if (backupBusy) return
-    setConfirmDiscard('')
-    setBackupBusy(id)
-    setNote('正在撤销…')
-    try {
-      const r = await window.island.residueUndo(id)
-      setBackups(r.backups)
-      await refreshItems()
-      setNote(r.ok ? ['已撤销这批备份。', ...r.warnings].join(' ') : r.warnings.join(' '))
-    } catch {
-      setNote('撤销失败，请稍后再试。')
-    } finally {
-      setBackupBusy('')
-    }
-  }
-
-  const discard = async (id: string): Promise<void> => {
-    if (backupBusy) return
-    // 第一下只是把按钮换成「确认删除」，第二下才真删（删除不可恢复）
-    if (confirmDiscard !== id) {
-      setConfirmDiscard(id)
-      setNote('再点一次「确认删除」就会永久删除这批备份，不能恢复。')
-      return
-    }
-    setConfirmDiscard('')
-    setBackupBusy(id)
-    setNote('正在删除备份…')
-    try {
-      const r = await window.island.residueDiscardBackup(id)
-      setBackups(r.backups)
-      setNote(r.ok ? '备份已删除。' : r.warnings.join(' '))
-    } catch {
-      setNote('删除备份失败，请稍后再试。')
-    } finally {
-      setBackupBusy('')
     }
   }
 
@@ -463,44 +422,6 @@ function ResiduePanel(): ReactElement {
         </div>
       </div>
 
-      <div className="residue-backups">
-        <div className="residue-backups-head">
-          <h4 className="clean-group-title">备份与撤销</h4>
-          <span className="clean-hint">清理的项先放在这里，撤销会搬回原位置、注册表也会导回。</span>
-        </div>
-        {backups.length === 0 ? <div className="clean-empty">还没有备份。</div> : null}
-        {backups.map((b) => (
-          <div className="residue-backup-row" key={b.id}>
-            <span className="residue-backup-meta">
-              {timeText(b.createdAt)} · {b.files + b.registry} 项
-              {b.bytes > 0 ? ` · ${formatBytes(b.bytes)}` : ''}
-              {b.restored ? ' · 已撤销' : ''}
-            </span>
-            <span className="residue-backup-actions">
-              <button
-                type="button"
-                className="set-btn set-btn-quiet"
-                disabled={b.restored || Boolean(backupBusy)}
-                onClick={() => {
-                  void undo(b.id)
-                }}
-              >
-                {backupBusy === b.id ? '处理中…' : '撤销'}
-              </button>
-              <button
-                type="button"
-                className="set-btn set-btn-quiet"
-                disabled={Boolean(backupBusy)}
-                onClick={() => {
-                  void discard(b.id)
-                }}
-              >
-                {confirmDiscard === b.id ? '确认删除' : '删除备份'}
-              </button>
-            </span>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
@@ -870,7 +791,15 @@ const RESIDUE_KIND_TEXT: Record<SoftwareResidueItem['kind'], string> = {
  * 软件残留（SPEC-space-software-residue）：只检测、只展示。
  * 这张卡片没有任何停止/删除入口，避免第一版误伤。
  */
-function SoftwareResiduePanel(): ReactElement {
+function SoftwareResiduePanel({
+  onChanged,
+  refreshSignal
+}: {
+  /** 清理产生了新备份：通知共享的备份块重新读取 */
+  onChanged: () => void
+  /** 共享备份块撤销了本类备份：重新扫一遍列表 */
+  refreshSignal: number
+}): ReactElement {
   const [items, setItems] = useState<SoftwareResidueItem[]>([])
   const [scanning, setScanning] = useState(false)
   const [scanned, setScanned] = useState(false)
@@ -879,7 +808,6 @@ function SoftwareResiduePanel(): ReactElement {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirming, setConfirming] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [canUndo, setCanUndo] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     setScanning(true)
@@ -899,6 +827,11 @@ function SoftwareResiduePanel(): ReactElement {
   }, [])
 
   // 扫描要读服务、驱动和各个盘符下的目录，十几秒起步，不随设置页打开自动跑
+
+  // 共享备份块撤销了本类备份：重扫一遍，让恢复的项回到清单里
+  useEffect(() => {
+    if (refreshSignal > 0) void refresh()
+  }, [refreshSignal, refresh])
 
   const toggle = (it: SoftwareResidueItem): void => {
     if (!it.cleanable || busy) return
@@ -938,7 +871,7 @@ function SoftwareResiduePanel(): ReactElement {
       const more = picked.length > 5 ? ' 等' : ''
       setConfirming(true)
       setNote(
-        `将清理 ${picked.length} 项：${names}${more}。会先导出备份，可用「撤销上次清理」恢复；需要一次管理员授权。再点一次「确认清理」执行。`
+        `将清理 ${picked.length} 项：${names}${more}。会先导出备份，可在下方「清理备份」里撤销；需要一次管理员授权。再点一次「确认清理」执行。`
       )
       return
     }
@@ -958,7 +891,7 @@ function SoftwareResiduePanel(): ReactElement {
           .filter(Boolean)
           .join('\n')
       )
-      if (done > 0) setCanUndo(true)
+      if (done > 0) onChanged()
     } catch {
       setNote('清理失败，请稍后再试。')
     } finally {
@@ -967,31 +900,12 @@ function SoftwareResiduePanel(): ReactElement {
     }
   }
 
-  const undo = async (): Promise<void> => {
-    if (busy) return
-    setBusy(true)
-    setNote('正在请求管理员权限，请在弹窗里点「是」…')
-    try {
-      const r = await window.island.softwareResidueUndo()
-      setItems(r.scan.items)
-      setScanned(true)
-      setSelected(new Set())
-      setConfirming(false)
-      setNote([r.canceled ? '' : `已恢复 ${r.restored} 项。`, ...r.warnings].filter(Boolean).join('\n'))
-      if (r.restored > 0) setCanUndo(false)
-    } catch {
-      setNote('撤销失败，请稍后再试。')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const cleanableCount = items.filter((i) => i.cleanable).length
 
   return (
-    <div className="clean-group swr-group">
+    <div className="clean-group clean-part swr-group">
       <div className="clean-group-head">
-        <h3 className="clean-group-title">软件残留</h3>
+        <h4 className="clean-group-title">软件残留</h4>
         <p className="clean-lead">
           检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。确定级的服务、计划任务和空目录可以勾选清理：会先备份，可用「撤销上次清理」恢复。驱动和非空目录只报告，不提供删除——它们删错可能影响系统或正在用的软件。
         </p>
@@ -1076,11 +990,6 @@ function SoftwareResiduePanel(): ReactElement {
           )}
         </div>
         <div className="clean-actions">
-          {canUndo ? (
-            <button type="button" className="set-btn set-btn-quiet" disabled={busy} onClick={() => void undo()}>
-              撤销上次清理
-            </button>
-          ) : null}
           <button
             type="button"
             className="set-btn set-btn-quiet"
@@ -1113,13 +1022,200 @@ function SoftwareResiduePanel(): ReactElement {
   )
 }
 
+/** 两类备份合在一起显示：来源用文字区分，撤销与删除各走各的接口 */
+interface BackupRow {
+  key: string
+  source: 'uninstall' | 'software'
+  id: string
+  createdAt: number
+  count: number
+  labels: string[]
+  restored: boolean
+}
+
+function ResidueBackupsPanel({
+  refreshSignal,
+  onUndone
+}: {
+  refreshSignal: number
+  /** 撤销了哪一类：让对应的列表重扫，恢复的项才会回到清单里 */
+  onUndone: (source: BackupRow['source']) => void
+}): ReactElement {
+  const [rows, setRows] = useState<BackupRow[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState('')
+  const [confirmDiscard, setConfirmDiscard] = useState('')
+  const [note, setNote] = useState('')
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const [uninstall, software] = await Promise.all([
+        window.island.residueBackups(),
+        window.island.softwareResidueBackups()
+      ])
+      const merged: BackupRow[] = [
+        ...uninstall.map((b) => ({
+          key: `u:${b.id}`,
+          source: 'uninstall' as const,
+          id: b.id,
+          createdAt: b.createdAt,
+          count: b.files + b.registry,
+          labels: [],
+          restored: b.restored
+        })),
+        ...software.map((b) => ({
+          key: `s:${b.id}`,
+          source: 'software' as const,
+          id: b.id,
+          createdAt: b.createdAt,
+          count: b.count,
+          labels: b.labels,
+          restored: b.restored
+        }))
+      ]
+      setRows(merged.sort((a, b) => b.createdAt - a.createdAt))
+    } catch {
+      /* 备份列表读不到就保留上一次的结果 */
+    } finally {
+      setLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load, refreshSignal])
+
+  const undo = async (row: BackupRow): Promise<void> => {
+    if (busy) return
+    setConfirmDiscard('')
+    setBusy(row.key)
+    setNote('正在撤销…')
+    try {
+      if (row.source === 'uninstall') {
+        const r = await window.island.residueUndo(row.id)
+        setNote(r.ok ? ['已撤销这批备份。', ...r.warnings].join(' ') : r.warnings.join(' '))
+      } else {
+        setNote('正在请求管理员权限，请在弹窗里点「是」…')
+        const r = await window.island.softwareResidueUndo(row.id)
+        setNote(
+          [r.canceled ? '已取消管理员授权，没有恢复任何东西。' : `已恢复 ${r.restored} 项。`, ...r.warnings]
+            .filter(Boolean)
+            .join('\n')
+        )
+      }
+      await load()
+      onUndone(row.source)
+    } catch {
+      setNote('撤销失败，请稍后再试。')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const discard = async (row: BackupRow): Promise<void> => {
+    if (busy) return
+    // 第一下只是把按钮换成「确认删除」，第二下才真删（删除不可恢复）
+    if (confirmDiscard !== row.key) {
+      setConfirmDiscard(row.key)
+      setNote('再点一次「确认删除」就会永久删除这批备份，不能恢复。')
+      return
+    }
+    setConfirmDiscard('')
+    setBusy(row.key)
+    setNote('正在删除备份…')
+    try {
+      const r =
+        row.source === 'uninstall'
+          ? await window.island.residueDiscardBackup(row.id)
+          : await window.island.softwareResidueDiscardBackup(row.id)
+      setNote(r.ok ? '备份已删除。' : r.warnings.join(' '))
+      await load()
+    } catch {
+      setNote('删除备份失败，请稍后再试。')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div className="residue-backups">
+      <div className="residue-backups-head">
+        <h4 className="clean-group-title">清理备份</h4>
+        <span className="clean-hint">
+          两类清理都先放在这里：卸载残留的文件和注册表会搬回原位置，软件残留的服务、计划任务和空目录会重新登记。删除备份后才会真正腾出空间，且不能恢复。
+        </span>
+      </div>
+      {loaded && rows.length === 0 ? <div className="clean-empty">还没有备份。</div> : null}
+      {rows.map((row) => (
+        <div className="residue-backup-row" key={row.key}>
+          <span className="residue-backup-meta">
+            {timeText(row.createdAt)} · {row.source === 'uninstall' ? '卸载残留' : '软件残留'} · {row.count} 项
+            {row.labels.length > 0
+              ? `（${row.labels.join('、')}${row.count > row.labels.length ? ' 等' : ''}）`
+              : ''}
+            {row.restored ? ' · 已撤销' : ''}
+          </span>
+          <span className="residue-backup-actions">
+            <button
+              type="button"
+              className="set-btn set-btn-quiet"
+              disabled={row.restored || Boolean(busy)}
+              onClick={() => {
+                void undo(row)
+              }}
+            >
+              {busy === row.key ? '处理中…' : '撤销'}
+            </button>
+            <button
+              type="button"
+              className="set-btn set-btn-quiet"
+              disabled={Boolean(busy)}
+              onClick={() => {
+                void discard(row)
+              }}
+            >
+              {confirmDiscard === row.key ? '确认删除' : '删除备份'}
+            </button>
+          </span>
+        </div>
+      ))}
+      <div className="set-note clean-note">{note}</div>
+    </div>
+  )
+}
+
+/** 残留：卸载残留 + 软件残留 + 共用一块清理备份（SPEC-space-residue-merge） */
+function ResidueSection(): ReactElement {
+  const [backupToken, setBackupToken] = useState(0)
+  const [refresh, setRefresh] = useState({ uninstall: 0, software: 0 })
+
+  const onChanged = useCallback((): void => setBackupToken((n) => n + 1), [])
+  const onUndone = useCallback((source: BackupRow['source']): void => {
+    setRefresh((r) => ({ ...r, [source]: r[source] + 1 }))
+  }, [])
+
+  return (
+    <div className="clean-group clean-part">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">残留</h3>
+        <p className="clean-lead">
+          已经卸载、但还留下东西的软件。上一类是当前用户的卸载项和死快捷方式，清理会先进备份区；下一类是全机的死服务、计划任务和无主目录，只有确定级能清理，删前先备份。两边的结果都放在最下面的「清理备份」里，可以按批次撤销。
+        </p>
+      </div>
+      <ResiduePanel onChanged={onChanged} refreshSignal={refresh.uninstall} />
+      <SoftwareResiduePanel onChanged={onChanged} refreshSignal={refresh.software} />
+      <ResidueBackupsPanel refreshSignal={backupToken} onUndone={onUndone} />
+    </div>
+  )
+}
+
 export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
       <h2 className="set-page-title">空间</h2>
       {/* 两张卡片：灵动岛自己的东西一张，系统相关的一张。
-          系统卡里两节：系统垃圾（普通项与需要管理员项合成一张清单）、卸载残留
-          （要备份和撤销，行为不同所以单独一节） */}
+          系统卡里两节：系统垃圾（普通项与需要管理员项合成一张清单）、残留
+          （卸载残留与软件残留两段清单，共用下面一块「清理备份」，SPEC-space-residue-merge） */}
       <CleanupPanel
         scope="app"
         title="灵动岛"
@@ -1133,10 +1229,8 @@ export default function SpaceSection(): ReactElement {
           </p>
         </div>
         <JunkPanel />
-        <ResiduePanel />
+        <ResidueSection />
       </div>
-      {/* 第三张卡：只读的软件残留检测（SPEC-space-software-residue），没有停止/删除入口 */}
-      <SoftwareResiduePanel />
     </section>
   )
 }
