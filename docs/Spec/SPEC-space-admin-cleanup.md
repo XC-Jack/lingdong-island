@@ -35,8 +35,8 @@
 
 ### 3.2 清理（提权一次）
 
-- 点「清理选中项」→ 主进程按白名单生成一份固定的 PowerShell 脚本 → 用 `Start-Process -Verb RunAs -Wait -PassThru` 提权执行 → 等它结束 → 读回结果 JSON。
-- 脚本内容只由主进程按 id 拼接，**不含任何来自渲染层的路径或文本**。
+- 点「清理选中项」→ 主进程按白名单生成一份固定的 PowerShell 脚本 → 以 UTF-16LE + Base64 放进 `-EncodedCommand`，用 `Start-Process -Verb RunAs -Wait -PassThru` 提权执行 → 等它结束 → 读回结果 JSON。
+- 脚本内容只由主进程按 id 拼接，**不含任何来自渲染层的路径或文本**；**不落成 `.ps1` 文件**（原因见 3.3）。
 - 每项前后各统计一次大小，`freed = max(0, before - after)`；清理后还剩的部分（被占用）写进提示。
 - **Windows 更新缓存**：先停 `wuauserv`，删完**无论成败都重新启动**（`finally`），期间 Windows 更新暂停几秒；`bits` 同样处理。
 - **传递优化缓存**：执行 `Delete-DeliveryOptimizationCache -Force`。缓存放在 `C:\Windows\ServiceProfiles\NetworkService\...\DeliveryOptimization`（普通权限列不出来），所以**不按目录统计**，改用系统接口 `Get-DeliveryOptimizationPerfSnap` 的 `CacheSizeBytes` 在清理前后各读一次，`before/after` 照常回传；接口读失败时两项都记 -1，界面按「没统计到」处理，不影响清理本身。
@@ -47,7 +47,8 @@
 ### 3.3 安全约束
 
 - 路径与命令全部写死在主进程白名单，渲染层只传 id。
-- 提权脚本写在 `userData/admin-cleanup/`，执行完连同结果文件一起删除。
+- **提权脚本不落盘**：早先写法是把 `.ps1` 写进 `userData/admin-cleanup/` 再让管理员执行，UAC 等待期间同用户进程可以替换该文件，导致「用户同意的内容」与「实际执行的内容」可能不一致（TOCTOU）。现在用 `-EncodedCommand` 把脚本固定在命令行里；四个管理员项全选时编码后 13,016 字符，低于 Windows 命令行 32,767 字符上限。
+- 唯一落盘产物是结果 JSON：文件名随机（`result-<16 位十六进制>.json`），读取前确认是普通文件而非符号链接，读完即删。
 - 不删除目录本身，只删目录里的内容；被占用的文件跳过并计数。
 
 ## 4. 必要依赖
@@ -103,6 +104,13 @@
    - 语义（用同名桩函数替换 `Get-DeliveryOptimizationPerfSnap` / `Delete-DeliveryOptimizationCache`，**没有碰真实缓存**）：正常路径两次读数分别 5242880 → 0，结果 JSON `before/after` 正确、warnings 为空；接口抛错路径 `before/after` 都是 -1，warnings 里有「清除失败：delete failed」，说明「没统计到」不会被算成 0 释放。
    - 隔离实例刷新：传递优化缓存仍显示「无法统计」，说明文案改成「清理前不显示大小，清完会报释放了多少」。
 9. `npm run typecheck` / `npm run build` 在本次改动后重跑，均通过。
+
+10. 提权脚本改为 `-EncodedCommand`（2026-11-20）：
+   - 长度：四项全选、结果路径 76 字符时，脚本 4,881 字符，Base64 后 **13,016 字符**；路径加长到约 100 字符时为 13,472 字符，均在 32,767 上限内。
+   - 直接执行编码内容（不提升权限，`WINDIR` / `ProgramData` 指向 `.tmp/enc-test-*` 假目录，只选 `win-temp` + `wer-system`）：退出码 0；`win-temp` 的 `before/after = 12288/0`，与假目录里 4,096 + 8,192 字节一致；两个假 WER 目录内容清空、目录本身保留；结果 JSON 为数组。
+   - 与生产同形的 `Start-Process` 参数（去掉 `-Verb RunAs`，payload 只写一个标记文件）：退出码 0，标记文件生成，说明 `-ArgumentList` 的数组传参与 Base64 内容没有被引号破坏。
+   - 整个测试目录里没有出现任何 `.ps1` 文件；构建产物 `out/main/index.js` 里已无 `clean-*.ps1` 写入逻辑。
+   - 同用户进程替换文件的窗口：编码内容在 `Start-Process` 发起时已固定在命令行中，执行阶段不存在可替换的文件。
 
 **未验证**：
 

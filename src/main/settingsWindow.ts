@@ -13,6 +13,9 @@ import type { AppInfo, SettingsSection } from '../shared/types'
  */
 const SETTINGS_W = 880
 const SETTINGS_H = 580
+/* 可缩放后的最小尺寸：再小左侧导航和右侧清单就挤在一起了 */
+const SETTINGS_MIN_W = 760
+const SETTINGS_MIN_H = 520
 
 let settingsWindow: BrowserWindow | null = null
 
@@ -51,9 +54,11 @@ function createSettingsWindow(): BrowserWindow {
     transparent: false,
     backgroundColor: '#131417',
     frame: false,
-    // 固定大小：内容按 880×580 排版，可缩放反而会出现难看的留白
-    resizable: false,
-    maximizable: false,
+    // 默认 880×580；用户可以拉伸、最大化和最小化（2026-11-20 用户要求）
+    resizable: true,
+    maximizable: true,
+    minWidth: SETTINGS_MIN_W,
+    minHeight: SETTINGS_MIN_H,
     fullscreenable: false,
     // 设置窗口要在任务栏有存在感，用户才能切回来（岛是 skipTaskbar 的）
     skipTaskbar: false,
@@ -101,6 +106,13 @@ function createSettingsWindow(): BrowserWindow {
     }
   })
 
+  // 最大化状态变化时通知标题栏换图标（最大化 / 还原）
+  const sendMaximized = (value: boolean): void => {
+    if (!win.isDestroyed()) win.webContents.send('settings:maximized', value)
+  }
+  win.on('maximize', () => sendMaximized(true))
+  win.on('unmaximize', () => sendMaximized(false))
+
   win.on('closed', () => {
     settingsWindow = null
     pendingSection = null
@@ -147,6 +159,21 @@ export function setupSettingsWindow(): void {
 
   ipcMain.on('settings:close', () => {
     closeSettings()
+  })
+
+  ipcMain.on('settings:minimize', () => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.minimize()
+  })
+
+  ipcMain.on('settings:toggle-maximize', () => {
+    const win = settingsWindow
+    if (!win || win.isDestroyed()) return
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  })
+
+  ipcMain.handle('settings:is-maximized', () => {
+    return Boolean(settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isMaximized())
   })
 
   ipcMain.handle('settings:app-info', (): AppInfo => {

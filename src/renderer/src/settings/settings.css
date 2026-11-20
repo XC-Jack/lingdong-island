@@ -66,7 +66,14 @@ body {
   font-weight: 600;
   letter-spacing: 0.5px;
 }
-.set-close {
+.set-winbtns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+.set-close,
+.set-winbtn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -80,11 +87,13 @@ body {
   opacity: 0.7;
   -webkit-app-region: no-drag;
 }
-.set-close:hover {
+.set-close:hover,
+.set-winbtn:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
 }
-.set-close:active {
+.set-close:active,
+.set-winbtn:active {
   background: rgba(255, 255, 255, 0.16);
 }
 
@@ -867,7 +876,7 @@ div.pm-row[draggable='true'] {
 .clean-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
@@ -912,6 +921,7 @@ div.pm-row[draggable='true'] {
 .clean-list {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 /* 组开头的一句说明：告诉用户这里只动什么、绝不动什么 */
@@ -923,7 +933,7 @@ div.pm-row[draggable='true'] {
 }
 
 .clean-empty {
-  padding: 16px 0;
+  padding: 8px 0;
   font-size: 12px;
   color: rgba(242, 243, 245, 0.45);
 }
@@ -932,19 +942,22 @@ div.pm-row[draggable='true'] {
 .clean-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 0;
+  gap: 12px;
+  /* 左右各拉出 8px 再补内边距：悬停底色能贴到卡片内侧的边，文字仍与标题对齐 */
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 9px 8px;
   border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
   background: transparent;
   font-family: inherit;
   color: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background 120ms ease;
 }
-.clean-row:last-child {
-  border-bottom: none;
+.clean-row:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.035);
 }
 .clean-row:hover:not(:disabled) .clean-name {
   color: #ffffff;
@@ -1043,6 +1056,13 @@ div.pm-row[draggable='true'] {
   gap: 8px;
 }
 
+/* 需要管理员：行名后面一个人形标记，用琥珀色区分，不写文字也不占宽度 */
+.clean-admin-icon {
+  margin-left: 6px;
+  vertical-align: -2px;
+  color: #f5b544;
+}
+
 /* 卸载残留：行内的类别标签（注册表 / 快捷方式 / 文件夹） */
 .clean-badge {
   margin-left: 6px;
@@ -1056,14 +1076,14 @@ div.pm-row[draggable='true'] {
 
 /* 卸载残留：备份与撤销区 */
 .residue-backups {
-  margin-top: 6px;
-  padding-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
+/* 与其它小节标题同样的排法：标题一行，说明在下一行，不再挤在同一基线上 */
 .residue-backups-head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: 8px;
 }
 .residue-backups-head .clean-group-title {
@@ -1089,4 +1109,135 @@ div.pm-row[draggable='true'] {
 .residue-backup-actions {
   display: flex;
   gap: 8px;
+}
+
+/* ===== 软件残留检测（SPEC-space-software-residue）===== */
+.swr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 460px;
+  overflow-y: auto;
+}
+/* 图例：等级含义直接写在面板里，不用靠说明文档 */
+.swr-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.55);
+}
+.swr-legend-title {
+  color: rgba(242, 243, 245, 0.42);
+}
+.swr-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.swr-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.swr-row.swr-lv-definite {
+  background: rgba(140, 170, 255, 0.06);
+}
+.swr-row.on {
+  background: rgba(125, 216, 125, 0.08);
+}
+/* 勾选框：沿用清理清单的圆形方框样式，只包一层按钮 */
+.swr-check {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.swr-check .clean-check {
+  width: 16px;
+  height: 16px;
+  margin-top: 0;
+}
+.swr-check[aria-checked='true'] .clean-check {
+  border-color: #7dd87d;
+  background: #7dd87d;
+}
+.swr-check:focus-visible {
+  outline: 1px solid rgba(125, 216, 125, 0.6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* 结果可能多行，保留换行 */
+.swr-note {
+  white-space: pre-line;
+}
+.swr-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.swr-level {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+/* 等级只表示证据强弱，不表示危险程度：不用红色，免得被当成待删清单 */
+.swr-level-definite {
+  background: rgba(140, 170, 255, 0.16);
+  color: #9db4ff;
+}
+.swr-level-likely {
+  background: rgba(255, 183, 77, 0.16);
+  color: #ffb74d;
+}
+.swr-level-check {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(242, 243, 245, 0.72);
+}
+.swr-kind {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.55);
+}
+.swr-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(242, 243, 245, 0.92);
+}
+.swr-tag {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.swr-tag-running {
+  color: #7dd87d;
+  border-color: rgba(125, 216, 125, 0.35);
+}
+.swr-size {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.7);
+}
+.swr-detail {
+  font-size: 12px;
+  color: rgba(242, 243, 245, 0.68);
+}
+.swr-path {
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.42);
+  font-family: Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

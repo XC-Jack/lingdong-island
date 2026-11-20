@@ -80,6 +80,17 @@ export interface CleanupItemDef {
   defaultChecked: boolean
 }
 
+/** 单项扫描结果 */
+export interface CleanupItemScan {
+  /** 占用字节；0 表示没有可清理的字节 */
+  bytes: number
+  /**
+   * 条目是否真实存在。回收站里只有空文件夹时 bytes 为 0 但 exists 为 true，
+   * 界面据此允许勾选清理（否则会显示「无」且不可选）。
+   */
+  exists: boolean
+}
+
 /** 一条清理项的扫描结果 */
 export interface CleanupItem {
   id: CleanupTargetId
@@ -153,8 +164,12 @@ export interface ResidueCleanResult {
   ok: boolean
   /** 成功清理的项数 */
   removed: number
-  /** 释放的字节（文件/目录占用之和；注册表项算 0） */
-  freedBytes: number
+  /**
+   * 移入备份的字节（文件/目录占用之和；注册表项算 0）。
+   * 注意：备份默认在同一块盘上，这部分空间**清理时并没有释放**，
+   * 要等用户在「备份与撤销」里删除备份才真正腾出来。
+   */
+  movedBytes: number
   /** 清理后重新扫描的结果 */
   scan: ResidueScanResult
   warnings: string[]
@@ -174,6 +189,101 @@ export interface ResidueBackup {
   bytes: number
   /** 是否已经撤销过 */
   restored: boolean
+}
+
+/* ---------- 软件残留检测（SPEC-space-software-residue） ---------- */
+
+export type SoftwareResidueKind = 'service' | 'driver' | 'task' | 'process' | 'folder'
+
+/**
+ * 判断强度：
+ * - definite：引用的程序文件已不存在，或空壳目录且无任何引用
+ * - likely：同公司软件还在但路径旧了；第三方驱动无对应软件/进程
+ * - check：判断不了归属，只提示
+ */
+export type SoftwareResidueLevel = 'definite' | 'likely' | 'check'
+
+export interface SoftwareResidueItem {
+  id: string
+  kind: SoftwareResidueKind
+  level: SoftwareResidueLevel
+  /** 服务名 / 驱动名 / 任务名 / 进程名 / 目录名 */
+  label: string
+  /** 判定依据，直接展示给用户 */
+  detail: string
+  path: string
+  company: string
+  product: string
+  /** 目录大小；非目录为 null */
+  bytes: number | null
+  /** 计划任务所在的容器路径（以 \ 结尾）；只有 task 项有 */
+  taskPath?: string
+  /** 服务/驱动的原始启动方式（Auto / Manual / Disabled / System 等），撤销时重建用 */
+  startMode?: string
+  /** 服务的显示名，撤销时重建用 */
+  displayName?: string
+  /** 采集时是否在运行 */
+  running: boolean
+  /** 处理它是否需要管理员权限 */
+  admin: boolean
+  /** 是否允许清理（确定级的服务/计划任务/空目录）；主进程计算，界面只读 */
+  cleanable: boolean
+}
+
+export interface SoftwareResidueScanResult {
+  items: SoftwareResidueItem[]
+  scannedAt: number
+  /** 没扫成的部分（例如 PowerShell 报错），给用户看的说明 */
+  warnings: string[]
+}
+
+/* ---------- 软件残留清理（SPEC-space-residue-cleanup） ---------- */
+
+export interface ResidueCleanupItemResult {
+  id: string
+  label: string
+  ok: boolean
+  /** 单项说明：删掉了 / 跳过了 / 为什么失败 */
+  message: string
+}
+
+export interface ResidueCleanupRunResult {
+  ok: boolean
+  /** 用户取消了 UAC，什么都没动 */
+  canceled: boolean
+  items: ResidueCleanupItemResult[]
+  warnings: string[]
+  /** 备份目录；没执行时为 '' */
+  backupDir: string
+  scan: SoftwareResidueScanResult
+}
+
+/** 软件残留的一批备份：`residue-backup/residue-<时间戳>-<随机>` 下的一个目录 */
+export interface ResidueCleanupBackup {
+  id: string
+  createdAt: number
+  count: number
+  /** 前几项的显示名，给摘要用 */
+  labels: string[]
+  /** 已经撤销过 */
+  restored: boolean
+}
+
+export interface ResidueUndoResult {
+  ok: boolean
+  canceled: boolean
+  restored: number
+  warnings: string[]
+  scan: SoftwareResidueScanResult
+  /** 操作的批次；编号无效时为空 */
+  backupId: string
+  backups: ResidueCleanupBackup[]
+}
+
+export interface ResidueDiscardBackupResult {
+  ok: boolean
+  warnings: string[]
+  backups: ResidueCleanupBackup[]
 }
 
 /* ---------- 系统清理（需要管理员，SPEC-space-admin-cleanup） ---------- */

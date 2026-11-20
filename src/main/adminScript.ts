@@ -23,19 +23,19 @@ export function adminTargets(windir: string, programData: string): AdminTarget[]
     {
       id: 'win-update-cache',
       label: 'Windows 更新缓存',
-      hint: '可以删。系统下载更新时留下的安装包；清理时会短暂停止 Windows 更新服务，删完自动恢复，正在下载的更新会重新开始。',
+      hint: '系统下载更新时留下的安装包；清理时短暂停更新服务，删完恢复，正在下载的更新会重新开始。',
       dirs: [joinWin('SoftwareDistribution', 'Download')]
     },
     {
       id: 'win-temp',
       label: '系统临时文件',
-      hint: '可以删。系统级临时目录里各种程序用完的文件；正在被使用的会自动跳过。',
+      hint: '系统级临时目录里各程序用完的文件；正在使用的会自动跳过。',
       dirs: [joinWin('Temp')]
     },
     {
       id: 'wer-system',
       label: '系统错误报告',
-      hint: '可以删。系统和驱动崩溃时生成的报告；普通权限看不到完整大小，清理时要管理员授权。',
+      hint: '系统和驱动崩溃时生成的报告；普通权限看不到完整大小。',
       dirs: [
         joinPd('Microsoft', 'Windows', 'WER', 'ReportArchive'),
         joinPd('Microsoft', 'Windows', 'WER', 'ReportQueue'),
@@ -45,7 +45,7 @@ export function adminTargets(windir: string, programData: string): AdminTarget[]
     {
       id: 'delivery-optimization',
       label: '传递优化缓存',
-      hint: '可以删。Windows 更新与应用商店下载用的 P2P 缓存；由系统自己的接口清理，清理前不显示大小，清完会报释放了多少。',
+      hint: '更新与应用商店下载用的 P2P 缓存；由系统接口清理，清完报释放量。',
       /**
        * 目录不给（提权前也读不到），大小也不靠目录统计：用系统接口
        * `Get-DeliveryOptimizationPerfSnap` 的 `CacheSizeBytes` 读，清理前后各读一次。
@@ -119,18 +119,22 @@ function buildBlock(t: AdminTarget): string {
   }
   lines.push(`  ${removeChildrenExpr(dirs)}`, '}')
   lines.push("catch { $w += ('删除时出错：' + $_.Exception.Message) }")
-  if (t.id === 'win-update-cache') {
-    lines.push(
-      'finally {',
-      "  if ($svc['wuauserv']) { Start-Service -Name wuauserv -ErrorAction SilentlyContinue }",
-      "  if ($svc['bits']) { Start-Service -Name bits -ErrorAction SilentlyContinue }",
-      '}'
-    )
-  }
+  // 先量「清理后」，再恢复服务：服务一启动，Windows 更新可能立刻重新下载，
+  // 量到的就不是这次删掉多少，而会误报「还有 X MB 没清掉」。
   lines.push(
     `$after = ${sizeExpr(dirs)}`,
     'if ($null -eq $after) { $after = 0 }',
-    "if ($after -gt 0) { $w += ('还有 {0:N1} MB 没清掉，可能正被占用。' -f ($after / 1MB)) }",
+    "if ($after -gt 0) { $w += ('还有 {0:N1} MB 没清掉，可能正被占用。' -f ($after / 1MB)) }"
+  )
+  if (t.id === 'win-update-cache') {
+    lines.push(
+      'try {',
+      "  if ($svc['wuauserv']) { Start-Service -Name wuauserv -ErrorAction Stop }",
+      "  if ($svc['bits']) { Start-Service -Name bits -ErrorAction Stop }",
+      "} catch { $w += ('更新服务没能重新启动：' + $_.Exception.Message + '，请在「服务」里手动启动。') }"
+    )
+  }
+  lines.push(
     `[void]$results.Add([pscustomobject]@{ id = ${name}; before = [double]$before; after = [double]$after; warnings = @($w) })`
   )
   return lines.join('\n')

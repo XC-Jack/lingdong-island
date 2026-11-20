@@ -167,9 +167,9 @@ try {
   // ========== S2 左导航 ==========
   {
     const nav = await settingsEval(`Array.from(document.querySelectorAll('.set-nav-item')).map(e => e.textContent.trim())`)
-    ok('S2a 左导航四项齐全', Array.isArray(nav) && nav.length === 4 &&
-      nav.some((s) => s.includes('常规')) && nav.some((s) => s.includes('页面管理')) &&
-      nav.some((s) => s.includes('桌宠')) && nav.some((s) => s.includes('专注')),
+    // 2026-11-20：导航已增至六项（空间、关于是后加的），断言跟着更新
+    ok('S2a 左导航六项齐全', Array.isArray(nav) && nav.length === 6 &&
+      ['常规', '页面管理', '空间', '桌宠', '专注', '关于'].every((name) => nav.some((s) => s.includes(name))),
       JSON.stringify(nav))
 
     // openSettings('pages') 落点：页面管理分区可见（5 行页面 + 6 行组件）

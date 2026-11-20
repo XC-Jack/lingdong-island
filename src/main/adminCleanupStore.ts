@@ -1,4 +1,5 @@
 import { app, ipcMain } from 'electron'
+import { randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import type { Dirent } from 'node:fs'
 import { join } from 'node:path'
@@ -11,7 +12,7 @@ import type {
 } from '../shared/types'
 import { adminTargets, buildAdminScript } from './adminScript'
 import type { AdminTarget } from './adminScript'
-import { errText } from './fsUtil'
+import { errText, rawFs } from './fsUtil'
 import { runPowerShell } from './runPs'
 
 /**
@@ -22,7 +23,12 @@ import { runPowerShell } from './runPs'
  *
  * 安全边界：
  * - 脚本内容只由 `adminScript.ts` 按 id 生成，**没有任何来自渲染层的路径或文本**。
- * - 只删目录里的内容，不删目录本身；脚本和结果文件跑完就删。
+ * - 提权执行的脚本用 `-EncodedCommand` 直接放在命令行里，**不落成可写的 .ps1 文件**。
+ *   早先的写法是把脚本写进 `%APPDATA%` 再让管理员执行那个文件，中间隔着 UAC 等待窗：
+ *   同用户的进程可以在用户点「是」之前把文件换掉，用户同意的是清理、实际执行的却是别的代码。
+ *   编码进命令行后，提权进程收到的内容与发起时完全一致，没有可替换的中间文件。
+ * - 结果文件是唯一落盘产物：文件名随机，读取前确认是普通文件（防预先放符号链接），跑完就删。
+ * - 只删目录里的内容，不删目录本身。
  * - 浏览与扫描不提权、不弹 UAC。
  */
 
@@ -47,7 +53,7 @@ interface DirStats {
 async function dirStats(p: string): Promise<DirStats> {
   let st
   try {
-    st = await fs.lstat(p)
+    st = await rawFs.lstat(p)
   } catch {
     return { bytes: 0, readable: true } // 不存在 = 0，不算读不到
   }
@@ -56,7 +62,7 @@ async function dirStats(p: string): Promise<DirStats> {
 
   let entries: Dirent[]
   try {
-    entries = await fs.readdir(p, { withFileTypes: true })
+    entries = await rawFs.readdir(p, { withFileTypes: true })
   } catch {
     return { bytes: 0, readable: false }
   }
@@ -70,7 +76,7 @@ async function dirStats(p: string): Promise<DirStats> {
       readable = readable && r.readable
     } else if (e.isFile()) {
       try {
-        bytes += (await fs.lstat(full)).size
+        bytes += (await rawFs.lstat(full)).size
       } catch {
         readable = false
       }
@@ -119,10 +125,15 @@ interface RawResult {
   warnings?: string[]
 }
 
-function stamp(): string {
-  const d = new Date()
-  const p = (n: number): string => String(n).padStart(2, '0')
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+/** 只接受普通文件：符号链接/目录一律当「没有结果」，避免被重定向到别的路径 */
+async function readRegularFile(p: string): Promise<string | null> {
+  try {
+    const st = await fs.lstat(p)
+    if (st.isSymbolicLink() || !st.isFile()) return null
+    return await fs.readFile(p, 'utf8')
+  } catch {
+    return null
+  }
 }
 
 export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunResult> {
@@ -141,21 +152,21 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
   const list = targets()
   const dir = join(app.getPath('userData'), 'admin-cleanup')
   await fs.mkdir(dir, { recursive: true })
-  const batch = stamp()
-  const scriptPath = join(dir, `clean-${batch}.ps1`)
-  const resultPath = join(dir, `result-${batch}.json`)
-  await fs.writeFile(scriptPath, '\uFEFF' + buildAdminScript(ids, list, resultPath), 'utf8')
+  // 随机名：让同用户进程没法提前猜到路径去占位（放符号链接或旧结果）
+  const resultPath = join(dir, `result-${randomBytes(8).toString('hex')}.json`)
 
   const cleanupTemp = async (): Promise<void> => {
-    await fs.rm(scriptPath, { force: true })
     await fs.rm(resultPath, { force: true })
   }
 
   // 提权执行：等它结束并拿退出码。UAC 被拒绝时 Start-Process 会抛错（1223 /「已被用户取消」）
   let exitCode = 0
   try {
+    // 脚本以 UTF-16LE + Base64 放进命令行，提权进程执行的正是这段内容，没有可替换的中间文件。
+    // 四个管理员项全选时编码后 13,016 字符，远低于 Windows 命令行 32,767 字符上限（实测见 SPEC）。
+    const encoded = Buffer.from(buildAdminScript(ids, list, resultPath), 'utf16le').toString('base64')
     const out = await runPowerShell(
-      `$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"' -Verb RunAs -Wait -PassThru; [Console]::Out.Write([string]$p.ExitCode)`,
+      `$p = Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand','${encoded}' -Verb RunAs -Wait -PassThru; [Console]::Out.Write([string]$p.ExitCode)`,
       600_000
     )
     const n = Number.parseInt(out.trim(), 10)
@@ -163,7 +174,9 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
   } catch (e) {
     await cleanupTemp()
     const msg = errText(e)
-    const canceled = /取消|1223/i.test(msg)
+    // UAC 取消：中文系统报「操作已被用户取消」，英文系统是
+    // "The operation was canceled by the user."，错误码 1223；三种都认。
+    const canceled = /取消|cancel|1223/i.test(msg)
     return {
       ok: false,
       canceled,
@@ -179,8 +192,9 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
   let freed = 0
   let raw: RawResult[] = []
   try {
-    const text = (await fs.readFile(resultPath, 'utf8')).replace(/^\uFEFF/, '')
-    const parsed = JSON.parse(text) as RawResult | RawResult[]
+    const file = await readRegularFile(resultPath)
+    if (file === null) throw new Error('result is not a regular file')
+    const parsed = JSON.parse(file.replace(/^\uFEFF/, '')) as RawResult | RawResult[]
     raw = Array.isArray(parsed) ? parsed : [parsed]
   } catch {
     warnings.push('提权脚本没有留下结果文件，这次清理的结果无法确认。')

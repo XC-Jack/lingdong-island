@@ -10,7 +10,7 @@ import type {
   ResidueScanResult
 } from '../shared/types'
 import { runCommand, runPowerShell } from './runPs'
-import { errText, existsConservative } from './fsUtil'
+import { errText, existsConservative, rawFs } from './fsUtil'
 
 /**
  * 卸载残留（SPEC-space-residue）。
@@ -70,6 +70,24 @@ function desktopDir(): string {
 
 function isAbsolutePath(p: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(p) || /^\\\\/.test(p)
+}
+
+/**
+ * 目标所在的卷现在能不能访问。
+ * 网络盘没连、U 盘没插时，`stat` 也报 ENOENT——和「文件真的被删了」长得一样，
+ * 直接判死链会误伤，所以先看根路径在不在；卷不在就不下结论。
+ */
+async function volumeAvailable(p: string): Promise<boolean> {
+  const drive = /^[a-zA-Z]:[\\/]/.exec(p)
+  const unc = /^\\\\[^\\/]+[\\/][^\\/]+/.exec(p)
+  const root = drive ? drive[0] : unc ? unc[0] : ''
+  if (!root) return true
+  try {
+    await rawFs.stat(root)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** 从 UninstallString 里取出 exe 路径；取不出（winget、appx 等命令）返回 null */
@@ -145,9 +163,13 @@ async function listShortcuts(): Promise<RawShortcut[]> {
 async function judgeUninstall(e: RawUninstall): Promise<string | null> {
   const exe = exeFromCommand(e.uninstall)
   if (!exe || !isAbsolutePath(exe)) return null
+  if (!(await volumeAvailable(exe))) return null
   if (await existsConservative(exe)) return null
   const loc = e.loc.trim()
-  if (loc && isAbsolutePath(loc) && (await existsConservative(loc))) return null
+  if (loc && isAbsolutePath(loc)) {
+    if (!(await volumeAvailable(loc))) return null
+    if (await existsConservative(loc)) return null
+  }
   return `卸载程序 ${exe} 已不存在`
 }
 
@@ -231,6 +253,8 @@ export async function scanResidue(): Promise<ResidueScanResult> {
   for (const s of shortcuts) {
     const t = s.target.trim()
     if (!t || !isAbsolutePath(t)) continue
+    // 网络盘/U 盘不在时不能判死链（见 volumeAvailable）
+    if (!(await volumeAvailable(t))) continue
     if (await existsConservative(t)) continue
     deadLnks.add(s.lnk.toLowerCase())
     deadList.push({ lnk: s.lnk, target: t })
@@ -339,7 +363,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
     .filter((x): x is ResidueItem => Boolean(x))
   const warnings: string[] = []
   if (picked.length === 0) {
-    return { ok: true, removed: 0, freedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
+    return { ok: true, removed: 0, movedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
   }
 
   // 批次目录：同一秒内重复清理时加序号，绝不覆盖已有备份
@@ -354,7 +378,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
 
   const manifest: Manifest = { createdAt: Date.now(), bytes: 0, files: [], registry: [] }
   let removed = 0
-  let freed = 0
+  let moved = 0
   let seq = 0
 
   for (const item of picked) {
@@ -391,7 +415,7 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
       manifest.files.push({ kind: item.kind, label: item.label, path: item.path, backup: target })
       manifest.bytes += item.bytes
       removed += 1
-      freed += item.bytes
+      moved += item.bytes
     }
     await writeManifest(dir, manifest)
   }
@@ -399,13 +423,13 @@ export async function cleanResidue(rawIds: unknown): Promise<ResidueCleanResult>
   if (removed === 0) {
     // 一项都没清成：别在备份区留下一个空批次
     await fs.rm(dir, { recursive: true, force: true })
-    return { ok: true, removed: 0, freedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
+    return { ok: true, removed: 0, movedBytes: 0, warnings, backupId: null, scan: await scanResidue() }
   }
   await writeManifest(dir, manifest)
   return {
     ok: true,
     removed,
-    freedBytes: freed,
+    movedBytes: moved,
     warnings,
     backupId: batchId,
     scan: await scanResidue()
@@ -492,11 +516,16 @@ export async function undoResidueBackup(
     }
   }
 
-  // 只有全部恢复成功才标记已撤销；有没恢复的（比如原位置已有同名文件）就把批次留着，
-  // 用户处理掉冲突后还能再点一次
-  m.restored = warnings.length === 0
-  await writeManifest(dir, m)
-  return { ok: m.restored, warnings, backups: await listResidueBackups() }
+  // 全部恢复成功就把整批备份删掉——用户明确要求「复原之后备份不要留」；
+  // 有没恢复的（比如原位置已有同名文件）就把批次留着，处理掉冲突后还能再点一次
+  if (warnings.length === 0) {
+    try {
+      await fs.rm(dir, { recursive: true, force: true })
+    } catch (e) {
+      warnings.push(`已全部恢复，但备份目录没删掉：${errText(e)}`)
+    }
+  }
+  return { ok: warnings.length === 0, warnings, backups: await listResidueBackups() }
 }
 
 export async function discardResidueBackup(
