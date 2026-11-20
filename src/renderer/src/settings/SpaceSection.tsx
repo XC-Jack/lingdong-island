@@ -523,9 +523,6 @@ function AdminPanel(): ReactElement {
 
   const run = async (): Promise<void> => {
     if (busy || scanning || selected.size === 0) return
-    // 勾了看不到大小的项（传递优化缓存）：清理后说明一句「它不统计大小」，
-    // 免得「没有释放量」被理解成没清
-    const unknownPicked = list.filter((i) => selected.has(i.id) && !i.known).map((i) => i.label)
     setBusy(true)
     setNote('正在等待管理员授权…')
     try {
@@ -534,11 +531,14 @@ function AdminPanel(): ReactElement {
       if (r.canceled) {
         setNote('已取消管理员授权，没有删除任何东西。')
       } else {
+        // 传递优化缓存的大小靠系统接口读，接口没给结果时说明一句，
+        // 免得「没有释放量」被理解成没清
+        const unmeasured = r.items.filter((i) => !i.measured).map((i) => i.label)
         const parts: string[] = [
-          r.freedBytes > 0 ? `已释放 ${formatBytes(r.freedBytes)}。` : '清理完成。'
+          r.freedBytes > 0 ? `已释放 ${formatBytes(r.freedBytes)}。` : '清理完成，没有可统计的释放量。'
         ]
-        if (unknownPicked.length > 0) {
-          parts.push(`${unknownPicked.join('、')}交给系统接口清理，不统计大小。`)
+        if (unmeasured.length > 0) {
+          parts.push(`${unmeasured.join('、')}交给系统接口清理，这次没统计到大小。`)
         }
         setNote([...parts, ...r.warnings].filter(Boolean).join(' '))
       }

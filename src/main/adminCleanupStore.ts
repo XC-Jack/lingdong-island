@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type {
   AdminCleanupId,
   AdminCleanupItem,
+  AdminCleanupRunItem,
   AdminCleanupRunResult,
   AdminCleanupScanResult
 } from '../shared/types'
@@ -131,6 +132,7 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
       ok: false,
       canceled: false,
       freedBytes: 0,
+      items: [],
       warnings: ['没有选中任何项目。'],
       scan: await scanAdminCleanup()
     }
@@ -166,12 +168,14 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
       ok: false,
       canceled,
       freedBytes: 0,
+      items: [],
       warnings: [canceled ? '已取消管理员授权，没有删除任何东西。' : `提权执行失败：${msg}`],
       scan: await scanAdminCleanup()
     }
   }
 
   const warnings: string[] = []
+  const items: AdminCleanupRunItem[] = []
   let freed = 0
   let raw: RawResult[] = []
   try {
@@ -196,11 +200,22 @@ export async function runAdminCleanup(rawIds: unknown): Promise<AdminCleanupRunR
     }
     const before = typeof r.before === 'number' ? r.before : -1
     const after = typeof r.after === 'number' ? r.after : -1
-    if (before >= 0 && after >= 0 && after <= before) freed += before - after
+    // before/after 都为 -1 表示这次没拿到大小（传递优化缓存的系统接口失败），不算 0 释放
+    const measured = before >= 0 && after >= 0
+    const itemFreed = measured && after <= before ? before - after : 0
+    freed += itemFreed
+    items.push({ id, label: t?.label ?? id, freedBytes: itemFreed, measured })
   }
   if (exitCode !== 0) warnings.push(`提权脚本退出码 ${exitCode}，可能有项目没清完。`)
 
-  return { ok: true, canceled: false, freedBytes: freed, warnings, scan: await scanAdminCleanup() }
+  return {
+    ok: true,
+    canceled: false,
+    freedBytes: freed,
+    items,
+    warnings,
+    scan: await scanAdminCleanup()
+  }
 }
 
 /** 注册 IPC，必须在 app.whenReady 后调用 */

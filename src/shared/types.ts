@@ -199,12 +199,23 @@ export interface AdminCleanupScanResult {
   scannedAt: number
 }
 
+export interface AdminCleanupRunItem {
+  id: AdminCleanupId
+  label: string
+  /** 这一项释放了多少；没统计到就是 0 */
+  freedBytes: number
+  /** 提权脚本是否拿到了清理前后的大小（传递优化缓存的接口失败时为 false） */
+  measured: boolean
+}
+
 export interface AdminCleanupRunResult {
   ok: boolean
   /** 用户拒绝了 UAC：什么都没删 */
   canceled: boolean
-  /** 各项「清理前 − 清理后」之和；大小未知的项（传递优化缓存）算 0 */
+  /** 各项「清理前 − 清理后」之和；没统计到的项算 0 */
   freedBytes: number
+  /** 逐项结果，界面用它说明哪几项没统计到大小 */
+  items: AdminCleanupRunItem[]
   warnings: string[]
   scan: AdminCleanupScanResult
 }

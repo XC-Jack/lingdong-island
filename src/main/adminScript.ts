@@ -45,7 +45,11 @@ export function adminTargets(windir: string, programData: string): AdminTarget[]
     {
       id: 'delivery-optimization',
       label: '传递优化缓存',
-      hint: '可以删。Windows 更新与应用商店下载用的 P2P 缓存；由系统自己的接口清理，清理前后都不统计大小。',
+      hint: '可以删。Windows 更新与应用商店下载用的 P2P 缓存；由系统自己的接口清理，清理前不显示大小，清完会报释放了多少。',
+      /**
+       * 目录不给（提权前也读不到），大小也不靠目录统计：用系统接口
+       * `Get-DeliveryOptimizationPerfSnap` 的 `CacheSizeBytes` 读，清理前后各读一次。
+       */
       dirs: null
     }
   ]
@@ -75,12 +79,21 @@ function buildBlock(t: AdminTarget): string {
   const name = `'${t.id}'`
 
   if (t.id === 'delivery-optimization') {
+    // 大小走系统接口而不是目录：缓存放在 NetworkService 的私有目录里，普通权限列不出来；
+    // 读不到就留 -1（界面按「没统计到」处理），不影响清理本身。
+    const readSize = (varName: string): string[] => [
+      `${varName} = -1`,
+      `try { ${varName} = [double](Get-DeliveryOptimizationPerfSnap -ErrorAction Stop).CacheSizeBytes } catch { }`
+    ]
     return [
       header,
       '$w = @()',
+      ...readSize('$before'),
       'try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop }',
       "catch { $w += ('清除失败：' + $_.Exception.Message) }",
-      `[void]$results.Add([pscustomobject]@{ id = ${name}; before = -1; after = -1; warnings = @($w) })`
+      ...readSize('$after'),
+      "if ($after -gt 0) { $w += ('还有 {0:N1} MB 没清掉。' -f ($after / 1MB)) }",
+      `[void]$results.Add([pscustomobject]@{ id = ${name}; before = $before; after = $after; warnings = @($w) })`
     ].join('\n')
   }
 
