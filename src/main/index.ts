@@ -12,6 +12,7 @@ import { setupPrefsStore, getPrefs, patchPrefs } from './prefsStore'
 import { setupMusicStore, stopMusicStore } from './musicStore'
 import { setupLyricStore } from './lyricStore'
 import { openSettings, setupSettingsWindow } from './settingsWindow'
+import { setupCleanupStore } from './cleanupStore'
 import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
@@ -389,6 +390,8 @@ app.whenReady().then(() => {
   // 歌词（SPEC-music-lyric）：只注册 IPC，真正联网只在渲染层来问时才发生
   setupLyricStore()
   setupSettingsWindow()
+  // 空间清理（SPEC-space-cleanup）：只注册扫描/清理 IPC，真正的文件操作要用户点才做
+  setupCleanupStore()
   // 自动更新（SPEC-auto-update）：注册 IPC 与定时检查；开发版只登记「不支持」状态
   setupUpdater()
   // 桌宠独立小窗口（SPEC-deskpet-out）：注册 IPC + 订阅偏好变化。

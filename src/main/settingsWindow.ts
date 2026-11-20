@@ -20,7 +20,14 @@ let settingsWindow: BrowserWindow | null = null
 let pendingSection: SettingsSection | null = null
 
 function isValidSection(v: unknown): v is SettingsSection {
-  return v === 'general' || v === 'pages' || v === 'focus' || v === 'pet' || v === 'about'
+  return (
+    v === 'general' ||
+    v === 'pages' ||
+    v === 'space' ||
+    v === 'focus' ||
+    v === 'pet' ||
+    v === 'about'
+  )
 }
 
 /** 「关于」页的仓库地址：固定在主进程，渲染层只能请求打开这一个地址 */
