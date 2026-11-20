@@ -25,8 +25,8 @@
 ### 3.1 扫描（只读，不需要管理员）
 
 1. **失效卸载项**：枚举 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall` 的每个子键，读 `DisplayName`、`UninstallString`、`InstallLocation`。
-   - 判为失效：有 `DisplayName`，`UninstallString` 能解析出 exe 路径且该文件不存在，并且 `InstallLocation` 为空或同样不存在。
-   - `UninstallString` 指向 `msiexec.exe` / `MsiExec` 的一律不判（MSI 登记项无法靠文件是否存在判断）。
+   - 判为失效：有 `DisplayName`，`UninstallString` 能解析出**绝对路径的 exe**且该文件不存在，并且 `InstallLocation` 为空或同样不存在。
+   - `UninstallString` 不是绝对 exe 路径的一律不判（`msiexec /X{GUID}`、`winget uninstall ...` 等：命令本身不带程序位置，本机实测 winget 登记项的包目录已不在、但 ffmpeg 仍装在别处可用，靠它判断会误伤）。
 2. **失效快捷方式**：用户桌面 + 用户开始菜单 `Programs`（递归）下的 `.lnk`，用 WScript.Shell 解析目标路径；`TargetPath` 非空且目标不存在 → 死链。`TargetPath` 为空的（MSI 通告式快捷方式、URL 快捷方式）跳过。
 3. **空的开始菜单文件夹**：用户开始菜单 `Programs` 下的目录，若递归后**所有** `.lnk` 都是死链、且没有其它文件，则整个目录折叠成一项；它下面的死链不再单列（避免同一软件列十几行）。
 
@@ -81,7 +81,21 @@
 
 ## 8. 自检记录
 
-（实现后补充）
+环境：隔离实例，`--user-data-dir` 与 `APPDATA`/`LOCALAPPDATA`/`TEMP`/`TMP` 全部指向 `.tmp/residue-e2e` 假目录，CDP 9323。假数据：开始菜单 `DeadApp/`（2 个死链）、`Mixed/Dead.lnk`（死）+ `Mixed/Live.lnk`（活）、`LiveApp.lnk`（活）、`apps/live.exe`（活目标）。桌面是真实桌面（只读参与扫描）。另在真实 HKCU 建两条临时卸载项：`LingDongResidueE2E`（卸载程序指向不存在路径）、`LingDongResidueLiveE2E`（指向存在的 exe），**测完已删除**。
+
+1. `npm run typecheck` — EXIT=0；`npm run build` — EXIT=0。
+2. 扫描结果：`残留测试程序`（注册表，「卸载程序 …\Uninstall Test.exe 已不存在」）、`DeadApp`（文件夹，「2 个快捷方式全部失效」）、`Dead.lnk`（快捷方式）；活项 `LiveApp.lnk`、`Mixed/Live.lnk`、`正常测试程序` 均未出现。全部默认未勾选，未选时「清理选中项」禁用。本机 winget 登记项（FFmpeg，命令不是绝对 exe 路径）未被误报。
+3. 选 3 项 → 「已选 3 项 · 合计 2.3 KB」；清理后：文件夹与死链从原位消失、`Mixed/Live.lnk` 与 `apps/live.exe` 保留、`LingDongResidueE2E` 键消失，`LingDongResidueLiveE2E` 未动；提示「已清理 3 项，腾出 2.3 KB；可以撤销」。备份批次 `20261120-122920` 内 `manifest.json`、`reg/1.reg`、`files/2/DeadApp`、`files/3/Dead.lnk` 齐全。
+4. 撤销：文件夹与快捷方式回到原位、注册表键导回，该批次按钮变灰并标「已撤销」。
+5. 删除备份：第一下只把按钮换成「确认删除」、目录仍在；第二下才删除，目录消失。
+6. 越界：`residueClean(['nope','../evil','update-cache'])` → `removed=0`、`backupId=null`、不新建批次、不删除任何东西。
+7. 一项都没清成时（全部被跳过）不留下空备份批次（代码路径，未单独构造全失败用例）。
+
+**未验证**：
+
+1. 真实软件卸载后留下的注册表项与开始菜单文件夹：本机没有可安全清理的真实残留，测试用的是自建临时项与假快捷方式；桌面上真实死链（`Marvis.lnk`、`欧路词典.lnk`）只被扫描出来，没有清理。
+2. 无权限路径（`EPERM`/`EACCES`）按「存在」处理的分支：本机 WindowsApps 对 `fs.stat` 返回的是 `ENOENT`（旧版本目录确实不在），没有触发到权限分支。
+3. 打包版表现。
 
 ## 9. 验收记录
 

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import type { CleanupItemDef, CleanupScope, CleanupTargetId } from '../../../shared/types'
+import type {
+  CleanupItemDef,
+  CleanupScope,
+  CleanupTargetId,
+  ResidueBackup,
+  ResidueItem
+} from '../../../shared/types'
 
 /**
  * 设置「空间」页（SPEC-space-cleanup / SPEC-space-system-junk）。
@@ -201,6 +207,269 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   )
 }
 
+/** 残留类别的短标签 */
+const KIND_LABEL: Record<ResidueItem['kind'], string> = {
+  uninstall: '注册表',
+  shortcut: '快捷方式',
+  folder: '文件夹'
+}
+
+function timeText(ts: number): string {
+  const d = new Date(ts)
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * 第三组：卸载残留（SPEC-space-residue）。
+ *
+ * 与两组缓存不同，这里删掉的是「别的东西」：失效的卸载注册项、指向空处的快捷方式、
+ * 只剩死链的开始菜单文件夹。所以默认一项都不勾，清理一律先进备份区，并能一键撤销。
+ */
+function ResiduePanel(): ReactElement {
+  /** null = 还没扫描过；[] = 扫过但没有残留 */
+  const [items, setItems] = useState<ResidueItem[] | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [scanning, setScanning] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const [backups, setBackups] = useState<ResidueBackup[]>([])
+  const [backupBusy, setBackupBusy] = useState('')
+  /** 正在等二次确认「删除备份」的批次 id；删除不可恢复，所以要按两下 */
+  const [confirmDiscard, setConfirmDiscard] = useState('')
+
+  const loadBackups = useCallback(async (): Promise<void> => {
+    try {
+      setBackups(await window.island.residueBackups())
+    } catch {
+      /* 备份列表读不到不影响扫描；留着上一次的结果 */
+    }
+  }, [])
+
+  /** 只重扫列表，不动提示行（撤销/清理后由调用方决定写什么提示） */
+  const refreshItems = useCallback(async (): Promise<void> => {
+    const r = await window.island.residueScan()
+    setItems(r.items)
+    setSelected(new Set())
+  }, [])
+
+  const scan = useCallback(async (): Promise<void> => {
+    setScanning(true)
+    setConfirmDiscard('')
+    setNote('')
+    try {
+      const r = await window.island.residueScan()
+      setItems(r.items)
+      setSelected(new Set())
+      setNote(
+        r.warnings.length > 0
+          ? r.warnings.join(' ')
+          : r.items.length === 0
+            ? '没有发现卸载残留。'
+            : ''
+      )
+    } catch {
+      setNote('扫描失败，请稍后再试。')
+    } finally {
+      setScanning(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void scan()
+    void loadBackups()
+  }, [scan, loadBackups])
+
+  const list = items ?? []
+  const selectedBytes = list
+    .filter((i) => selected.has(i.id))
+    .reduce((n, i) => n + i.bytes, 0)
+
+  const toggle = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const run = async (): Promise<void> => {
+    if (busy || scanning || selected.size === 0) return
+    setBusy(true)
+    setNote('正在清理…')
+    try {
+      const r = await window.island.residueClean([...selected])
+      setItems(r.scan.items)
+      setSelected(new Set())
+      const head =
+        r.removed > 0
+          ? `已清理 ${r.removed} 项${r.freedBytes > 0 ? `，腾出 ${formatBytes(r.freedBytes)}` : ''}；可以撤销。`
+          : '这次没有清理任何项。'
+      setNote([head, ...r.warnings].filter(Boolean).join(' '))
+      if (r.backupId) await loadBackups()
+    } catch {
+      setNote('清理失败，请稍后再试。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const undo = async (id: string): Promise<void> => {
+    if (backupBusy) return
+    setConfirmDiscard('')
+    setBackupBusy(id)
+    setNote('正在撤销…')
+    try {
+      const r = await window.island.residueUndo(id)
+      setBackups(r.backups)
+      await refreshItems()
+      setNote(r.ok ? ['已撤销这批备份。', ...r.warnings].join(' ') : r.warnings.join(' '))
+    } catch {
+      setNote('撤销失败，请稍后再试。')
+    } finally {
+      setBackupBusy('')
+    }
+  }
+
+  const discard = async (id: string): Promise<void> => {
+    if (backupBusy) return
+    // 第一下只是把按钮换成「确认删除」，第二下才真删（删除不可恢复）
+    if (confirmDiscard !== id) {
+      setConfirmDiscard(id)
+      setNote('再点一次「确认删除」就会永久删除这批备份，不能恢复。')
+      return
+    }
+    setConfirmDiscard('')
+    setBackupBusy(id)
+    setNote('正在删除备份…')
+    try {
+      const r = await window.island.residueDiscardBackup(id)
+      setBackups(r.backups)
+      setNote(r.ok ? '备份已删除。' : r.warnings.join(' '))
+    } catch {
+      setNote('删除备份失败，请稍后再试。')
+    } finally {
+      setBackupBusy('')
+    }
+  }
+
+  return (
+    <div className="clean-group">
+      <div className="clean-group-head">
+        <h3 className="clean-group-title">卸载残留</h3>
+        <p className="clean-lead">
+          已经卸载、但还剩注册表项或快捷方式的软件。只扫当前用户，不需要管理员；清理一律先进备份区，可以撤销。
+        </p>
+      </div>
+      <div className="set-card">
+        {items === null ? <div className="clean-empty">正在扫描…</div> : null}
+        {items !== null && list.length === 0 ? (
+          <div className="clean-empty">没有发现卸载残留。</div>
+        ) : null}
+        {list.map((item) => {
+          const on = selected.has(item.id)
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="checkbox"
+              aria-checked={on}
+              aria-label={item.label}
+              className={`clean-row${on ? ' on' : ''}`}
+              disabled={busy || scanning}
+              onClick={() => toggle(item.id)}
+            >
+              <span className="clean-check" aria-hidden="true">
+                {on ? (
+                  <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M2.4 6.2 5 8.7l4.6-5.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : null}
+              </span>
+              <span className="clean-text">
+                <span className="clean-name">
+                  {item.label}
+                  <span className="clean-badge">{KIND_LABEL[item.kind]}</span>
+                </span>
+                <span className="clean-hint">{item.detail}</span>
+              </span>
+              <span className="clean-size">{item.bytes > 0 ? formatBytes(item.bytes) : '—'}</span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="set-note clean-note">{note}</div>
+      <div className="clean-foot">
+        <div className="clean-total">
+          已选 <b>{selected.size}</b> 项 · 合计 <b>{formatBytes(selectedBytes)}</b>
+        </div>
+        <div className="clean-actions">
+          <button
+            type="button"
+            className="set-btn set-btn-quiet"
+            disabled={busy || scanning}
+            onClick={() => {
+              void scan()
+            }}
+          >
+            {scanning ? '扫描中…' : '重新扫描'}
+          </button>
+          <button
+            type="button"
+            className="set-btn set-btn-primary"
+            disabled={busy || scanning || selected.size === 0}
+            onClick={() => {
+              void run()
+            }}
+          >
+            {busy ? '处理中…' : '清理选中项'}
+          </button>
+        </div>
+      </div>
+
+      <div className="residue-backups">
+        <div className="residue-backups-head">
+          <h4 className="clean-group-title">备份与撤销</h4>
+          <span className="clean-hint">清理的项先放在这里，撤销会搬回原位置、注册表也会导回。</span>
+        </div>
+        {backups.length === 0 ? <div className="clean-empty">还没有备份。</div> : null}
+        {backups.map((b) => (
+          <div className="residue-backup-row" key={b.id}>
+            <span className="residue-backup-meta">
+              {timeText(b.createdAt)} · {b.files + b.registry} 项
+              {b.bytes > 0 ? ` · ${formatBytes(b.bytes)}` : ''}
+              {b.restored ? ' · 已撤销' : ''}
+            </span>
+            <span className="residue-backup-actions">
+              <button
+                type="button"
+                className="set-btn set-btn-quiet"
+                disabled={b.restored || Boolean(backupBusy)}
+                onClick={() => {
+                  void undo(b.id)
+                }}
+              >
+                {backupBusy === b.id ? '处理中…' : '撤销'}
+              </button>
+              <button
+                type="button"
+                className="set-btn set-btn-quiet"
+                disabled={Boolean(backupBusy)}
+                onClick={() => {
+                  void discard(b.id)
+                }}
+              >
+                {confirmDiscard === b.id ? '确认删除' : '删除备份'}
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
@@ -215,6 +484,7 @@ export default function SpaceSection(): ReactElement {
         title="系统垃圾"
         lead="Windows 和其他软件留下的临时文件。这一组不需要管理员权限，正在使用的文件会自动跳过。"
       />
+      <ResiduePanel />
     </section>
   )
 }

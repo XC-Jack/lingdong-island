@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, Todo, UpdateState } from '../shared/types'
 
-export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId }
+export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup }
 
 /** Wi-Fi / 网线状态（收起态 US-005，与主进程 statusStore 保持一致） */
 export interface WifiSnapshot {
@@ -124,6 +124,28 @@ const api = {
    */
   cleanupRun(scope: CleanupScope, ids: CleanupTargetId[]): Promise<CleanupRunResult> {
     return ipcRenderer.invoke('cleanup:run', scope, ids)
+  },
+  /** 「空间」页·卸载残留（SPEC-space-residue）：扫描当前用户的失效卸载项与死快捷方式，只读 */
+  residueScan(): Promise<ResidueScanResult> {
+    return ipcRenderer.invoke('residue:scan')
+  },
+  /** 清理选中的残留：先备份再删，返回新的扫描结果与备份批次号 */
+  residueClean(ids: string[]): Promise<ResidueCleanResult> {
+    return ipcRenderer.invoke('residue:clean', ids)
+  },
+  /** 备份批次列表（时间倒序） */
+  residueBackups(): Promise<ResidueBackup[]> {
+    return ipcRenderer.invoke('residue:backups')
+  },
+  /** 撤销某一批备份：文件搬回原位、注册表导回 */
+  residueUndo(id: string): Promise<{ ok: boolean; warnings: string[]; backups: ResidueBackup[] }> {
+    return ipcRenderer.invoke('residue:undo', id)
+  },
+  /** 永久删除某一批备份（不可恢复） */
+  residueDiscardBackup(
+    id: string
+  ): Promise<{ ok: boolean; warnings: string[]; backups: ResidueBackup[] }> {
+    return ipcRenderer.invoke('residue:discard', id)
   },
   /** 自动更新（SPEC-auto-update）：当前状态快照 */
   updateGetState(): Promise<UpdateState> {
