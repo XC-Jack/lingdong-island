@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type {
   CleanupItem,
   CleanupItemDef,
+  CleanupItemScan,
   CleanupRunResult,
   CleanupScanResult,
   CleanupScope,
@@ -78,21 +79,46 @@ async function thumbCacheFiles(): Promise<string[]> {
 
 /* ---------- 回收站（PowerShell + Shell COM） ---------- */
 
-/** 用 Shell 的回收站命名空间统计总大小（Namespace(10) = 回收站） */
-async function recycleBinSize(): Promise<number> {
-  const script = [
-    "$ErrorActionPreference='SilentlyContinue'",
-    '$shell = New-Object -ComObject Shell.Application',
-    '$sum = 0',
-    'foreach ($i in $shell.Namespace(10).Items()) { $sum += $i.Size }',
-    '[Console]::Out.Write([string]$sum)'
-  ].join('; ')
+/**
+ * 用 Shell 的回收站命名空间统计条目数与总大小（Namespace(10) = 回收站）。
+ *
+ * Shell 对**文件夹**的 `Size` 恒为 0（里面有文件也一样），所以文件夹改用显式栈
+ * 递归累加文件大小；遇到 reparse point（junction / 符号链接）不进入，避免循环。
+ * 输出 `条目数;字节数`，条目数用来判断「0 字节但确实有东西」（如空文件夹）。
+ */
+async function recycleBinStats(): Promise<{ bytes: number; exists: boolean }> {
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+$shell = New-Object -ComObject Shell.Application
+$items = @($shell.Namespace(10).Items())
+$sum = 0
+foreach ($i in $items) {
+  if ($i.IsFolder) {
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($i.Path)
+    while ($stack.Count -gt 0) {
+      $d = $stack.Pop()
+      try { $di = [System.IO.DirectoryInfo]::new($d) } catch { continue }
+      try { foreach ($f in $di.EnumerateFiles()) { $sum += $f.Length } } catch { }
+      try { foreach ($sd in $di.EnumerateDirectories()) { if (($sd.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) { $stack.Push($sd.FullName) } } } catch { }
+    }
+  } else {
+    $sum += $i.Size
+  }
+}
+[Console]::Out.Write([string]$items.Count + ';' + [string]$sum)
+`
   try {
-    const out = await runPowerShell(script)
-    const n = Number.parseInt(out, 10)
-    return Number.isFinite(n) && n > 0 ? n : 0
+    const out = await runPowerShell(script, 60_000)
+    const [countText, sizeText] = out.split(';')
+    const count = Number.parseInt(countText ?? '', 10)
+    const bytes = Number.parseInt(sizeText ?? '', 10)
+    return {
+      bytes: Number.isFinite(bytes) && bytes > 0 ? bytes : 0,
+      exists: Number.isFinite(count) && count > 0
+    }
   } catch {
-    return 0
+    return { bytes: 0, exists: false }
   }
 }
 
@@ -114,10 +140,18 @@ interface Target {
   label: string
   hint: string
   defaultChecked: boolean
-  /** 当前占用（字节） */
-  scan: () => Promise<number>
+  /** 当前占用；exists 用来区分「0 字节但条目还在」（回收站空文件夹） */
+  scan: () => Promise<CleanupItemScan>
   /** 执行清理，返回给用户看的失败/跳过说明 */
   clean: () => Promise<string[]>
+}
+
+/** 只关心字节的扫描：exists 按「有字节」判断 */
+function bytesOnly(scan: () => Promise<number>): () => Promise<CleanupItemScan> {
+  return async () => {
+    const bytes = await scan()
+    return { bytes, exists: bytes > 0 }
+  }
 }
 
 const TARGETS: Target[] = [
@@ -128,7 +162,7 @@ const TARGETS: Target[] = [
     label: '更新安装包缓存',
     hint: '可以删。下载新版本时留下的安装包，通常一百多 MB；删了不影响已安装的版本，下次更新重新下载。',
     defaultChecked: true,
-    scan: () => sumPaths([updateCacheDir()]),
+    scan: bytesOnly(() => sumPaths([updateCacheDir()])),
     clean: async () => {
       const err = await removePath(updateCacheDir())
       return err ? [`更新安装包缓存没清干净：${err}`] : []
@@ -140,7 +174,9 @@ const TARGETS: Target[] = [
     label: '网页缓存',
     hint: '可以删。界面渲染用的网页与脚本缓存；删了不影响数据，下次打开会自己重建。',
     defaultChecked: true,
-    scan: () => sumPaths([join(userDataDir(), 'Cache'), join(userDataDir(), 'Code Cache')]),
+    scan: bytesOnly(() =>
+      sumPaths([join(userDataDir(), 'Cache'), join(userDataDir(), 'Code Cache')])
+    ),
     clean: async () => {
       // 运行中的 Chromium 缓存文件可能被占用，用官方 API 清，不直接删目录
       try {
@@ -159,7 +195,7 @@ const TARGETS: Target[] = [
     label: '歌词缓存',
     hint: '可以删。查过的歌词存在本机；删了下次播放时联网重查，断网时会暂时显示「暂无歌词」。',
     defaultChecked: true,
-    scan: () => sumPaths([join(userDataDir(), 'lyrics')]),
+    scan: bytesOnly(() => sumPaths([join(userDataDir(), 'lyrics')])),
     clean: async () => {
       const err = await removePath(join(userDataDir(), 'lyrics'))
       return err ? [`歌词缓存没清干净：${err}`] : []
@@ -171,8 +207,9 @@ const TARGETS: Target[] = [
     label: '诊断日志',
     hint: '可以删，删了不影响使用；但以后真出故障时就没有记录可查，所以默认没勾。',
     defaultChecked: false,
-    scan: () =>
-      sumPaths([join(userDataDir(), 'startup.log'), join(userDataDir(), 'collapse-log.txt')]),
+    scan: bytesOnly(() =>
+      sumPaths([join(userDataDir(), 'startup.log'), join(userDataDir(), 'collapse-log.txt')])
+    ),
     clean: async () => {
       const warnings: string[] = []
       for (const p of [join(userDataDir(), 'startup.log'), join(userDataDir(), 'collapse-log.txt')]) {
@@ -190,7 +227,7 @@ const TARGETS: Target[] = [
     label: '临时文件',
     hint: '可以删。各类软件运行时留下的临时文件；正在被使用的会自动跳过。',
     defaultChecked: true,
-    scan: () => sumPaths([app.getPath('temp')]),
+    scan: bytesOnly(() => sumPaths([app.getPath('temp')])),
     clean: async () => {
       const { skipped, warnings } = await removeChildren(app.getPath('temp'))
       const out = [...warnings]
@@ -204,12 +241,13 @@ const TARGETS: Target[] = [
     label: '崩溃转储与错误报告',
     hint: '可以删。程序崩溃时生成的记录文件，删了不影响系统和其他软件。',
     defaultChecked: true,
-    scan: () =>
+    scan: bytesOnly(() =>
       sumPaths([
         join(localAppDataDir(), 'CrashDumps'),
         join(localAppDataDir(), 'Microsoft', 'Windows', 'WER', 'ReportArchive'),
         join(localAppDataDir(), 'Microsoft', 'Windows', 'WER', 'ReportQueue')
-      ]),
+      ])
+    ),
     clean: async () => {
       const warnings: string[] = []
       for (const p of [
@@ -229,7 +267,7 @@ const TARGETS: Target[] = [
     label: '缩略图缓存',
     hint: '可以删。资源管理器为图片和视频生成的预览图；被资源管理器占用的会自动跳过。',
     defaultChecked: true,
-    scan: async () => {
+    scan: bytesOnly(async () => {
       const files = await thumbCacheFiles()
       let total = 0
       for (const f of files) {
@@ -240,7 +278,7 @@ const TARGETS: Target[] = [
         }
       }
       return total
-    },
+    }),
     clean: async () => {
       let skipped = 0
       const warnings: string[] = []
@@ -265,7 +303,7 @@ const TARGETS: Target[] = [
     label: '回收站',
     hint: '会永久删除你放进回收站的文件，清空后不能恢复，所以默认没勾。',
     defaultChecked: false,
-    scan: () => recycleBinSize(),
+    scan: recycleBinStats,
     clean: () => emptyRecycleBin()
   }
 ]
@@ -285,12 +323,12 @@ export function cleanupItems(rawScope: unknown): CleanupItemDef[] {
   }))
 }
 
-/** 扫描某一项；不存在或不属于该组时返回 0 */
-export async function scanCleanupItem(rawScope: unknown, rawId: unknown): Promise<number> {
+/** 扫描某一项；不存在或不属于该组时返回空结果 */
+export async function scanCleanupItem(rawScope: unknown, rawId: unknown): Promise<CleanupItemScan> {
   const scope = normalizeScope(rawScope)
-  if (!isTargetId(rawId)) return 0
+  if (!isTargetId(rawId)) return { bytes: 0, exists: false }
   const t = TARGETS.find((x) => x.id === rawId && x.scope === scope)
-  if (!t) return 0
+  if (!t) return { bytes: 0, exists: false }
   return t.scan()
 }
 
@@ -304,14 +342,14 @@ export async function scanCleanup(rawScope: unknown): Promise<CleanupScanResult>
   const items: CleanupItem[] = []
   for (const t of TARGETS) {
     if (t.scope !== scope) continue
-    const bytes = await t.scan()
+    const { bytes, exists } = await t.scan()
     items.push({
       id: t.id,
       label: t.label,
       hint: t.hint,
       bytes,
       defaultChecked: t.defaultChecked,
-      exists: bytes > 0
+      exists
     })
   }
   return {
@@ -349,7 +387,7 @@ export async function runCleanup(rawScope: unknown, rawIds: unknown): Promise<Cl
   // 复用会让外部在页面停留期间删掉/新增的文件算进本次释放量（虚报或漏报）；
   // 代价只是点「清理选中项」后多等这一次统计（本机 %TEMP% 约 7 秒）。
   let beforeTotal = 0
-  for (const t of selected) beforeTotal += await t.scan()
+  for (const t of selected) beforeTotal += (await t.scan()).bytes
 
   for (const t of selected) {
     warnings.push(...(await t.clean()))

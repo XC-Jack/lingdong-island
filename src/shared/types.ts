@@ -80,6 +80,17 @@ export interface CleanupItemDef {
   defaultChecked: boolean
 }
 
+/** 单项扫描结果 */
+export interface CleanupItemScan {
+  /** 占用字节；0 表示没有可清理的字节 */
+  bytes: number
+  /**
+   * 条目是否真实存在。回收站里只有空文件夹时 bytes 为 0 但 exists 为 true，
+   * 界面据此允许勾选清理（否则会显示「无」且不可选）。
+   */
+  exists: boolean
+}
+
 /** 一条清理项的扫描结果 */
 export interface CleanupItem {
   id: CleanupTargetId

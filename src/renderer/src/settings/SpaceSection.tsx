@@ -32,6 +32,8 @@ function formatBytes(n: number): string {
 /** 页面上的一行：定义来自主进程，bytes=null 表示这一项还在计算 */
 interface Row extends CleanupItemDef {
   bytes: number | null
+  /** 条目是否真实存在（回收站空文件夹：0 字节但仍可选） */
+  exists: boolean
 }
 
 interface PanelProps {
@@ -57,19 +59,22 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
     setNote('')
     try {
       const defs = await window.island.cleanupItems(scope)
-      setRows(defs.map((d) => ({ ...d, bytes: null })))
+      setRows(defs.map((d) => ({ ...d, bytes: null, exists: false })))
       setSelected(new Set(defs.filter((d) => d.defaultChecked).map((d) => d.id)))
       await Promise.all(
         defs.map(async (d) => {
           let bytes = 0
+          let exists = false
           try {
-            bytes = await window.island.cleanupScanItem(scope, d.id)
+            const scan = await window.island.cleanupScanItem(scope, d.id)
+            bytes = scan.bytes
+            exists = scan.exists
           } catch {
             bytes = 0
           }
-          setRows((prev) => prev.map((r) => (r.id === d.id ? { ...r, bytes } : r)))
-          // 算出来是 0 的项自动取消勾选，避免把空项算进「已选」
-          if (bytes === 0) {
+          setRows((prev) => prev.map((r) => (r.id === d.id ? { ...r, bytes, exists } : r)))
+          // 算出来是 0 且确实没东西的项自动取消勾选，避免把空项算进「已选」
+          if (bytes === 0 && !exists) {
             setSelected((prev) => {
               if (!prev.has(d.id)) return prev
               const next = new Set(prev)
@@ -111,7 +116,8 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
   }
 
   const run = async (): Promise<void> => {
-    if (busy || scanning || selectedBytes === 0) return
+    // 注意：不能按「已选字节为 0」拦，回收站里的空文件夹是 0 字节但可清理
+    if (busy || scanning || selected.size === 0) return
     // 第一次只提示，第二次才执行；勾选变化会把 confirming 置回 false
     if (risky.length > 0 && !confirming) {
       setConfirming(true)
@@ -129,11 +135,16 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
       const res = await window.island.cleanupRun(scope, ids)
       const afterById = new Map(res.scan.items.map((i) => [i.id, i]))
       setRows((prev) =>
-        prev.map((r) => (afterById.has(r.id) ? { ...r, bytes: afterById.get(r.id)?.bytes ?? 0 } : r))
+        prev.map((r) => {
+          const hit = afterById.get(r.id)
+          return hit ? { ...r, bytes: hit.bytes ?? 0, exists: hit.exists } : r
+        })
       )
       setSelected(
         new Set(
-          res.scan.items.filter((i) => i.defaultChecked && i.bytes > 0).map((i) => i.id)
+          res.scan.items
+            .filter((i) => i.defaultChecked && (i.bytes > 0 || i.exists))
+            .map((i) => i.id)
         )
       )
       const head = res.freedBytes > 0 ? `已释放 ${formatBytes(res.freedBytes)}。` : '这次没有释放出空间。'
@@ -172,7 +183,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
               aria-checked={on}
               aria-label={row.label}
               className={`clean-row${on ? ' on' : ''}`}
-              disabled={busy || !known || row.bytes === 0}
+              disabled={busy || !known || (row.bytes === 0 && !row.exists)}
               onClick={() => toggle(row.id)}
             >
               <span className="clean-check" aria-hidden="true">
@@ -186,7 +197,9 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
                 <span className="clean-name">{row.label}</span>
                 <span className="clean-hint">{row.hint}</span>
               </span>
-              <span className="clean-size">{known ? formatBytes(row.bytes ?? 0) : '计算中…'}</span>
+              <span className="clean-size">
+                {known ? (row.bytes === 0 && row.exists ? '0 B' : formatBytes(row.bytes ?? 0)) : '计算中…'}
+              </span>
             </button>
           )
         })}
@@ -196,7 +209,8 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
       <div className="set-note clean-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
-          可清理 <b>{formatBytes(totalBytes)}</b> · 已选 <b>{formatBytes(selectedBytes)}</b>
+          可清理 <b>{totalBytes === 0 && rows.some((r) => r.exists) ? '0 B' : formatBytes(totalBytes)}</b> ·
+          已选 <b>{selectedBytes === 0 && selected.size > 0 ? '0 B' : formatBytes(selectedBytes)}</b>
           {scanning ? <span className="clean-pending">（计算中…）</span> : null}
         </div>
         <div className="clean-actions">
@@ -213,7 +227,7 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
           <button
             type="button"
             className="set-btn set-btn-primary"
-            disabled={busy || scanning || selectedBytes === 0}
+            disabled={busy || scanning || selected.size === 0}
             onClick={() => {
               void run()
             }}
@@ -504,6 +518,8 @@ interface JunkRow {
   /** 普通项：null = 还在算；管理员项：known=false 表示系统不给大小 */
   bytes: number | null
   known: boolean
+  /** 条目真实存在（回收站空文件夹：0 字节但仍可清理） */
+  exists: boolean
   admin: boolean
   defaultChecked: boolean
 }
@@ -533,6 +549,7 @@ function JunkPanel(): ReactElement {
         hint: d.hint,
         bytes: null,
         known: true,
+        exists: false,
         admin: false,
         defaultChecked: d.defaultChecked
       }))
@@ -542,23 +559,29 @@ function JunkPanel(): ReactElement {
         hint: i.hint,
         bytes: i.known ? i.bytes : null,
         known: i.known,
+        exists: false,
         admin: true,
         defaultChecked: i.defaultChecked
       }))
       const all = [...normalRows, ...adminRows]
       setRows(all)
-      setSelected(new Set(all.filter((r) => r.defaultChecked && r.bytes !== 0).map((r) => r.id)))
+      setSelected(
+        new Set(all.filter((r) => r.defaultChecked && (r.bytes !== 0 || r.exists)).map((r) => r.id))
+      )
       await Promise.all(
         defs.map(async (d) => {
           let bytes = 0
+          let exists = false
           try {
-            bytes = await window.island.cleanupScanItem('system', d.id)
+            const scan = await window.island.cleanupScanItem('system', d.id)
+            bytes = scan.bytes
+            exists = scan.exists
           } catch {
             bytes = 0
           }
-          setRows((prev) => prev.map((r) => (r.id === d.id ? { ...r, bytes } : r)))
-          // 算出来是 0 的项自动取消勾选，避免把空项算进「已选」
-          if (bytes === 0) {
+          setRows((prev) => prev.map((r) => (r.id === d.id ? { ...r, bytes, exists } : r)))
+          // 算出来是 0 且确实没东西的项自动取消勾选，避免把空项算进「已选」
+          if (bytes === 0 && !exists) {
             setSelected((prev) => {
               if (!prev.has(d.id)) return prev
               const next = new Set(prev)
@@ -599,22 +622,29 @@ function JunkPanel(): ReactElement {
   }
 
   /** 用清理后的扫描结果就地更新大小；known=false 的项回到「无法统计」 */
-  const applySizes = (list: Array<{ id: string; bytes: number; known?: boolean }>): void => {
+  const applySizes = (
+    list: Array<{ id: string; bytes: number; known?: boolean; exists?: boolean }>
+  ): void => {
     const by = new Map(list.map((i) => [i.id, i]))
     setRows((prev) =>
       prev.map((r) => {
         const hit = by.get(r.id)
         if (!hit) return r
         return hit.known === false
-          ? { ...r, bytes: null, known: false }
-          : { ...r, bytes: hit.bytes, known: true }
+          ? { ...r, bytes: null, known: false, exists: false }
+          : { ...r, bytes: hit.bytes, known: true, exists: hit.exists ?? hit.bytes > 0 }
       })
     )
   }
 
   /** 清完变成 0 的项退出勾选，避免下次把空项一起提交 */
-  const clearEmpty = (list: Array<{ id: string; bytes: number; known?: boolean }>): void => {
-    const zero = new Set(list.filter((i) => (i.known ?? true) && i.bytes === 0).map((i) => i.id))
+  const clearEmpty = (
+    list: Array<{ id: string; bytes: number; known?: boolean; exists?: boolean }>
+  ): void => {
+    // 0 字节但条目还在（回收站空文件夹）不算空，继续留在勾选里
+    const zero = new Set(
+      list.filter((i) => (i.known ?? true) && i.bytes === 0 && !i.exists).map((i) => i.id)
+    )
     if (zero.size === 0) return
     setSelected((prev) => {
       const next = new Set(prev)
@@ -707,7 +737,7 @@ function JunkPanel(): ReactElement {
         {rows.map((row) => {
           const on = selected.has(row.id)
           const pending = row.known && row.bytes === null
-          const empty = row.known && row.bytes === 0
+          const empty = row.known && row.bytes === 0 && !row.exists
           return (
             <button
               key={row.id}
@@ -749,7 +779,13 @@ function JunkPanel(): ReactElement {
               </span>
               {/* 「无法统计」说的是大小，不是「要管理员才能用」 */}
               <span className="clean-size">
-                {!row.known ? '无法统计' : pending ? '计算中…' : formatBytes(row.bytes ?? 0)}
+                {!row.known
+                  ? '无法统计'
+                  : pending
+                    ? '计算中…'
+                    : row.bytes === 0 && row.exists
+                      ? '0 B'
+                      : formatBytes(row.bytes ?? 0)}
               </span>
             </button>
           )
@@ -758,7 +794,8 @@ function JunkPanel(): ReactElement {
       <div className="set-note clean-note">{note}</div>
       <div className="clean-foot">
         <div className="clean-total">
-          可清理 <b>{formatBytes(totalBytes)}</b> · 已选 <b>{formatBytes(selectedBytes)}</b>
+          可清理 <b>{totalBytes === 0 && rows.some((r) => r.exists) ? '0 B' : formatBytes(totalBytes)}</b> ·
+          已选 <b>{selectedBytes === 0 && selected.size > 0 ? '0 B' : formatBytes(selectedBytes)}</b>
           {scanning ? <span className="clean-pending">（计算中…）</span> : null}
         </div>
         <div className="clean-actions">
