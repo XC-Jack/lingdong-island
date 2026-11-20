@@ -80,7 +80,20 @@
 
 ## 8. 自检记录
 
-（实现后补充）
+环境：隔离实例（`--user-data-dir` 指向 `.tmp/admin-e2e`），`WINDIR` / `ProgramData` 用本机真实路径但**只读扫描**，CDP 9324。
+
+1. `npm run typecheck` — EXIT=0；`npm run build` — EXIT=0。
+2. 空间页出现 4 组，第四组「系统清理（需要管理员）」四项：Windows 更新缓存 26.9 KB、系统临时文件 1.10 GB、系统错误报告「需管理员」、传递优化缓存「需管理员」；四项默认勾选。扫描期间没有生成 `admin-cleanup` 目录，也没有出现 `consent.exe`（UAC）——浏览与扫描不提权。
+3. 判定「需管理员」用的是递归可读性：`%ProgramData%\Microsoft\Windows\WER` 顶层能列、子目录读不到，因此按「大小不完整」显示为需管理员，而不是给出偏小的数字。
+4. 提权脚本生成（`adminScript.ts` 单独用 `tsc` 编译后调用）：四项全选生成的脚本交给 PowerShell `Parser::ParseFile` → `PARSE_OK`（含停/启 `wuauserv`、`bits` 的块与 `Delete-DeliveryOptimizationCache` 块）。
+5. 脚本语义：把 `WINDIR` / `ProgramData` 指向 `.tmp/admin-script-e2e` 假目录，非提权执行 `win-temp` + `wer-system` 块——结果 JSON 为数组，`before/after` 分别是 6144/0、1024/0；临时文件与 WER 报告被删、目录本身保留、`outside.txt` 未动；只选一项时结果仍是数组。
+6. 伪造 id：`adminCleanupRun(['nope','../evil','win-temp;rm -rf /'])` → `ok=false`、`warnings=['没有选中任何项目。']`，不写脚本、不提权。
+
+**未验证**：
+
+1. **真正的提权清理**：没有在真实系统目录上点过「清理选中项」（会弹 UAC 并真的删 `C:\Windows\Temp` 等）。需要用户点一次授权后确认。
+2. **拒绝 UAC 的取消分支**：代码按 stderr 里的「取消 / 1223」判断，但没有制造过真实的拒绝操作。
+3. 打包版。
 
 ## 9. 验收记录
 

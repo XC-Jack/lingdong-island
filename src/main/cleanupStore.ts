@@ -1,6 +1,5 @@
 import { app, ipcMain, session } from 'electron'
 import { promises as fs } from 'node:fs'
-import type { Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type {
@@ -13,6 +12,7 @@ import type {
 } from '../shared/types'
 import { getUpdateStage } from './updater'
 import { runPowerShell } from './runPs'
+import { errText, removeChildren, sumPaths } from './fsUtil'
 
 /**
  * 设置「空间」页的扫描与清理（SPEC-space-cleanup / SPEC-space-system-junk）。
@@ -45,41 +45,6 @@ function updateCacheDir(): string {
   return join(base, `${app.name}-updater`)
 }
 
-function errText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
-
-/** 递归求一个路径的占用；不存在或读不到都算 0，不抛错 */
-async function pathSize(target: string): Promise<number> {
-  let st
-  try {
-    st = await fs.lstat(target)
-  } catch {
-    return 0
-  }
-  // 符号链接只算链接本身，不跟进去（避免指向系统目录时扫出天文数字）
-  if (st.isSymbolicLink()) return 0
-  if (!st.isDirectory()) return st.size
-
-  let entries: Dirent[]
-  try {
-    entries = await fs.readdir(target, { withFileTypes: true })
-  } catch {
-    return 0
-  }
-  let total = 0
-  for (const e of entries) {
-    total += await pathSize(join(target, e.name))
-  }
-  return total
-}
-
-async function sumPaths(paths: string[]): Promise<number> {
-  let total = 0
-  for (const p of paths) total += await pathSize(p)
-  return total
-}
-
 /** 删除一个文件/目录；返回失败原因（成功为 null） */
 async function removePath(target: string): Promise<string | null> {
   try {
@@ -88,34 +53,6 @@ async function removePath(target: string): Promise<string | null> {
   } catch (e) {
     return errText(e)
   }
-}
-
-/**
- * 清空一个目录里的内容（不删目录本身）。
- * 被占用的文件（EBUSY/EPERM/EACCES/ENOTEMPTY）记为「跳过」，其它错误原样汇报。
- */
-async function removeChildren(dir: string): Promise<{ skipped: number; warnings: string[] }> {
-  let entries: Dirent[]
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true })
-  } catch {
-    return { skipped: 0, warnings: [] }
-  }
-  let skipped = 0
-  const warnings: string[] = []
-  for (const e of entries) {
-    try {
-      await fs.rm(join(dir, e.name), { recursive: true, force: true })
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code ?? ''
-      if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'ENOTEMPTY') {
-        skipped += 1
-      } else {
-        warnings.push(errText(err))
-      }
-    }
-  }
-  return { skipped, warnings }
 }
 
 /* ---------- 缩略图 / 图标缓存 ---------- */

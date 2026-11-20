@@ -176,6 +176,39 @@ export interface ResidueBackup {
   restored: boolean
 }
 
+/* ---------- 系统清理（需要管理员，SPEC-space-admin-cleanup） ---------- */
+
+export type AdminCleanupId =
+  | 'win-update-cache'
+  | 'win-temp'
+  | 'wer-system'
+  | 'delivery-optimization'
+
+/** 需要管理员权限的一项；known=false 表示不提权看不到大小 */
+export interface AdminCleanupItem {
+  id: AdminCleanupId
+  label: string
+  hint: string
+  bytes: number
+  known: boolean
+  defaultChecked: boolean
+}
+
+export interface AdminCleanupScanResult {
+  items: AdminCleanupItem[]
+  scannedAt: number
+}
+
+export interface AdminCleanupRunResult {
+  ok: boolean
+  /** 用户拒绝了 UAC：什么都没删 */
+  canceled: boolean
+  /** 各项「清理前 − 清理后」之和；大小未知的项（传递优化缓存）算 0 */
+  freedBytes: number
+  warnings: string[]
+  scan: AdminCleanupScanResult
+}
+
 /**
  * 可选的桌宠皮肤 id（SPEC-deskpet-skin）。
  *
