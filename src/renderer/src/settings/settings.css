@@ -1110,6 +1110,24 @@ div.pm-row[draggable='true'] {
   max-height: 460px;
   overflow-y: auto;
 }
+/* 图例：等级含义直接写在面板里，不用靠说明文档 */
+.swr-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: rgba(242, 243, 245, 0.55);
+}
+.swr-legend-title {
+  color: rgba(242, 243, 245, 0.42);
+}
+.swr-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .swr-row {
   display: flex;
   flex-direction: column;

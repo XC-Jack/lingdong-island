@@ -840,6 +840,24 @@ const RESIDUE_LEVEL_TEXT: Record<SoftwareResidueItem['level'], string> = {
   check: '需确认'
 }
 
+/** 图例：短句常驻显示，长句挂在 title 上 */
+const RESIDUE_LEVEL_INFO: Record<SoftwareResidueItem['level'], { brief: string; full: string }> = {
+  definite: {
+    brief: '程序文件已不存在',
+    full: '登记还在，但它指向的程序文件已经不存在了，基本可以断定是卸载留下的死登记。只有这一级的服务、计划任务和空目录可以勾选清理。'
+  },
+  likely: {
+    brief: '程序没了，同公司还有软件',
+    full: '程序文件已经不在了，但同一家公司还有别的软件装着，也可能是那家软件的残留。只报告，不提供删除。'
+  },
+  check: {
+    brief: '有疑点，需你看一眼',
+    full: '有疑点：程序还在、目录里有内容或来源不明，需要你自己看一眼再决定。只报告，不提供删除。'
+  }
+}
+
+const RESIDUE_LEVELS = ['definite', 'likely', 'check'] as const
+
 const RESIDUE_KIND_TEXT: Record<SoftwareResidueItem['kind'], string> = {
   service: '服务',
   driver: '驱动',
@@ -978,6 +996,21 @@ function SoftwareResiduePanel(): ReactElement {
           检查已删除软件留下的服务、驱动、计划任务和目录，覆盖各个本地盘。确定级的服务、计划任务和空目录可以勾选清理：会先备份，可用「撤销上次清理」恢复。驱动和非空目录只报告，不提供删除——它们删错可能影响系统或正在用的软件。
         </p>
       </div>
+      <div className="swr-legend">
+        <span className="swr-legend-title">等级只看证据强弱，不等于能不能删：</span>
+        {RESIDUE_LEVELS.map((lv) => (
+          <span key={lv} className="swr-legend-item" title={RESIDUE_LEVEL_INFO[lv].full}>
+            <span className={`swr-level swr-level-${lv}`}>{RESIDUE_LEVEL_TEXT[lv]}</span>
+            {RESIDUE_LEVEL_INFO[lv].brief}
+          </span>
+        ))}
+        <span className="swr-legend-item">
+          <span className="swr-tag swr-tag-running">运行中</span>此刻在运行
+        </span>
+        <span className="swr-legend-item">
+          <span className="swr-tag">需要管理员</span>清理时要提权
+        </span>
+      </div>
       <div className="swr-list">
         {scanning ? <div className="clean-empty">正在扫描服务、驱动、计划任务和目录，需要十几秒…</div> : null}
         {!scanning && !scanned ? (
@@ -1013,7 +1046,9 @@ function SoftwareResiduePanel(): ReactElement {
                     </span>
                   </button>
                 ) : null}
-                <span className={`swr-level swr-level-${it.level}`}>{RESIDUE_LEVEL_TEXT[it.level]}</span>
+                <span className={`swr-level swr-level-${it.level}`} title={RESIDUE_LEVEL_INFO[it.level].full}>
+                  {RESIDUE_LEVEL_TEXT[it.level]}
+                </span>
                 <span className="swr-kind">{RESIDUE_KIND_TEXT[it.kind]}</span>
                 <span className="swr-name">{it.label}</span>
                 {it.running ? <span className="swr-tag swr-tag-running">运行中</span> : null}
