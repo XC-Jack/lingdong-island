@@ -863,14 +863,15 @@ div.pm-row[draggable='true'] {
 
 /* ===== 空间清理（SPEC-space-cleanup） ===== */
 
-/* 一组清理项（灵动岛缓存 / 系统垃圾），各自有标题、列表、提示与按钮 */
+/* 一张卡片 = 一块（灵动岛 / 系统），卡片内部再分小节 */
 .clean-group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.clean-group + .clean-group {
-  margin-top: 10px;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #1b1c20;
 }
 .clean-group-head {
   display: flex;
@@ -882,6 +883,35 @@ div.pm-row[draggable='true'] {
   font-weight: 600;
   letter-spacing: 0.2px;
   color: rgba(242, 243, 245, 0.92);
+}
+/* 卡片标题（三级）比小节标题（四级）大半级，层级一眼能看出来 */
+.clean-group-head > h3.clean-group-title {
+  font-size: 14px;
+}
+
+/* 「系统」卡片：里面的三个小节不再各自套卡片，靠一条细线分隔 */
+.clean-group-space {
+  gap: 0;
+}
+.clean-group-space > .clean-group-head {
+  padding-bottom: 12px;
+}
+/* 小节：透明、无边框，顶部空出与上一节的距离 */
+.clean-group.clean-part {
+  padding: 14px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.clean-group.clean-part + .clean-group.clean-part {
+  margin-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* 列表：贴着卡片排，不再另包一层带边框的盒子 */
+.clean-list {
+  display: flex;
+  flex-direction: column;
 }
 
 /* 组开头的一句说明：告诉用户这里只动什么、绝不动什么 */
@@ -1026,7 +1056,9 @@ div.pm-row[draggable='true'] {
 
 /* 卸载残留：备份与撤销区 */
 .residue-backups {
-  margin-top: 18px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .residue-backups-head {
   display: flex;

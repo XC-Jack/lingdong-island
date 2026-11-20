@@ -39,10 +39,12 @@ interface PanelProps {
   scope: CleanupScope
   title: string
   lead: string
+  /** 作为「系统」卡片里的小节渲染：标题降一级、不套自己的卡片外框 */
+  nested?: boolean
 }
 
 /** 一组清理项：独立的扫描结果、勾选、提示与按钮 */
-function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
+function CleanupPanel({ scope, title, lead, nested = false }: PanelProps): ReactElement {
   const [rows, setRows] = useState<Row[]>([])
   const [selected, setSelected] = useState<Set<CleanupTargetId>>(new Set())
   const [scanning, setScanning] = useState(false)
@@ -132,13 +134,14 @@ function CleanupPanel({ scope, title, lead }: PanelProps): ReactElement {
     }
   }
 
+  const Title = nested ? 'h4' : 'h3'
   return (
-    <div className="clean-group">
+    <div className={nested ? 'clean-group clean-part' : 'clean-group'}>
       <div className="clean-group-head">
-        <h3 className="clean-group-title">{title}</h3>
+        <Title className="clean-group-title">{title}</Title>
         <p className="clean-lead">{lead}</p>
       </div>
-      <div className="set-card">
+      <div className="clean-list">
         {rows.length === 0 ? (
           <div className="clean-empty">
             {scanning ? '正在读取清理项…' : '暂时读不到清理项，点「重新计算」再试。'}
@@ -263,13 +266,8 @@ function ResiduePanel(): ReactElement {
       const r = await window.island.residueScan()
       setItems(r.items)
       setSelected(new Set())
-      setNote(
-        r.warnings.length > 0
-          ? r.warnings.join(' ')
-          : r.items.length === 0
-            ? '没有发现卸载残留。'
-            : ''
-      )
+      // 「没有发现残留」由列表里的空状态说一次就够了，提示行只放警告
+      setNote(r.warnings.join(' '))
     } catch {
       setNote('扫描失败，请稍后再试。')
     } finally {
@@ -357,14 +355,14 @@ function ResiduePanel(): ReactElement {
   }
 
   return (
-    <div className="clean-group">
+    <div className="clean-group clean-part">
       <div className="clean-group-head">
-        <h3 className="clean-group-title">卸载残留</h3>
+        <h4 className="clean-group-title">卸载残留</h4>
         <p className="clean-lead">
           已经卸载、但还剩注册表项或快捷方式的软件。只扫当前用户，不需要管理员；清理一律先进备份区，可以撤销。
         </p>
       </div>
-      <div className="set-card">
+      <div className="clean-list">
         {items === null ? <div className="clean-empty">正在扫描…</div> : null}
         {items !== null && list.length === 0 ? (
           <div className="clean-empty">没有发现卸载残留。</div>
@@ -550,14 +548,14 @@ function AdminPanel(): ReactElement {
   }
 
   return (
-    <div className="clean-group">
+    <div className="clean-group clean-part">
       <div className="clean-group-head">
-        <h3 className="clean-group-title">系统清理（需要管理员）</h3>
+        <h4 className="clean-group-title">需要管理员</h4>
         <p className="clean-lead">
           这些目录普通权限删不动。浏览和扫描不会弹窗；点「清理选中项」时系统会弹一次管理员授权，拒绝则什么都不删。
         </p>
       </div>
-      <div className="set-card">
+      <div className="clean-list">
         {items === null ? <div className="clean-empty">正在读取…</div> : null}
         {list.map((item) => {
           const on = selected.has(item.id)
@@ -626,18 +624,30 @@ export default function SpaceSection(): ReactElement {
   return (
     <section className="set-page">
       <h2 className="set-page-title">空间</h2>
+      {/* 两张卡片：灵动岛自己的东西一张，系统相关的一张。
+          系统卡里的三个小节各自保留勾选和按钮——卸载残留要备份、需要管理员那组要提权，
+          合成一个按钮会多出一套「哪些能一起选」的规则，得不偿失 */}
       <CleanupPanel
         scope="app"
-        title="灵动岛的缓存"
+        title="灵动岛"
         lead="只清理灵动岛自己产生的缓存和日志。待办、日程、置物架和设置都存在别处，这里绝不会动。"
       />
-      <CleanupPanel
-        scope="system"
-        title="系统垃圾"
-        lead="Windows 和其他软件留下的临时文件。这一组不需要管理员权限，正在使用的文件会自动跳过。"
-      />
-      <ResiduePanel />
-      <AdminPanel />
+      <div className="clean-group clean-group-space">
+        <div className="clean-group-head">
+          <h3 className="clean-group-title">系统</h3>
+          <p className="clean-lead">
+            Windows 和其他软件留下的临时文件、卸载残留。前两项不需要管理员，正在使用的文件会自动跳过；最后一项点清理时会弹一次授权。
+          </p>
+        </div>
+        <CleanupPanel
+          nested
+          scope="system"
+          title="系统垃圾"
+          lead="Windows 和其他软件留下的临时文件，正在使用的会自动跳过。"
+        />
+        <ResiduePanel />
+        <AdminPanel />
+      </div>
     </section>
   )
 }
