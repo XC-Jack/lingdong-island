@@ -45,7 +45,7 @@ export function adminTargets(windir: string, programData: string): AdminTarget[]
     {
       id: 'delivery-optimization',
       label: '传递优化缓存',
-      hint: '可以删。Windows 更新与应用商店下载用的 P2P 缓存；由系统自己的接口清理，大小无法预先查看。',
+      hint: '可以删。Windows 更新与应用商店下载用的 P2P 缓存；由系统自己的接口清理，清理前后都不统计大小。',
       dirs: null
     }
   ]

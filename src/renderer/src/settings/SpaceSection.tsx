@@ -523,6 +523,9 @@ function AdminPanel(): ReactElement {
 
   const run = async (): Promise<void> => {
     if (busy || scanning || selected.size === 0) return
+    // 勾了看不到大小的项（传递优化缓存）：清理后说明一句「它不统计大小」，
+    // 免得「没有释放量」被理解成没清
+    const unknownPicked = list.filter((i) => selected.has(i.id) && !i.known).map((i) => i.label)
     setBusy(true)
     setNote('正在等待管理员授权…')
     try {
@@ -531,9 +534,13 @@ function AdminPanel(): ReactElement {
       if (r.canceled) {
         setNote('已取消管理员授权，没有删除任何东西。')
       } else {
-        const head =
-          r.freedBytes > 0 ? `已释放 ${formatBytes(r.freedBytes)}。` : '清理完成，没有可统计的释放量。'
-        setNote([head, ...r.warnings].filter(Boolean).join(' '))
+        const parts: string[] = [
+          r.freedBytes > 0 ? `已释放 ${formatBytes(r.freedBytes)}。` : '清理完成。'
+        ]
+        if (unknownPicked.length > 0) {
+          parts.push(`${unknownPicked.join('、')}交给系统接口清理，不统计大小。`)
+        }
+        setNote([...parts, ...r.warnings].filter(Boolean).join(' '))
       }
     } catch {
       setNote('清理失败，请稍后再试。')
@@ -576,7 +583,9 @@ function AdminPanel(): ReactElement {
                 <span className="clean-name">{item.label}</span>
                 <span className="clean-hint">{item.hint}</span>
               </span>
-              <span className="clean-size">{item.known ? formatBytes(item.bytes) : '需管理员'}</span>
+              {/* 「无法统计」说的是大小，不是「要管理员才能用」——这一组本来就要管理员，
+                  写成「需管理员」会让人以为点了没生效 */}
+              <span className="clean-size">{item.known ? formatBytes(item.bytes) : '无法统计'}</span>
             </button>
           )
         })}
