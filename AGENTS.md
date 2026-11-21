@@ -16,6 +16,7 @@
 | 选依赖、改架构、接系统能力 | `docs/facts/技术方案.md` + `docs/facts/本机约束与踩坑.md` |
 | 排查环境/打包/测试问题 | `docs/facts/本机约束与踩坑.md` |
 | 规划下一步做什么 | `docs/facts/用户角色与用户故事.md` + `docs/facts/里程碑.md` |
+| 新增界面、改界面、做 UI | `docs/facts/视觉设计规范.md` |
 
 ## 动手前必须确认
 
