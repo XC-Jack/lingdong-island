@@ -143,3 +143,35 @@
 | A6 手动体感 | ⚠️ 未验（需真人在弱机器上体感） |
 
 **结论**：A1–A5 通过，A6 未验。
+
+---
+
+## 九、独立验收（2026-11-22 / 提交 `109465f`）
+
+**验收方式**：由**未参与实现**的会话执行；对象是 `main` 的 `109465f`（工作树干净，`git status` 空）。
+所有测试都用 `out/` 里**从该提交重新构建**的 dev 版 + 隔离 userData（`--user-data-dir=.tmp/acceptance/…`，
+或 e2e 自带的 `scripts/isolate-userdata.mjs`）；真实数据目录 `%APPDATA%\lingdong-island\` 的 json/log
+mtime 全程未变（只剩安装版自己在写的 `startup.log` / `avoid-mode-beat.txt`）。
+
+| 条件 | 判定 | 实测证据 |
+|---|---|---|
+| A1 typecheck / build | ✅ 通过 | `npm run typecheck` EXIT=0（node + web 两段）；`npm run build` EXIT=0（`index-PforF8hV.js` 150.88 kB） |
+| A2 启动 < 2500 ms、点击 P95 < 50 ms | ✅ 通过 | `node scripts/perf-click-latency.mjs`：启动 **738 ms**；读在飞时 `pointerdown` → 空 IPC **P95=8 ms / P50=1 ms**（样本 `[1,1,1,1,1,8]`）；`statusSnapshot` 真实读数 `{"battery":94,"charging":true,"wifi":{..."GZHL_Student 3"}}` |
+| A3 `src/main` 无 `spawnSync(` | ✅ 通过 | 同一脚本 P1：去注释后命中 **0 处** |
+| A4 回归 e2e | ✅ 通过 | `e2e-m3` PASS；`e2e-wifi` PASS（4 条 A1–A4 全过）；`e2e-battery-push` **23 过 / 0 败**；`e2e-battery-states` **31 过 / 0 败**；`e2e-bell-notify` **15 过 / 0 败 / 0 跳过**；`e2e-code-hint` **10 过 / 0 败**；`e2e-exit-and-shelf-view` PASS |
+| A5 图标后台队列 | ✅ 通过（一条只有代码证据，见下） | 隔离实例（全新 userData，无 `icon-cache`）：首次列表 **21–36 ms** 返回 50 条 / 9 个来源（首帧已有 15–16 条带图）；30 s 内推 `island:notify-icons-updated` **11 次**（时间点间隔 0.3–1.4 s），带图数 **15 → 45**，其余保持文字徽标兜底。**串行性用进程级采样证明**：采样器按「父进程 = 本实例主进程 + 命令行含 `Get-AppxPackage`/`SHGetFileInfo`/`App Paths`/`extract-notify-icon`」计数，32 s 内约 320 次采样，**MAX_ICON=1**（若按来源并行应为 9） |
+| A6 手动体感 | ⚠️ **未验证** | 需要真人在弱机器上主观判断，本会话无法替代 |
+
+**A5 的例外（必须写明）**：A5 里的「队列函数在**假短名**下返回 null 且不抛」**没有可执行入口**（`ensureAppIcon()`
+是主进程内部函数，不走 IPC），只能算**代码核对**：`pump()` 对 `resolveIcon()` 包了 try/catch → `png=null` → 记入
+`failed`，且 `queued` Set 去重。这条不是本轮跑出来的观测。
+
+**装机版对应关系（[实测]）**：安装版 `D:\软件\灵动岛\resources\app.asar` 里的 `out/main/index.js`（414473 B）、
+`out/preload/index.js`（20750 B）、`out/renderer/index.html`、`out/renderer/assets/index-PforF8hV.js`（150883 B）
+与本提交重新构建的产物**逐字节相同** ⇒ 装机 0.4.2 就是这一份代码。
+
+**顺带发现（只记录、未修）**：`src/main/startupLog.ts` 仍是 `appendFileSync`，即「主线程同步写盘」还留着一处。
+它不在本 SPEC A1–A6 任何一条的判据内（A3 只禁 `spawnSync`），但和「点击路径不留同步 I/O」的意图不完全一致，
+建议另开 SPEC 评估。
+
+**证据留存**：`.tmp/acceptance/*.log`（e2e 输出）与该目录下的探针脚本（`perf-click-latency.mjs` 的输出见本节引用）。
