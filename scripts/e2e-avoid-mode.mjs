@@ -179,15 +179,32 @@ async function moveCursorTo(x, y) {
   )
 }
 
-/** 统计 startup.log 里 [avoid] 事件的条数（隐藏/现身归因日志）。 */
-function countAvoidLines() {
+/** 读一次 startup.log 里 [avoid] 的条数（同步读，不等待）。 */
+function readAvoidLines() {
   try {
     const raw = readFileSync(join(USER_DATA, 'startup.log'), 'utf8')
     return raw.split('[avoid]').length - 1
-
   } catch {
     return 0
   }
+}
+
+/**
+ * 统计 [avoid] 条数（隐藏/现身归因日志）——**等日志稳定后再返回**。
+ *
+ * 2026-11-22 起日志是异步写盘（SPEC-startup-log-async）：动作刚结束就读，可能少算一条。
+ * 每 120 ms 读一次，连续两次读数相同（或 1.5 s 超时）才算最终值。断言内容不变。
+ */
+async function countAvoidLines() {
+  let last = -1
+  const t0 = Date.now()
+  while (Date.now() - t0 < 1500) {
+    const now = readAvoidLines()
+    if (now === last) return now
+    last = now
+    await sleep(120)
+  }
+  return last < 0 ? 0 : last
 }
 
 /** 把光标放到顶部 4px 感应带上（触发摸边临时现身）。 */
@@ -397,10 +414,10 @@ try {
   // M9 摸边闩锁（2026-11-18 修）：光标停在屏幕最顶边、但横向在岛之外时，
   // 不得反复「唤回 → 收起」——在独占全屏游戏里这种循环等于反复把游戏踢出全屏
   // （用户实测「玩几分钟突然切到桌面」的嫌疑之一）。判据：5 秒内新增的 [avoid] 事件 ≤ 3 条。
-  const avoidBefore = countAvoidLines()
+  const avoidBefore = await countAvoidLines()
   await moveCursorTo(1500, 0)
   await sleep(5000)
-  const avoidDelta = countAvoidLines() - avoidBefore
+  const avoidDelta = (await countAvoidLines()) - avoidBefore
   ok('M9 光标停在顶部边缘不反复唤回/收起（闩锁生效）', avoidDelta <= 3, `新增 ${avoidDelta} 条 avoid 事件`)
 
   // M10 真全屏（F）时不得「光标到顶自动唤回」（SPEC-no-reveal-in-fullscreen，2026-11-18）
@@ -412,11 +429,11 @@ try {
   wins.push(fsWin)
   await sleep(2500)
   const fsHidden = await waitVisible(false, 3000)
-  const avoidBeforeF = countAvoidLines()
+  const avoidBeforeF = await countAvoidLines()
   await moveCursorTo(768, 0) // 光标顶到屏幕最上边（模拟游戏里视角上移）
   await sleep(4000)
   const fsStillHidden = await islandVisible()
-  const avoidDeltaF = countAvoidLines() - avoidBeforeF
+  const avoidDeltaF = (await countAvoidLines()) - avoidBeforeF
   ok('M10 真全屏时光标到顶不会唤回岛（游戏不会被最小化）',
     fsHidden.value === false && fsStillHidden === false && avoidDeltaF === 0,
     `先隐藏=${fsHidden.value} 之后仍隐藏=${fsStillHidden} 新增avoid事件=${avoidDeltaF}`)
