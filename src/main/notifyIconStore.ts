@@ -1,7 +1,7 @@
 import { app } from 'electron'
-import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { runPowerShellArgs, runPowerShellRaw } from './runPs'
 
 /**
  * 通知来源应用图标解析（US 通知图标）。
@@ -18,12 +18,24 @@ import { join } from 'node:path'
  *
  * 全部失败返回 null（渲染层退回应用名文字徽标 + 首字占位方块）。解析结果按短名缓存在
  * userData/icon-cache/notify-<短名>.png；解析失败的短名记入内存 Set，不再重试。
+ *
+ * **2026-11-22 改异步 + 队列（SPEC-perf-no-sync-ps）**：原来这四条路线各用一次
+ * `spawnSync`，一段 280–600 ms，一个没见过的应用要串 4 段 ≈ 1.5–2.5 s，这期间
+ * **主进程整个冻结**（窗口动画、IPC、输入全停）。它发生在启动、新通知到达、
+ * 以及切到通知页的时刻，正是用户说的「用着用着卡一下」。
+ * 现在拆成两半：
+ *   · `appIconCached()` —— 纯内存/磁盘查缓存，**永不起进程**，给列表渲染用；
+ *   · `ensureAppIcon()` —— 把没图标的短名塞进队列，后台一次只解析一个，
+ *     完成后通过 `initIconCache()` 注册的回调通知调用方补图。
  */
 
 /** 图标缓存目录与失败短名表（setup 时初始化） */
 let iconDir = ''
 const failed = new Set<string>()/** 短名 → 缓存 PNG 路径的内存缓存（命省重复扫描） */
 const resolved = new Map<string, string | null>()
+/** 图标解析完成回调（notifyStore 用它重读列表并推给渲染层） */
+type IconListener = (shortName: string, png: string | null) => void
+let onIconResolved: IconListener | null = null
 
 /* ------------------------------------------------------------------ */
 /* UWP 路线：WindowsApps 包目录 + AppxManifest                         */
@@ -38,7 +50,7 @@ interface UwpLogo {
  *  WindowsApps 目录本身对普通用户是枚举受限的：existsSync/enumerate 单个已知包名
  *  目录可以，但 readdir 整个根目录会失败——所以用 PowerShell 的 Get-AppxPackage，
  *  它跑在用户上下文里拿得到完整清单。 */
-function findUwpLogo(pkgPrefix: string): UwpLogo | null {
+async function findUwpLogo(pkgPrefix: string): Promise<UwpLogo | null> {
   const script = [
     // 包夹匹配：AUMID 第一段（如 ScreenSketch）只是真包名（Microsoft.ScreenSketch）的尾巴，
     // Get-AppxPackage -Name 是「开头前缀」匹配，必须用 *<前缀>* 才能命中
@@ -54,13 +66,13 @@ function findUwpLogo(pkgPrefix: string): UwpLogo | null {
     'if (-not $logo) { exit 1 }',
     'Write-Output ($p.InstallLocation + "|" + $logo)'
   ].join('; ')
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    timeout: 15_000,
-    windowsHide: true,
-    encoding: 'utf8'
-  })
-  const out = (r.stdout ?? '').trim()
-  if (r.status !== 0 || !out.includes('|')) return null
+  let out = ''
+  try {
+    out = await runPowerShellRaw(script, 15_000).then((r) => r.stdout)
+  } catch {
+    return null
+  }
+  if (!out.includes('|')) return null
   const sep = out.indexOf('|')
   const dir = out.slice(0, sep)
   const logoRel = out.slice(sep + 1)
@@ -94,7 +106,7 @@ function pickUwpVariant(dir: string, logoRel: string): string | null {
 /* ------------------------------------------------------------------ */
 
 /** App Paths 注册表 / 开始菜单 lnk 找 exe */
-function findWin32Exe(shortName: string): string | null {
+async function findWin32Exe(shortName: string): Promise<string | null> {
   const exeName = `${shortName}.exe`
   // 1) App Paths 注册表（HKLM 与 HKCU 两处）
   for (const root of ['HKLM', 'HKCU']) {
@@ -102,12 +114,12 @@ function findWin32Exe(shortName: string): string | null {
       `$k = '${root}:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\${exeName}'`,
       'if (Test-Path $k) { $v = (Get-ItemProperty $k)."(default)"; if ($v) { Write-Output $v } }'
     ].join('; ')
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      timeout: 10_000,
-      windowsHide: true,
-      encoding: 'utf8'
-    })
-    const p = (r.stdout ?? '').trim()
+    let p = ''
+    try {
+      p = (await runPowerShellRaw(script, 10_000)).stdout
+    } catch {
+      p = ''
+    }
     if (p && existsSync(p)) return p
   }
   // 2) 开始菜单 .lnk 兜底（ProgramData + APPDATA 两处，名字含短名即命中）
@@ -119,12 +131,12 @@ function findWin32Exe(shortName: string): string | null {
     '  if ($lnk) { $t = $sh.CreateShortcut($lnk.FullName).TargetPath; if ($t -and (Test-Path $t)) { Write-Output $t; break } }',
     '}'
   ].join('; ')
-  const r2 = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script2], {
-    timeout: 20_000,
-    windowsHide: true,
-    encoding: 'utf8'
-  })
-  const p2 = (r2.stdout ?? '').trim()
+  let p2 = ''
+  try {
+    p2 = (await runPowerShellRaw(script2, 20_000)).stdout
+  } catch {
+    p2 = ''
+  }
   if (p2 && existsSync(p2)) return p2
   return null
 }
@@ -159,20 +171,16 @@ const EXTRACT_ICON_PS1 = [
   '[Convert]::ToBase64String($m.ToArray())'
 ].join('\n')
 
-function exeIconPng(exePath: string, cacheKey: string): string | null {
+async function exeIconPng(exePath: string, cacheKey: string): Promise<string | null> {
   const png = join(iconDir, `notify-${cacheKey}.png`)
   if (existsSync(png)) return png
   try {
     mkdirSync(iconDir, { recursive: true })
     const ps1 = join(iconDir, 'extract-notify-icon.ps1')
     if (!existsSync(ps1)) writeFileSync(ps1, EXTRACT_ICON_PS1, 'utf8')
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', ps1, '-Target', exePath], {
-      timeout: 8000,
-      windowsHide: true,
-      encoding: 'utf8'
-    })
+    const r = await runPowerShellArgs(['-File', ps1, '-Target', exePath], 8000)
     const b64 = (r.stdout ?? '').trim()
-    if (r.status !== 0 || !b64 || b64.length < 100) return null
+    if (r.code !== 0 || !b64 || b64.length < 100) return null
     writeFileSync(png, Buffer.from(b64, 'base64'))
     return png
   } catch {
@@ -199,32 +207,60 @@ const SYSTEM_EXE_ALIASES: Record<string, string> = {
   )
 }
 
-/** 解析 AUMID 短名对应的图标 PNG 绝对路径；解析失败返回 null（带失败缓存不再重试） */
-export function appIcon(shortName: string): string | null {
-  if (iconDir === '') return null
-  if (resolved.has(shortName)) return resolved.get(shortName) ?? null
+/** 文件缓存路径（与历史实现完全一致，老用户的缓存图继续命中） */
+function cachedPngPath(shortName: string): string {
+  return join(iconDir, `notify-${shortName}.png`)
+}
+
+/**
+ * **同步**查图标：只查内存表与磁盘缓存，**永不起进程**。
+ * 给「渲染通知列表」这种不能等的路径用；没有就返回 null（界面显示文字徽标），
+ * 需要图的短名交给 `ensureAppIcon()` 后台补。
+ */
+export function appIconCached(shortName: string): string | null {
+  if (iconDir === '' || !shortName) return null
+  const got = resolved.get(shortName)
+  if (got !== undefined) return got
   if (failed.has(shortName)) return null
+  // 自家灵动岛：项目自带图标
+  if (shortName === 'lingdong-island') {
+    const mine = join(__dirname, '../../build/icon.png')
+    if (existsSync(mine)) {
+      resolved.set(shortName, mine)
+      return mine
+    }
+  }
+  const cached = cachedPngPath(shortName)
+  if (existsSync(cached)) {
+    resolved.set(shortName, cached)
+    return cached
+  }
+  return null
+}
+
+/**
+ * 真正解析一个短名（异步，可能起 1–4 个 PowerShell）。
+ * 只在后台队列里被调用，绝不在 IPC / 渲染路径上同步等待。
+ */
+async function resolveIcon(shortName: string): Promise<string | null> {
+  if (iconDir === '' || !shortName) return null
 
   let result: string | null = null
 
-  // 0) 自家灵动岛：项目自带图标
+  // 0) 磁盘缓存（上次解析成功过；队列虽已去重，这里仍兜一层并发/重启情况）
+  const cached = cachedPngPath(shortName)
+  if (existsSync(cached)) return cached
+
+  // 0.5) 自家灵动岛：项目自带图标
   if (shortName === 'lingdong-island') {
     const mine = join(__dirname, '../../build/icon.png')
     if (existsSync(mine)) result = mine
   }
 
-  // 1) 先查文件缓存（上次解析成功过）
-  if (result === null) {
-    const cached = join(iconDir, `notify-${shortName}.png`)
-    if (existsSync(cached)) {
-      result = cached
-    }
-  }
-
-  // 1.5) 已知系统应用别名：短名与 exe 对不上时直接指向系统自带 exe（省掉 UWP 无效扫描）
+  // 1) 已知系统应用别名：短名与 exe 对不上时直接指向系统自带 exe（省掉 UWP 无效扫描）
   if (result === null && SYSTEM_EXE_ALIASES[shortName]) {
     const exe = SYSTEM_EXE_ALIASES[shortName]
-    if (existsSync(exe)) result = exeIconPng(exe, shortName)
+    if (existsSync(exe)) result = await exeIconPng(exe, shortName)
   }
 
   // 2) UWP：短名即 AUMID 去 !App 段（ScreenSketch_8wekyb3d8bbwe!App → ScreenSketch_8wekyb3d8bbwe）。
@@ -234,17 +270,17 @@ export function appIcon(shortName: string): string | null {
   if (result === null && (shortName.includes('_') || /^[A-Z]/.test(shortName))) {
     // 去掉 publisher hash 后缀：短名形如 <包名>_<哈希>（哈希段固定 13 位 alnum 或带 . 前缀段）
     const stem = shortName.replace(/_[0-9a-zA-Z]{8,20}$/, '')
-    const logo = findUwpLogo(stem)
+    const logo = await findUwpLogo(stem)
     if (!logo && stem !== shortName) {
       // 截断后还匹配不到就退回全短名试一次
-      const alt = findUwpLogo(shortName)
+      const alt = await findUwpLogo(shortName)
       if (alt) {
         const png = pickUwpVariant(alt.dir, alt.logoRel)
         if (png) {
           try {
             mkdirSync(iconDir, { recursive: true })
-            writeFileSync(join(iconDir, `notify-${shortName}.png`), readFileSync(png))
-            result = join(iconDir, `notify-${shortName}.png`)
+            writeFileSync(cachedPngPath(shortName), readFileSync(png))
+            result = cachedPngPath(shortName)
           } catch {
             result = png
           }
@@ -255,8 +291,8 @@ export function appIcon(shortName: string): string | null {
       if (png) {
         try {
           mkdirSync(iconDir, { recursive: true })
-          writeFileSync(join(iconDir, `notify-${shortName}.png`), readFileSync(png))
-          result = join(iconDir, `notify-${shortName}.png`)
+          writeFileSync(cachedPngPath(shortName), readFileSync(png))
+          result = cachedPngPath(shortName)
         } catch {
           result = png // 缓存失败就直接用原路径
         }
@@ -266,22 +302,67 @@ export function appIcon(shortName: string): string | null {
 
   // 3) Win32：App Paths / 开始菜单 lnk → exe → SHGetFileInfo
   if (result === null) {
-    const exe = findWin32Exe(shortName)
-    if (exe) {
-      result = exeIconPng(exe, shortName)
-    }
+    const exe = await findWin32Exe(shortName)
+    if (exe) result = await exeIconPng(exe, shortName)
   }
 
-  if (result) {
-    resolved.set(shortName, result)
-    return result
-  }
-  failed.add(shortName)
-  return null
+  return result
 }
 
-/** setup 时初始化缓存目录；早于 setup 的调用返回 null */
-export function initIconCache(): void {
+/* ------------------------------------------------------------------ */
+/* 后台队列：一次只解析一个，完成即回调                                  */
+/* ------------------------------------------------------------------ */
+
+const queue: string[] = []
+const queued = new Set<string>()
+let pumping = false
+
+/**
+ * 把「还没有图标的短名」排进后台队列。
+ * 已解析过 / 已失败过 / 已在队列里的直接跳过（失败也会进 `failed`，不会无限重试）。
+ */
+export function ensureAppIcon(shortName: string): void {
+  if (iconDir === '' || !shortName) return
+  if (resolved.has(shortName) || failed.has(shortName) || queued.has(shortName)) return
+  queued.add(shortName)
+  queue.push(shortName)
+  void pump()
+}
+
+async function pump(): Promise<void> {
+  if (pumping) return
+  pumping = true
+  try {
+    while (queue.length > 0) {
+      const name = queue.shift() as string
+      queued.delete(name)
+      let png: string | null = null
+      try {
+        png = await resolveIcon(name)
+      } catch {
+        png = null
+      }
+      if (png) resolved.set(name, png)
+      else failed.add(name)
+      try {
+        onIconResolved?.(name, png)
+      } catch {
+        /* 回调异常不影响后续解析 */
+      }
+    }
+  } finally {
+    pumping = false
+  }
+}
+
+/** 是否已经解析过（成功或失败）——调用方据此决定要不要再排队 */
+export function isAppIconSettled(shortName: string): boolean {
+  return resolved.has(shortName) || failed.has(shortName)
+}
+
+/** setup 时初始化缓存目录；回调在每张图解析完成时触发（可能成功也可能失败） */
+export function initIconCache(onResolved?: IconListener): void {
   iconDir = join(app.getPath('userData'), 'icon-cache')
   mkdirSync(iconDir, { recursive: true })
+  onIconResolved = onResolved ?? null
 }

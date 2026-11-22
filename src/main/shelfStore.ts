@@ -1,7 +1,7 @@
 import { app, ipcMain } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, mkdirSync as mkDir } from 'node:fs'
 import { basename, join, extname } from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { runPowerShellArgs } from './runPs'
 import type { ShelfItem } from '../shared/types'
 
 export type { ShelfItem }
@@ -87,7 +87,29 @@ const EXTRACT_ICON_PS1 = [
   '[Convert]::ToBase64String($m.ToArray())'
 ].join('\n')
 
-function systemIconPng(ext: string, realPath: string | null): string | null {
+/** 同一 cacheKey 正在解析时共用同一个 Promise：一页 10 个 .exe 不会同时起 10 个 PowerShell */
+const iconPending = new Map<string, Promise<string | null>>()
+
+/**
+ * 提图标串行化：一页可能有 10 种不同扩展名，并行就是 10 个 PowerShell 同时在跑
+ * （每个约 40–60 MB 的 CLR）。串行只是让后面的图标晚几百毫秒出现，界面先有 SVG 占位。
+ */
+let queueTail: Promise<unknown> = Promise.resolve()
+function runSerial<T>(job: () => Promise<T>): Promise<T> {
+  const run = queueTail.then(job, job)
+  queueTail = run.catch(() => {})
+  return run
+}
+
+/**
+ * 取系统图标并转 PNG 缓存（**异步**）。
+ *
+ * 2026-11-22 改异步（SPEC-perf-no-sync-ps）：旧实现是 `spawnSync`，一次 280–600 ms，
+ * 期间主进程整个冻结。它挂在「切到置物架页 → 每个条目请求图标」这条路上，
+ * 每种新扩展名第一次都要卡一下，且会让同期的窗口尺寸动画停住。
+ * 现在改成异步：界面先显示 SVG 折角纸片，PNG 就绪后自然替换（FileIcon 本来就按状态渲染）。
+ */
+function systemIconPng(ext: string, realPath: string | null): Promise<string | null> {
   // 目标真实存在（文件或文件夹）就直接用它的路径取图标；否则造样本文件
   let target: string | null = null
   if (realPath) {
@@ -107,35 +129,37 @@ function systemIconPng(ext: string, realPath: string | null): string | null {
   }
   const key = isFolder ? '_folder' : ext ? ext.toLowerCase() : '._none'
   const png = join(iconDir, `${key.replace(/[^a-z0-9._-]/gi, '_')}.png`)
-  if (existsSync(png)) return png
-  try {
-    mkDir(iconDir, { recursive: true })
-    const ps1 = join(iconDir, 'extract-icon.ps1')
-    if (!existsSync(ps1)) writeFileSync(ps1, EXTRACT_ICON_PS1, 'utf8')
-    let usePath = target
-    if (!usePath) {
-      // 样本文件：放临时目录，用扩展名让系统图标表命中
-      const sampleDir = join(iconDir, 'samples')
-      mkDir(sampleDir, { recursive: true })
-      usePath = join(sampleDir, `sample${ext || '.unknownreax'}`)
-      if (!existsSync(usePath)) writeFileSync(usePath, '', 'utf8')
-    }
-    const r = spawnSync(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-File', ps1, '-Target', usePath],
-      {
-        timeout: 8000,
-        windowsHide: true,
-        encoding: 'utf8'
+  if (existsSync(png)) return Promise.resolve(png)
+  const running = iconPending.get(key)
+  if (running) return running
+
+  const task = runSerial(async (): Promise<string | null> => {
+    try {
+      mkDir(iconDir, { recursive: true })
+      const ps1 = join(iconDir, 'extract-icon.ps1')
+      if (!existsSync(ps1)) writeFileSync(ps1, EXTRACT_ICON_PS1, 'utf8')
+      let usePath = target
+      if (!usePath) {
+        // 样本文件：放临时目录，用扩展名让系统图标表命中
+        const sampleDir = join(iconDir, 'samples')
+        mkDir(sampleDir, { recursive: true })
+        usePath = join(sampleDir, `sample${ext || '.unknownreax'}`)
+        if (!existsSync(usePath)) writeFileSync(usePath, '', 'utf8')
       }
-    )
-    const b64 = (r.stdout ?? '').trim()
-    if (r.status !== 0 || !b64 || b64.length < 100) return null
-    writeFileSync(png, Buffer.from(b64, 'base64'))
-    return png
-  } catch {
-    return null
-  }
+      const r = await runPowerShellArgs(['-File', ps1, '-Target', usePath], 8000)
+      const b64 = (r.stdout ?? '').trim()
+      if (r.code !== 0 || !b64 || b64.length < 100) return null
+      writeFileSync(png, Buffer.from(b64, 'base64'))
+      return png
+    } catch {
+      return null
+    }
+  }).finally(() => {
+    iconPending.delete(key)
+  })
+
+  iconPending.set(key, task)
+  return task
 }
 
 /**
@@ -214,7 +238,7 @@ export function setupShelfStore(): void {
 
   // 按文件名取系统图标 PNG 的绝对路径；渲染层用 file:// 直接显示。
   // 文件/文件夹真实存在时用真实路径取真实图标（文件夹有黄色夹子图标），否则按扩展名退回
-  ipcMain.handle('shelf:icon', (_e, name: unknown, path: unknown): string | null => {
+  ipcMain.handle('shelf:icon', (_e, name: unknown, path: unknown): Promise<string | null> => {
     const n = String(name ?? '')
     const p = typeof path === 'string' && path ? path : null
     return systemIconPng(extname(n), p)

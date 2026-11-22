@@ -1260,6 +1260,17 @@ function NotifyPanel({
     })
   }, [onUnread, refreshTick]) // refreshTick 变化（展开期间有新消息）→ 重拉列表
 
+  // 图标是主进程后台队列一张张补的（每张要起一次 PowerShell，不能再同步做）：
+  // 补完会把带图的整份列表推过来，这里直接套用——不重拉 IPC、不重放淡入、不动已读水位。
+  useEffect(() => {
+    return window.island.onNotifyIconsUpdated((r: NotifyListResult) => {
+      setItems(r.items)
+      setLastOrder(r.lastOrder ?? 0)
+      onUnread(r.unread)
+      setLoaded(true)
+    })
+  }, [onUnread])
+
   useEffect(() => {
     const id = window.setInterval(() => tickNow((n) => n + 1), 30_000)
     return () => window.clearInterval(id)
@@ -3307,8 +3318,14 @@ export default function App(): React.JSX.Element {
     window.island.openSettings('general')
   }
 
-  // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 15 秒兜底刷新
+  // 电量与 Wi-Fi：首取 + 主进程推送（插拔电源即时刷新）+ 每 60 秒兜底刷新
   // （2026-11-19：原来 60 秒一次，用户断网后最多要等一分半才看到图标）
+  //
+  // **2026-11-22 改（SPEC-perf-no-sync-ps）**：删掉「每次 pointerdown 顺手拉一次」与 15 秒轮询。
+  // 主进程那条状态读取是 PowerShell（本机 830–925 ms），旧实现还是 spawnSync ——
+  // 所以「岛里任何一次点击」都可能把整个主进程冻住约 1 秒，用户观感就是「点一下切换就卡」。
+  // 实时性现在靠事件：主进程 powerMonitor 插拔电源/休眠恢复会推、TCP 探针翻转会推、
+  // 这里的 online/offline 也会强制重读；60 秒轮询只当兵底。
   useEffect(() => {
     let alive = true
     const apply = (s: { battery: number | null; charging: boolean; wifi: WifiSnapshot | null }): void => {
@@ -3327,7 +3344,7 @@ export default function App(): React.JSX.Element {
       if (alive) apply(s)
     })
     // 系统网络切换（Chromium online/offline、NetworkInformation change）时立刻强制重读，
-    // 不等 15 秒轮询；主进程另有 TCP 探针兜住「连着网但上不了网」这种不发 online 事件的情况。
+    // 不等轮询；主进程另有 TCP 探针兜住「连着网但上不了网」这种不发 online 事件的情况。
     const refresh = (): void => {
       void window.island.statusRefresh().then((s) => {
         if (alive) apply(s)
@@ -3337,15 +3354,11 @@ export default function App(): React.JSX.Element {
     window.addEventListener('offline', refresh)
     const conn = (navigator as Navigator & { connection?: EventTarget }).connection
     conn?.addEventListener?.('change', refresh)
-    // 点岛/展开时顺手拉一次：用户刚断网、马上点开看状态时不必等下一个轮询周期
-    // （capture 阶段监听，不干扰各页面自己的点击处理）
-    window.addEventListener('pointerdown', pull, true)
     pull()
-    const id = window.setInterval(pull, 15_000)
+    const id = window.setInterval(pull, 60_000)
     return () => {
       alive = false
       window.clearInterval(id)
-      window.removeEventListener('pointerdown', pull, true)
       window.removeEventListener('online', refresh)
       window.removeEventListener('offline', refresh)
       conn?.removeEventListener?.('change', refresh)

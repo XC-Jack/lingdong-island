@@ -488,6 +488,20 @@ const api = {
   onNotifyArrived(cb: (item: NotifyItem) => void): void {
     ipcRenderer.on('island:notify-arrived', (_e, item: NotifyItem) => cb(item))
   },
+  /**
+   * 通知图标后台补齐后推送整份列表（SPEC-perf-no-sync-ps）。
+   *
+   * 图标解析会起 PowerShell，旧实现是同步的，切到通知页就冻一下；现在拆成后台队列，
+   * 列表先出来（缺图的显示文字徽标），补完再推一份带图的新列表。渲染层直接套用，
+   * 不重新拉 IPC、不重放淡入、不动已读水位。
+   */
+  onNotifyIconsUpdated(cb: (r: NotifyListResult) => void): () => void {
+    const handler = (_e: unknown, r: NotifyListResult): void => cb(r)
+    ipcRenderer.on('island:notify-icons-updated', handler)
+    return () => {
+      ipcRenderer.removeListener('island:notify-icons-updated', handler)
+    }
+  },
   /** 横幅显示/隐藏时通知主进程：收起态窗口只有胶囊高，横幅期主进程向上加高窗口，否则横幅渲染在窗口外看不见 */
   setBannerVisible(visible: boolean): void {
     ipcRenderer.send('island:set-banner-visible', visible)
