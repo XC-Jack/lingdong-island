@@ -218,6 +218,15 @@ try {
       JSON.stringify(pc?.order) === JSON.stringify(DEFAULT_ORDER),
       `实际 ${JSON.stringify(pc?.order)}`)
     ok('R2c 缺 bell 键时视为开启', pc?.collapsed?.bell === true, `实际 ${JSON.stringify(pc?.collapsed)}`)
+    // 电量是异步读的（2026-11-22 起，SPEC-perf-no-sync-ps）：首次启动要多等约 1 秒才出环，
+    // 这里按「元素出现」等，而不是按固定时间读；断言的仍然是顺序。
+    {
+      const t0 = Date.now()
+      while (Date.now() - t0 < 8000) {
+        if (await cdpEval(`!!document.querySelector('.head-battery-ring')`)) break
+        await sleep(250)
+      }
+    }
     const rendered = await cdpEval(READ_ORDER)
     ok('R2d 旧偏好下电量排在岛仔前（默认顺序生效）',
       rendered.indexOf('battery') !== -1 && rendered.indexOf('battery') < rendered.indexOf('pet'),

@@ -66,6 +66,9 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let expanded = false
 let tweenTimer: NodeJS.Timeout | null = null
+/** 补间的起点矩形与起始时刻（每帧从起点插值到「当前」目标） */
+let tweenFrom: Electron.Rectangle | null = null
+let tweenStart = 0
 /** US-041 手动隐藏标志（菜单文案切换用；真实状态机在 fullscreenWatch.ts） */
 let manualHide = false
 
@@ -181,45 +184,74 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
   }
 }
 
-/** 缓动到目标矩形。Windows 不支持原生窗口动画，这里手动补间 */
+/**
+ * 缓动到目标矩形。Windows 不支持原生窗口动画，这里手动补间（SPEC-island-window-resize）。
+ *
+ * 只有「展开 / 收起」这种整岛形态变化走这里；页面切换引起的内容尺寸变化走
+ * `applyBoundsNow()`，一次到位 —— 以前那种也补间 500 ms 的做法，一次切页要连续改
+ * 9–19 次窗口尺寸，透明置顶窗口每次都要重新合成，弱 GPU 机器上就是半秒顿。
+ *
+ * 帧间隔 16 ms（≈60fps）：原来是 8 ms，125 fps 对任何显示器都没有意义，纯粹让
+ * `setBounds` 次数翻倍。
+ *
+ * 目标尺寸每帧现算（`computeBounds`）：补间途中内容尺寸被上报时，剩下的帧会自然
+ * 拐向新尺寸，不会先长过头、再在收尾时跳回来。
+ */
 function animateTo(isExpanded: boolean): void {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
 
+  expanded = isExpanded
+  // 起点固定成「这次补间开始时的窗口矩形」
+  tweenFrom = win.getBounds()
+  tweenStart = Date.now()
+  if (tweenTimer) return // 已在补间：换起点与计时即可，沿用同一个定时器
+  tweenTimer = setInterval(tweenTick, 16)
+  tweenTick()
+}
+
+/** 补间的一帧：从 tweenFrom 到当前目标矩形，easeOutCubic */
+function tweenTick(): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) {
+    if (tweenTimer) clearInterval(tweenTimer)
+    tweenTimer = null
+    return
+  }
+  const from = tweenFrom ?? win.getBounds()
+  const to = computeBounds(expanded)
+  const t = Math.min(1, (Date.now() - tweenStart) / TWEEN_MS)
+  const e = 1 - Math.pow(1 - t, 3)
+  win.setBounds({
+    x: Math.round(from.x + (to.x - from.x) * e),
+    y: Math.round(from.y + (to.y - from.y) * e),
+    width: Math.round(from.width + (to.width - from.width) * e),
+    height: Math.round(from.height + (to.height - from.height) * e)
+  })
+  if (t >= 1) {
+    if (tweenTimer) clearInterval(tweenTimer)
+    tweenTimer = null
+    tweenFrom = null
+    win.setBounds(computeBounds(expanded))
+  }
+}
+
+/**
+ * 直接把窗口放到目标矩形，不做补间（SPEC-island-window-resize）。
+ *
+ * 用在「内容尺寸变了」这条路上（切页、各页高度不同）：内容尺寸变化不需要动画，
+ * 岛自己已经有 220 ms 的 CSS 过渡，窗口跟上就行。
+ */
+function applyBoundsNow(isExpanded: boolean): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
   if (tweenTimer) {
     clearInterval(tweenTimer)
     tweenTimer = null
   }
-
+  tweenFrom = null
   expanded = isExpanded
-  const from = win.getBounds()
-  const to = computeBounds(isExpanded)
-  const start = Date.now()
-
-  tweenTimer = setInterval(() => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      if (tweenTimer) clearInterval(tweenTimer)
-      tweenTimer = null
-      return
-    }
-
-    const t = Math.min(1, (Date.now() - start) / TWEEN_MS)
-    // easeOutCubic
-    const e = 1 - Math.pow(1 - t, 3)
-
-    mainWindow.setBounds({
-      x: Math.round(from.x + (to.x - from.x) * e),
-      y: Math.round(from.y + (to.y - from.y) * e),
-      width: Math.round(from.width + (to.width - from.width) * e),
-      height: Math.round(from.height + (to.height - from.height) * e)
-    })
-
-    if (t >= 1) {
-      if (tweenTimer) clearInterval(tweenTimer)
-      tweenTimer = null
-      mainWindow?.setBounds(to)
-    }
-  }, 8)
+  win.setBounds(computeBounds(isExpanded))
 }
 
 function createWindow(): void {
@@ -479,6 +511,12 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   collapsedWidth = next
   // 只在收起态时立即应用（展开态下次收起时自然生效）
   if (!expanded && mainWindow && !mainWindow.isDestroyed()) {
+    // 收起补间正在跑：不能在这里抢一次 setBounds（会先瞬移到收起尺寸再被补间拉回去，
+    // 实测序列里出现过 174→163→146→76→136 这种闪一下）；从当前位置重起补间即可收敛。
+    if (tweenTimer) {
+      animateTo(false)
+      return
+    }
     mainWindow.setBounds(computeBounds(false))
   }
 })
@@ -504,7 +542,14 @@ ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
   expandedSize = next
   // 只在展开态时立即应用（收起态下次展开时自然生效）
   if (expanded && mainWindow && !mainWindow.isDestroyed()) {
-    animateTo(true)
+    // 展开补间正在跑（刚展开时报上来的真实尺寸，常和记住的上次尺寸不同）：
+    // 从当前位置重新起补间，而不是每帧朝旧目标插值 —— 后者会先长过头再缩回来，
+    // 实测出现过 78→…→164→142→…→188 这种「先大后小」的抖动。重起是单调的。
+    if (tweenTimer) {
+      animateTo(true)
+      return
+    }
+    applyBoundsNow(true)
   }
 })
 
