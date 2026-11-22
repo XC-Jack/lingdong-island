@@ -323,6 +323,11 @@ export function setupStatus(): void {
   // 渲染层收到系统 online/offline 事件时强制重读（不等缓存/轮询）
   ipcMain.handle('status:refresh', (): Promise<StatusSnapshot> => refreshAndBroadcast())
 
+  // 启动就预热一次（异步、不等）：状态读要 ~1 秒（PowerShell），
+  // 等渲染层挂载后再问就要再多等一轮。这里先跑起来，岛的首次 statusSnapshot
+  // 会共享这次在途读（单飞），电量/网络图标出现得更早（实测 2.2s → 1.2s）。
+  void refreshAndBroadcast()
+
   // 插拔电源：先用事件方向当场翻转颜色并广播，再延迟补读百分比与 Wi-Fi
   powerMonitor.on('on-ac', () => applyPowerEvent(true))
   powerMonitor.on('on-battery', () => applyPowerEvent(false))
