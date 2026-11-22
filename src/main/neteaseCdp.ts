@@ -415,7 +415,9 @@ let runningCache = { at: 0, value: false }
  * 2 秒缓存：自动开启靠它发现「刚被普通方式拉起」的网易云，缓存太长会白等。
  */
 export async function isNeteaseRunning(): Promise<boolean> {
-  if (Date.now() - runningCache.at < 2000) return runningCache.value
+  // 缓存 6 秒（原 2 秒）：这个判定每次都要 spawn 一次 tasklist.exe，而 CDP 轮询
+  // 空闲档是 5 秒一档（SPEC-idle-cost-reclaim），2 秒缓存等于每次都真去 spawn。
+  if (Date.now() - runningCache.at < 6000) return runningCache.value
   let value = false
   try {
     const out = await new Promise<string>((resolve, reject) => {

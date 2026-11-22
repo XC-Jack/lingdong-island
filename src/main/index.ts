@@ -485,6 +485,9 @@ ipcMain.on('island:set-expanded', (_event, value: boolean) => {
 // 2026-11-22 改异步（SPEC-perf-no-sync-ps）：旧版用 appendFileSync，每次窗口失焦/收起
 // 都在主线程上等一次磁盘 I/O。探针本身要留，但不应该参与「点一下就卡」的体感。
 function appendDiagLog(line: string): void {
+  // 生产版不写（SPEC-idle-cost-reclaim）：这是 US-036「打字时岛自己收起」的排障探针，
+  // 2026-11-19 已定位收口。它挂在每次窗口失焦/收起上，留着只会让用户数据目录常年增长。
+  if (app.isPackaged) return
   try {
     const fs = require('node:fs') as typeof import('node:fs')
     const path = require('node:path') as typeof import('node:path')

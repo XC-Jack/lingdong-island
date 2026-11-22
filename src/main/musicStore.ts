@@ -37,8 +37,23 @@ import type { MusicCommand, MusicSource, MusicState, NeteaseCdpMode } from '../s
  */
 
 const POLL_MS = 1000
+/**
+ * 空闲档的轮询间隔（SPEC-idle-cost-reclaim）。
+ *
+ * 原来 CDP 那条定时器不论有没有人在用音乐页都每秒跑一次，而它对 `isNeteaseRunning()`
+ * 的判定要 spawn 一次 `tasklist.exe`（缓存 2 秒）—— 等于**每 2 秒起一个子进程**。
+ * 没人在用音乐页时完全没必要：自动开调试端口只需要「持续看到」这个条件，5 秒粒度足够。
+ */
+const IDLE_POLL_MS = 5000
 /** 子进程无响应超时：超过这个时间没有任何回包就重拉，避免界面卡死在旧数据上 */
 const STALE_MS = 5000
+/**
+ * 桥接「有人在用」的截止时刻。音乐桥是常驻 PowerShell + WinRT：
+ * 实测 RSS 116.3 MB、40 秒烧 1.77 s CPU（≈4.4% 单核），而它**只在音乐页/音源选择时需要**。
+ * 以前打开过一次音乐页就永不回收；现在离开 2 分钟没需求就 kill，再进页面重新拉起（1–2 秒）。
+ */
+const BRIDGE_IDLE_MS = 120_000
+let bridgeDemandUntil = 0
 
 /**
  * 网易云自动开启调试端口（SPEC-netease-auto-cdp）。
@@ -629,9 +644,22 @@ async function pollCdp(): Promise<void> {
   }
 }
 
+/** 这次轮询该隔多久再跑：有人在用（音乐页开着 / 已有 CDP 会话）1 秒，否则 5 秒 */
+function cdpInterval(): number {
+  const busy = Date.now() < bridgeDemandUntil || cdpState !== null
+  return busy ? POLL_MS : IDLE_POLL_MS
+}
+
 function startCdp(): void {
   if (cdpTimer !== null) return
+  // 用固定 1 秒的节拍 + 门控，不按档位重建定时器：档位随时会变（进/出音乐页），
+  // 重建定时器容易出现「刚清掉又建」的竞态，门控只读一个时间戳。
+  let nextAt = 0
   cdpTimer = setInterval(() => {
+    const now = Date.now()
+    if (now < nextAt) return
+    nextAt = now + cdpInterval()
+    reclaimIdleBridge()
     void pollCdp()
   }, POLL_MS)
   void pollCdp()
@@ -778,6 +806,27 @@ async function applyControl(cmd: MusicCommand): Promise<boolean> {
   return true
 }
 
+/** 续期「有人在用桥接」的窗口（页面挂载、控制、取数都算用） */
+function touchBridgeDemand(): void {
+  bridgeDemandUntil = Date.now() + BRIDGE_IDLE_MS
+}
+
+/**
+ * 空闲回收：桥接在跑、但已经超过 `BRIDGE_IDLE_MS` 没人来要数据 → 杀掉。
+ * 由已有的 1 秒 CDP 定时器顺带检查，不新增定时器。
+ */
+function reclaimIdleBridge(): void {
+  if (child === null || stopping) return
+  if (Date.now() <= bridgeDemandUntil) return
+  killBridge()
+  // 清掉残留状态并广播：此时页面不在音乐页，用户看不到跳变；
+  // 再进音乐页会走 music:get → 重新拉起桥接。
+  bridgeState = { ...EMPTY_STATE }
+  cache = { ...EMPTY_STATE }
+  recompute()
+  startupLog('[music] 桥接空闲超过 ' + Math.round(BRIDGE_IDLE_MS / 1000) + ' 秒，已回收（释放约 116 MB）')
+}
+
 /** 杀掉子进程并清掉轮询（重启时也走这里） */
 function killBridge(): void {
   if (pollTimer !== null) {
@@ -915,13 +964,29 @@ export function setupMusicStore(): void {
 
   ipcMain.handle('music:get', (): MusicState => {
     // 首次调用（用户翻到音乐页）时懒启动子进程，避免没人用音乐页也常驻 50MB
+    // 并续期「有人在用」，否则它会在 2 分钟后被空闲回收（SPEC-idle-cost-reclaim）
+    touchBridgeDemand()
     startBridge()
     startCdp()
     return cache
   })
 
+  /**
+   * 音乐页挂载/卸载时上报（SPEC-idle-cost-reclaim）。
+   * true：页面在，续期 + 确保桥接在跑；false：页面走了，停止续期——2 分钟后空闲回收。
+   * 不在 false 时立刻 kill：来回切页会反复拉起/杀掉 116 MB 的子进程，得不偿失。
+   */
+  ipcMain.on('music:demand', (_e, on: unknown) => {
+    touchBridgeDemand()
+    if (on === true) {
+      startBridge()
+      startCdp()
+    }
+  })
+
   ipcMain.handle('music:control', async (_e, cmd: unknown): Promise<boolean> => {
     if (!isValidCommand(cmd)) return false
+    touchBridgeDemand()
     return applyControl(cmd)
   })
 
@@ -936,6 +1001,7 @@ export function setupMusicStore(): void {
     } else if (exe !== null && exe !== undefined) {
       return cache
     }
+    touchBridgeDemand()
     startBridge()
     if (next === '') {
       patchPrefs({ musicSourcePin: '' })
@@ -968,6 +1034,7 @@ export function setupMusicStore(): void {
 /** 退出时收摊（与 stopStatus / stopNotifyStore 同型） */
 export function stopMusicStore(): void {
   stopping = true
+  bridgeDemandUntil = 0
   killBridge()
   if (cdpTimer !== null) {
     clearInterval(cdpTimer)
