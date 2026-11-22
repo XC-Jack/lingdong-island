@@ -2349,12 +2349,16 @@ function MusicPanel({
   // 首帧先取一次快照（同时让主进程懒启动桥接），之后靠推送
   useEffect(() => {
     let alive = true
+    // 告诉主进程「音乐页在用」：它据此给桥接子进程续期（SPEC-idle-cost-reclaim）。
+    // 离开音乐页后不再续期，2 分钟没需求主进程就回收那个 116 MB 的常驻 PowerShell。
+    window.island.musicDemand(true)
     void window.island.musicGet().then((s) => {
       if (alive) setMusic(s)
     })
     const off = window.island.onMusicState((s) => setMusic(s))
     return () => {
       alive = false
+      window.island.musicDemand(false)
       off()
     }
   }, [])

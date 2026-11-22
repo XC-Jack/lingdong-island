@@ -464,6 +464,14 @@ const api = {
   filePath(file: File): string {
     return webUtils.getPathForFile(file)
   },
+  /**
+   * 音乐页挂载/卸载时上报「有没有人在用」（SPEC-idle-cost-reclaim）。
+   * 主进程靠它算桥接子进程的空闲期：离开音乐页 2 分钟没需求就回收那 116 MB 的常驻 PowerShell。
+   * 只在音乐页（MusicPanel）里调，收起态/其它页面不调。
+   */
+  musicDemand(on: boolean): void {
+    ipcRenderer.send('music:demand', on)
+  },
   /** 通知页：最近通知列表 + 未读数 */
   notifyList(): Promise<NotifyListResult> {
     return ipcRenderer.invoke('notify:list')
