@@ -137,6 +137,11 @@ body {
   /* 2026-11-16 用户 m03988「两边有点多余，去除掉」：24→16。内容区宽度反而 +16，
      配合上面 min-width 380→340，视觉岛宽 285→255，两侧空白各少约 11 视觉 px。 */
   padding: 20px 16px;
+  /* 浮层撑高补偿（SPEC-island-popover-clip，2026-11-22）：岛内弹层是绝对定位，
+     不参与内容高度，越过岛底就被 overflow:hidden 裁掉、还落在窗口外点不到。
+     popFit.ts 打开浮层时把「超出量」写进 --pop-extra，这里把岛撑高，窗口随之变大。
+     关闭浮层时变量被清掉，这一项回到 20px。 */
+  padding-bottom: calc(20px + var(--pop-extra, 0px));
   display: flex;
   flex-direction: column;
 }

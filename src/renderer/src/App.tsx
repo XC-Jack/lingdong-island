@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState } from '../../shared/types'
 import Pet from './pet/Pet'
+import { fitIslandToPopover } from './popFit'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -403,6 +404,13 @@ function TodoPanel({
     return () => document.removeEventListener('mousedown', onDown)
   }, [timePop])
 
+  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
+  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  useEffect(() => {
+    if (!timePop) return
+    return fitIslandToPopover(timePopRef.current)
+  }, [timePop])
+
   // 只取今天（本地日期）的日程：明天的、昨天的一律不进来
   const today = localDayKey()
   const todayItems = items.filter((it) => it.day === today)
@@ -797,6 +805,12 @@ function ShelfPanel(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 视图选择菜单容器：开着时点外面自动收起 */
   const viewPopRef = useRef<HTMLSpanElement>(null)
+  /** 菜单本体（绝对定位浮层）：打开时让岛为它让出高度，否则后两项落在窗口外点不到 */
+  const viewPopEl = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!viewPop) return
+    return fitIslandToPopover(viewPopEl.current)
+  }, [viewPop])
   useEffect(() => {
     if (!viewPop) return
     const onDown = (e: MouseEvent): void => {
@@ -984,7 +998,7 @@ function ShelfPanel(): React.JSX.Element {
             {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
           </button>
           {viewPop && (
-            <span className="shelf-view-pop" role="menu" aria-label="选择视图">
+            <span className="shelf-view-pop" role="menu" aria-label="选择视图" ref={viewPopEl}>
               {([
                 ['lg', '大图标', <IcoGrid />],
                 ['md', '中图标', <IcoGridMd />],
@@ -1623,6 +1637,13 @@ function SchedulePanel(): React.JSX.Element {
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
+  }, [timePop])
+
+  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
+  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  useEffect(() => {
+    if (!timePop) return
+    return fitIslandToPopover(timePopRef.current)
   }, [timePop])
 
   const add = useCallback(() => {
@@ -3157,7 +3178,10 @@ export default function App(): React.JSX.Element {
         }
       }, 80)
     })
-    ro.observe(el)
+    // **必须观测 border-box**（2026-11-22，SPEC-island-popover-clip）：默认的 content-box
+    // 在「只改 padding」时不触发，而 popFit.ts 让岛为弹层让出高度用的正是 padding-bottom ——
+    // 结果是岛长高了、窗口没跟上，弹层照样被窗口裁掉。窗口尺寸本来就该跟岛的**外框**走。
+    ro.observe(el, { box: 'border-box' })
     return () => {
       if (timer !== null) window.clearTimeout(timer)
       ro.disconnect()
