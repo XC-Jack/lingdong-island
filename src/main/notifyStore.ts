@@ -1,9 +1,9 @@
 import { app, ipcMain, shell } from 'electron'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, copyFileSync, rmSync, mkdirSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { appIcon, initIconCache } from './notifyIconStore'
+import { appIconCached, ensureAppIcon, initIconCache } from './notifyIconStore'
 import { getIslandWindow, sendToIsland } from './islandWindowRef'
 
 /**
@@ -136,7 +136,7 @@ function readWpnDatabase(): NotifyItem[] | null {
           id: Number(r.Id),
           order: Number(r.Order),
           app: app_,
-          icon: appIcon(app_),
+          icon: appIconCached(app_),
           title: title || '(无标题)',
           body,
           arrival: filetimeToMs(r.arrival),
@@ -192,7 +192,34 @@ async function refresh(): Promise<NotifyItem[]> {
     for (const it of cached) bannerSent.add(it.id)
   }
 
+  // 图标补齐（SPEC-perf-no-sync-ps）：列表先交给界面（缺图的显示文字徽标），
+  // 没图的来源塞进后台队列，一次只解析一个，不在这条路上等任何子进程。
+  for (const it of cached) {
+    if (!it.icon) ensureAppIcon(it.app)
+  }
+
   return cached
+}
+
+/** 图标解析完成后的去抖刷盘：一张图一个通知会把列表重读 50 次，压成一次 */
+let iconFlushTimer: NodeJS.Timeout | null = null
+
+/**
+ * 后台队列解析完一张图标：重读一次列表（图已落盘，这次 sync 查缓存就能命中），
+ * 把带图的新列表推给岛。渲染层直接套用，不重新拉 IPC、不动已读水位。
+ */
+function onIconResolved(): void {
+  if (iconFlushTimer !== null) clearTimeout(iconFlushTimer)
+  iconFlushTimer = setTimeout(() => {
+    iconFlushTimer = null
+    void refresh().then(() => {
+      sendToIsland('island:notify-icons-updated', {
+        items: visibleItems(),
+        unread: unreadCount(),
+        lastOrder: readMark()
+      })
+    })
+  }, 200)
 }
 
 /** 未读/隐藏水位：userData/notif-read.json 记录 {lastOrder, hiddenUntil}
@@ -312,8 +339,21 @@ function openSource(app_: string, launch: string | null): boolean {
       void shell.openExternal(exe)
       return true
     }
-    const child = spawnSync('cmd.exe', ['/d', '/c', 'start', '', exe], { windowsHide: true, timeout: 5000 })
-    return !child.error
+    // 异步起，不阻塞主进程（旧版 spawnSync：点一下要等 cmd.exe 起完）
+    try {
+      const child = spawn('cmd.exe', ['/d', '/c', 'start', '', exe], {
+        windowsHide: true,
+        detached: true,
+        stdio: 'ignore'
+      })
+      child.on('error', () => {
+        /* 起不来就当没打开，用户能自己开 */
+      })
+      child.unref()
+      return true
+    } catch {
+      return false
+    }
   }
   // 兜底：映射不到的应用 → 打开 Windows 通知设置（比"点了没反应"好）
   void shell.openExternal('ms-settings:notifications')
@@ -321,7 +361,8 @@ function openSource(app_: string, launch: string | null): boolean {
 }
 
 export function setupNotifyStore(): void {
-  initIconCache()
+  // 图标解析完成（成功或失败）→ 去抖后重读列表并推给岛
+  initIconCache(() => onIconResolved())
   void refresh()
   pollTimer = setInterval(() => void refresh(), POLL_MS)
   watchDatabase()
@@ -351,6 +392,10 @@ export function stopNotifyStore(): void {
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
+  }
+  if (iconFlushTimer !== null) {
+    clearTimeout(iconFlushTimer)
+    iconFlushTimer = null
   }
   if (dbWatcher) {
     dbWatcher.close()

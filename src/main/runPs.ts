@@ -57,6 +57,44 @@ export function runPowerShellRaw(
   })
 }
 
+/**
+ * 按参数跑 PowerShell（给「必须用 `-File` 落盘脚本」的场景用：图标提取脚本带
+ * `param()` 参数，塞进 `-Command` 需要额外转义，直接用 `-File` 最简单）。
+ *
+ * 与 `runPowerShellRaw()` 一样是异步 + 超时 kill —— 主进程里**不允许**再出现
+ * `spawnSync`：那会让窗口动画、IPC、托盘一起停摆（见 SPEC-perf-no-sync-ps 第〇节实测）。
+ */
+export function runPowerShellArgs(
+  args: string[],
+  timeoutMs = 25_000
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', ...args], {
+      windowsHide: true
+    })
+    let out = ''
+    let err = ''
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error('PowerShell 超时'))
+    }, timeoutMs)
+    child.stdout?.on('data', (d) => {
+      out += d.toString('utf8')
+    })
+    child.stderr?.on('data', (d) => {
+      err += d.toString('utf8')
+    })
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code, stdout: out.trim(), stderr: err.trim() })
+    })
+  })
+}
+
 /** 跑一个普通可执行文件（如 reg.exe），返回 stdout；非 0 退出抛错 */
 export function runCommand(file: string, args: string[], timeoutMs = 25_000): Promise<string> {
   return new Promise((resolve, reject) => {

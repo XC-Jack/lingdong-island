@@ -450,12 +450,16 @@ ipcMain.on('island:set-expanded', (_event, value: boolean) => {
 })
 
 // 诊断日志：追加写 userData/collapse-log.txt（探针，US-036 定位用）
+// 2026-11-22 改异步（SPEC-perf-no-sync-ps）：旧版用 appendFileSync，每次窗口失焦/收起
+// 都在主线程上等一次磁盘 I/O。探针本身要留，但不应该参与「点一下就卡」的体感。
 function appendDiagLog(line: string): void {
   try {
     const fs = require('node:fs') as typeof import('node:fs')
     const path = require('node:path') as typeof import('node:path')
     const file = path.join(app.getPath('userData'), 'collapse-log.txt')
-    fs.appendFileSync(file, `${new Date().toISOString()} ${line}\n`, 'utf8')
+    fs.appendFile(file, `${new Date().toISOString()} ${line}\n`, () => {
+      /* 写失败不影响功能 */
+    })
   } catch {
     /* 探针日志失败不影响功能 */
   }
