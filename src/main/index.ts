@@ -20,7 +20,7 @@ import { closePetWindow, setupPetWindow, syncPetWindow } from './petWindow'
 import { initClipboardWatch } from './clipboardStore'
 import { setIslandWindow } from './islandWindowRef'
 import { setupLocalFileProtocol } from './localFileProtocol'
-import { startupLog } from './startupLog'
+import { startupLog, startupLogSync } from './startupLog'
 import { setupUpdater } from './updater'
 import type { ShelfOpenResult, ShelfRevealResult } from '../shared/types'
 
@@ -353,7 +353,8 @@ function describeEnv(): string {
 
 process.on('uncaughtException', (err) => {
   const detail = err && err.stack ? err.stack : String(err)
-  startupLog('FATAL uncaughtException: ' + detail)
+  // 同步写：这行之后要弹框并 app.exit(1)，异步写会随进程一起消失
+  startupLogSync('FATAL uncaughtException: ' + detail)
   try {
     dialog.showErrorBox(
       '灵动岛启动失败',
