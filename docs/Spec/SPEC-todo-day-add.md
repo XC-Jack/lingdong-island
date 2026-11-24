@@ -66,3 +66,9 @@
 1. 日程当天视图「只有一半太丑」：改成 `top:38px` + `bottom:6px` 铺满月历区域，列表占满剩余高度并自己滚（`.sched-day .sched-list` 解除全局 3 行限高）；岛高保持 254.4。
 2. 置物架 / 通知页「有了消息还没没有小，别老是缩回去了」：给 `.page-fade` 加 `.page-shelf` / `.page-notify` 两个类，`min-height` 分别 87 / 170 布局 px（取空态实测页高），有内容时不再比空态矮。
 3. 验证 [实测]：`typecheck` / `build` 通过；探针：置物架空态与 2 个文件均 255×157.1，通知空态 255×219.2，日程浮层 `top 104.3 / bottom 234.1`、岛 254.4；回归 `e2e-schedule`、`e2e-schedule-day`、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-edit`、`e2e-schedule-scroll` 6/0、`e2e-notify`、`e2e-shelf-view-pref`、`e2e-todo-day-pick` 17/0 全过；`e2e-notify-compact` C1/C2 产品断言通过，收尾 taskkill 128 为脚本既有问题。
+
+## 十、置物架视图菜单改横排（2026-11-24，用户第三次看预览）
+
+1. 用户原话「你置物架没改呀，我点那个切换查看方式就变大了」：上一轮只锁了页面本体高度，没管页面内弹出的菜单。竖排 4 项约 140 布局 px，高于置物架页 87 px，`fitIslandToPopover` 把超出部分写成 `--pop-extra`，岛被撑高。
+2. 改为横排：`.shelf-view-pop` `flex-direction:row`、`gap:2px`、`padding:3px`；`.shelf-view-item` `gap:4px` / `padding:5px 6px` / `font-size:10.5px` / `white-space:nowrap`。同时删除 `ShelfPanel` 中打开菜单时的 `fitIslandToPopover` 调用。
+3. 验证 [实测]：`typecheck` / `build` 通过；探针（`.tmp/page-size-probe.mjs`）三种状态岛均为 255×157.1，菜单盒 22.5–206.7 × 98.3–123.1 在岛内；回归 `e2e-shelf-view-pref`、`e2e-exit-and-shelf-view`、`e2e-shelf-missing` 全过。
