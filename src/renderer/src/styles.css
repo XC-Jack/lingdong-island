@@ -1627,65 +1627,6 @@ body {
   color: var(--ink-1);
 }
 
-/* 当前选中视图：强调色高亮 */
-.shelf-view-btn.active {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent-soft);
-}
-
-/* 视图选择菜单（用户 m02221：点开可选择，而不是循环切换） */
-.shelf-view-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.shelf-view-btn.open {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent-soft);
-}
-.shelf-view-pop {
-  position: absolute;
-  top: 30px;
-  right: 0;
-  z-index: 6;
-  /* 横向一排：竖排四项要 140+ 高，只能靠把岛撑高；横排约 30 高，
-     能塞进置物架页的固定高度里，打开菜单不再改变岛尺寸（2026-11-24 用户反馈）。 */
-  display: flex;
-  flex-direction: row;
-  gap: 2px;
-  min-width: 0;
-  padding: 3px;
-  background: var(--bg-pop);
-  border: 1px solid color-mix(in srgb, var(--ink-1) 10%, transparent);
-  border-radius: 12px;
-  box-shadow: var(--shadow-pop);
-}
-.shelf-view-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 6px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: color-mix(in srgb, var(--ink-1) 85%, transparent);
-  font-size: 10.5px;
-  white-space: nowrap;
-  cursor: pointer;
-  text-align: left;
-}
-.shelf-view-item svg {
-  width: 13px;
-  height: 13px;
-  flex: none;
-}
-.shelf-view-item:hover {
-  background: color-mix(in srgb, var(--ink-1) 8%, transparent);
-}
-.shelf-view-item.picked {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent-soft);
-}
-
 .shelf-drop {
   flex: 0 1 auto;
   max-width: 100%;
@@ -1728,7 +1669,7 @@ body {
   color: var(--ink-3);
 }
 
-/* 网格（图标视图）：横向一排滚动（对照截图），三档大小由 shelf-drop 上的 lg/md/sm 类控制 */
+/* 网格（大图标视图）：横向一排滚动（对照截图），格子大小由 shelf-drop 上的 lg 类控制 */
 .shelf-grid {
   list-style: none;
   padding: 10px;
@@ -1738,7 +1679,7 @@ body {
   gap: 8px;
 }
 
-/* 三档图标大小：格子宽 + 图标本体一起缩（lg 84/40 / md 64/30 / sm 48/22），大小差异要一眼能看出来 */
+/* 大图标：格子宽 + 图标本体（84/40）；中/小图标已按用户要求移除（2026-11-24） */
 .shelf-drop.lg .shelf-cell {
   width: 84px;
 }
@@ -1748,38 +1689,12 @@ body {
   height: 40px;
 }
 
-.shelf-drop.md .shelf-cell {
-  width: 64px;
-}
-
-.shelf-drop.md .shelf-cell-body .shelf-icon {
-  width: 30px;
-  height: 30px;
-}
-
-.shelf-drop.sm .shelf-cell {
-  width: 48px;
-}
-
-.shelf-drop.sm .shelf-cell-body .shelf-icon {
-  width: 22px;
-  height: 22px;
-}
-
-.shelf-drop.sm .shelf-cell-body {
-  padding: 6px 2px 4px;
-}
-
-.shelf-drop.sm .shelf-cell-name {
-  font-size: 10.5px;
-}
-
 /* 横向滚动区：图标视图一排放不下时左右滚。
    max-width 是关键：不限制的话 nowrap 行的自然宽度会把整个岛（width:max-content）撑到 720 上限，
    内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发。
    2026-11-16 用户 m01366「显示太多了，4个最多」：宽度按「正好放下 4 格」算，
    多出来的格子靠左右箭头（首尾循环）和滚轮查看。
-   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ lg 380 / md 300 / sm 236。 */
+   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ 380。 */
 .shelf-hscroll {
   display: flex;
   align-items: center;
@@ -1795,14 +1710,6 @@ body {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-}
-
-.shelf-drop.md .shelf-strip {
-  max-width: 300px;
-}
-
-.shelf-drop.sm .shelf-strip {
-  max-width: 236px;
 }
 
 .shelf-strip::-webkit-scrollbar {

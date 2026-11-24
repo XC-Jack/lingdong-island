@@ -10,7 +10,9 @@ import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
-const SHELF_JSON = join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'lingdong-island', 'shelf.json')
+const DATA_DIR = join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'lingdong-island')
+const SHELF_JSON = join(DATA_DIR, 'shelf.json')
+const PREFS_JSON = join(DATA_DIR, 'prefs.json')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function connect() {
@@ -57,8 +59,9 @@ async function settle(wsUrl, expression, ms = 400) {
 }
 
 const main = async () => {
-  // 备份用户真实数据，测试结束原样恢复
+  // 备份用户真实数据，测试结束原样恢复（切视图会写 prefs.json 的 shelfView）
   const backup = existsSync(SHELF_JSON) ? readFileSync(SHELF_JSON, 'utf8') : null
+  const prefsBackup = existsSync(PREFS_JSON) ? readFileSync(PREFS_JSON, 'utf8') : null
 
   const exe = join(ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
   const env = { ...process.env }
@@ -113,16 +116,14 @@ const main = async () => {
       return 'ok';
     })()`)
 
-    // US-034 起置物架视图会被记住，用户上次若选了「列表」，这里的图标视图断言就不成立。
-    // 所以先在界面上显式切回「大图标」——顺带也验证了视图菜单本身能用。
-    // 切视图会写 localStorage，先把用户原来的选择记下来，脚本末尾还原。
-    await cdp(wsUrl, `(async()=>{
-      window.__shelfViewBackup = localStorage.getItem('island.shelfView');
-      document.querySelector('.shelf-view-btn').click();
-      await new Promise(r=>setTimeout(r,150));
-      document.querySelectorAll('.shelf-view-item')[0].click();
+    // 置物架视图会被记住，用户上次若选了「列表」，这里的图标视图断言就不成立。
+    // 视图按钮现在是切换键（大图标 ⇄ 列表），当前是列表就点一下切回大图标。
+    await cdp(wsUrl, `(()=>{
+      const drop = document.querySelector('.shelf-drop');
+      if (drop.classList.contains('list')) document.querySelector('.shelf-view-btn').click();
       return 'ok';
     })()`)
+    await settle(wsUrl, `(() => document.querySelector('.shelf-drop').classList.contains('lg'))()`, 500)
 
     // A3：图标视图里失效格子有 missing 类 + 「失效」徽标 + 中文 title
     const iconView = await settle(wsUrl, `(()=>{
@@ -192,12 +193,11 @@ const main = async () => {
     await cdp(wsUrl, `(async()=>{
       const l = await window.island.shelfList();
       window.island.emitShelfAdded(l);
-      document.querySelector('.shelf-view-btn').click();
-      await new Promise(r=>setTimeout(r,150));
-      const items = [...document.querySelectorAll('.shelf-view-item')];
-      items[3].click();
+      const drop = document.querySelector('.shelf-drop');
+      if (!drop.classList.contains('list')) document.querySelector('.shelf-view-btn').click();
       return 'ok';
     })()`)
+    await settle(wsUrl, `(() => document.querySelector('.shelf-drop').classList.contains('list'))()`, 500)
     const listView = await settle(wsUrl, `(()=>{
       const miss = document.querySelector('.shelf-item.missing');
       const nameEl = miss?.querySelector('.shelf-name');
@@ -236,16 +236,7 @@ const main = async () => {
     console.log('[A8] 打开失效文件结果:', JSON.stringify(openRes))
     assert(openRes && openRes.ok === false && openRes.reason === 'missing', '打开失效文件应返回 reason=missing')
 
-    // 还原用户原本的视图偏好（本脚本为了断言切过视图，会顺带写 localStorage）
-    await cdp(wsUrl, `(()=>{
-      if (window.__shelfViewBackup === null || window.__shelfViewBackup === undefined) {
-        localStorage.removeItem('island.shelfView');
-      } else {
-        localStorage.setItem('island.shelfView', window.__shelfViewBackup);
-      }
-      return 'ok';
-    })()`)
-
+    // 用户原本的视图偏好由 finally 写回 prefs.json（切视图会落盘 shelfView）
     console.log('E2E SHELF-MISSING PASS')
   } finally {
     try { child.kill() } catch {}
@@ -256,6 +247,13 @@ const main = async () => {
         if (existsSync(SHELF_JSON)) rmSync(SHELF_JSON, { force: true })
       } else {
         writeFileSync(SHELF_JSON, backup, 'utf8')
+      }
+    } catch {}
+    try {
+      if (prefsBackup === null) {
+        if (existsSync(PREFS_JSON)) rmSync(PREFS_JSON, { force: true })
+      } else {
+        writeFileSync(PREFS_JSON, prefsBackup, 'utf8')
       }
     } catch {}
   }

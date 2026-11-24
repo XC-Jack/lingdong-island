@@ -85,7 +85,7 @@ function localDayKey(d: Date = new Date()): string {
 }
 
 /** 置物架视图的四种形态 */
-type ShelfView = 'lg' | 'md' | 'sm' | 'list'
+type ShelfView = 'lg' | 'list'
 
 /** 收起态可裁剪组件的键（与勾选 UI 一一对应） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -329,32 +329,6 @@ const IcoGrid = (): React.JSX.Element => (
     <rect x="13" y="4" width="7" height="7" rx="1.6" />
     <rect x="4" y="13" width="7" height="7" rx="1.6" />
     <rect x="13" y="13" width="7" height="7" rx="1.6" />
-  </IconSvg>
-)
-
-/** 中图标视图（九宫格缺角，与大图标区分） */
-const IcoGridMd = (): React.JSX.Element => (
-  <IconSvg>
-    <rect x="4" y="4" width="6.5" height="6.5" rx="1.4" />
-    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4" />
-    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4" />
-    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4" />
-    <rect x="8.75" y="8.75" width="6.5" height="6.5" rx="1.4" />
-  </IconSvg>
-)
-
-/** 小图标视图（密集点阵，与小图标区分） */
-const IcoGridSm = (): React.JSX.Element => (
-  <IconSvg>
-    <rect x="4" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="4" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="4" y="15.5" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="15.5" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="15.5" width="4.5" height="4.5" rx="1" />
   </IconSvg>
 )
 
@@ -850,7 +824,8 @@ function ShelfPanel(): React.JSX.Element {
   const [notice, setNotice] = useState<{ kind: 'missing' | 'failed'; text: string; removeId?: string } | null>(
     null
   )
-  // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
+  // 视图只有两种（用户 2026-11-24：「就保留大图标和列表，点切换键来切换」）：
+  // 大图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
   // 初值默认「大图标」，mount 后从 prefs.json 异步回填（US-037）——与页面裁剪同为
   // 「先默认后异步回填」的既有模式；localStorage 版跨重启会丢已废弃。
   const [view, setView] = useState<ShelfView>('lg')
@@ -864,7 +839,7 @@ function ShelfPanel(): React.JSX.Element {
       .then((prefs) => {
         if (!alive || viewDirty.current) return
         const v = prefs.shelfView
-        if (v === 'lg' || v === 'md' || v === 'sm' || v === 'list') setView(v)
+        if (v === 'lg' || v === 'list') setView(v)
       })
       .catch(() => {
         /* 读不到就用默认 */
@@ -875,8 +850,6 @@ function ShelfPanel(): React.JSX.Element {
   }, [])
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
-  // 视图选择菜单展开态：点视图按钮弹出四项菜单（大/中/小/列表）
-  const [viewPop, setViewPop] = useState(false)
   // 图标视图横向滚动：是否还有更多内容（决定两侧箭头显隐）
   const [canScroll, setCanScroll] = useState(false)
   /** 正在拖动换位的条目 id（网格内排序用） */
@@ -884,21 +857,6 @@ function ShelfPanel(): React.JSX.Element {
   const reorderSeq = useRef(0)
   /** 图标视图滚动容器 */
   const scrollRef = useRef<HTMLDivElement>(null)
-  /** 视图选择菜单容器：开着时点外面自动收起 */
-  const viewPopRef = useRef<HTMLSpanElement>(null)
-  /** 菜单本体（绝对定位浮层）。2026-11-24 用户「点切换查看方式就变大了」：
-      改成横向一排塞在工具条下方，高度不超过置物架页的固定高度，不再让岛变高，
-      所以这里不再调用 fitIslandToPopover。 */
-  const viewPopEl = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (!viewPop) return
-    const onDown = (e: MouseEvent): void => {
-      if (!viewPopRef.current?.contains(e.target as Node)) setViewPop(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [viewPop])
-
   const updateCanScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) {
@@ -1064,48 +1022,23 @@ function ShelfPanel(): React.JSX.Element {
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length} 个文件</span>
         <span className="shelf-toolbar-spacer" />
-        {/* 视图切换：点开弹四项选择菜单（大/中/小/列表），不是循环切换（用户 m02221 要求可选择） */}
-        <span className="shelf-view-wrap" ref={viewPopRef}>
-          <button
-            type="button"
-            className={`shelf-view-btn ${viewPop ? 'open' : ''}`}
-            title="选择视图"
-            aria-label="选择视图"
-            aria-expanded={viewPop}
-            onClick={() => setViewPop((v) => !v)}
-          >
-            {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
-          </button>
-          {viewPop && (
-            <span className="shelf-view-pop" role="menu" aria-label="选择视图" ref={viewPopEl}>
-              {([
-                ['lg', '大图标', <IcoGrid />],
-                ['md', '中图标', <IcoGridMd />],
-                ['sm', '小图标', <IcoGridSm />],
-                ['list', '列表', <IcoList />],
-              ] as const).map(([v, label, icon]) => (
-                <button
-                  key={v}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={view === v}
-                  className={`shelf-view-item ${view === v ? 'picked' : ''}`}
-                  onClick={() => {
-                    viewDirty.current = true
-                    setView(v)
-                    window.island.prefsSet({ shelfView: v }).catch(() => {
-                      /* 写不进去就算了，不打扰用户 */
-                    })
-                    setViewPop(false)
-                  }}
-                >
-                  {icon}
-                  {label}
-                </button>
-              ))}
-            </span>
-          )}
-        </span>
+        {/* 视图切换：只有大图标/列表两种，点一下直接切到另一种（用户 2026-11-24 要求） */}
+        <button
+          type="button"
+          className="shelf-view-btn"
+          title={view === 'lg' ? '切换为列表' : '切换为大图标'}
+          aria-label={view === 'lg' ? '切换为列表视图' : '切换为大图标视图'}
+          onClick={() => {
+            const next: ShelfView = view === 'lg' ? 'list' : 'lg'
+            viewDirty.current = true
+            setView(next)
+            window.island.prefsSet({ shelfView: next }).catch(() => {
+              /* 写不进去就算了，不打扰用户 */
+            })
+          }}
+        >
+          {view === 'lg' ? <IcoGrid /> : <IcoList />}
+        </button>
         <button
           type="button"
           className={`todo-del ${confirmClear ? 'confirm-clear' : ''}`}
