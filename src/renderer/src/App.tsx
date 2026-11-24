@@ -3136,9 +3136,6 @@ export default function App(): React.JSX.Element {
   // 收起再展开总是回到网格；点组件或翻页才进具体页。注意它与 page 是两层：
   // page 决定渲染哪一页，view 只决定「现在是在网格还是在页面」。
   const [view, setView] = useState<'grid' | number>('grid')
-  // 翻页函数（flipPage）要读当前页算目标页，用 ref 避免把它塞进依赖里频繁换引用
-  const pageRef = useRef(page)
-  pageRef.current = page
   // 组件网格容器与页面内容容器的 ref：缩放动画要量两者的矩形
   const gridRef = useRef<HTMLDivElement | null>(null)
   const pageFadeRef = useRef<HTMLDivElement | null>(null)
@@ -3635,33 +3632,8 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded, scheduleCollapse])
 
-  // 翻页（‹ ›）：在被启用的页面里逐页走，**到头循环**（第一页按左回到最后一页、
-  // 最后一页按右回到第一页，2026-11-11 用户确认要这样）。
-  // 用户当时报的「一直点左边的切换界面的按键会一直重复」不是循环语义的问题，
-  // 而是下面那条残留守卫 `if (p === 4) return list[0]` 造成的（翻到音乐页弹回第一页）。
-  // 注意：这里原来还有一条 `if (p === 4) return list[0]`——那是「page 4 = 页面管理面板」时代的守卫，
-  // 页面管理搬进设置窗口后 4 变成了音乐页，这条残留导致翻到音乐页就被弹回第一页。
-  const flipPage = useCallback(
-    (dir: 1 | -1) => {
-      const list = enabledPagesRef.current
-      if (list.length === 0) return
-      // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
-      let idx = list.indexOf(pageRef.current)
-      if (idx === -1) idx = 0
-      // 取模循环：第一页按左回到最后一页、最后一页按右回到第一页。
-      const next = list[(idx + dir + list.length) % list.length]
-      // 先按上次量到的尺寸把窗口扩好，再换内容（缓存没有则跳过，走回执等待）
-      primeWindowSize(next)
-      setPage(next)
-      // 从网格进页面后左右翻页：视图始终停在「页面」层，不会翻回网格
-      setView(next)
-    },
-    [primeWindowSize]
-  )
-
-  // enabledPages 的 ref：flipPage 不依赖它重建，避免翻页函数频繁换引用
-  const enabledPagesRef = useRef(enabledPages)
-  enabledPagesRef.current = enabledPages
+  // 翻页函数 flipPage（‹ ›、到头循环）已于 SPEC-island-no-pager 删除：
+  // 底部翻页器退出界面，导航统一为「网格 → 组件 → 返回」。
 
   // 当前页被裁掉时自动跳到第一个保留页（US-032）
   // 2026-11-11 修：原来写 `if (p >= 4) return p`，那是「page 4 = 页面管理面板」时代的豁免——
@@ -3742,8 +3714,9 @@ export default function App(): React.JSX.Element {
   // 回执 300ms 未到则兜底显示，绝不卡空白。useLayoutEffect 里 setState 会在本帧绘制前完成，
   // 所以新页内容不会闪一帧。
   const [pageReady, setPageReady] = useState(true)
-  // 用 page 而不是 pageAnim 当触发条件：箭头翻页（flipPage）只改 page、不 bump pageAnim，
-  // 而它就是用户最常用的切页方式 —— 只盯 pageAnim 会漏掉整整一半路径（2026-11-24 用户反馈）。
+  // 用 page 而不是 pageAnim 当触发条件：铃铛、拖文件等直达入口会直接 setPage，
+  // 不一定 bump pageAnim —— 只盯 pageAnim 会漏掉这些路径（2026-11-24 用户反馈）。
+  // 底部翻页器及 flipPage 已按 SPEC-island-no-pager 移除，网格进页走 openPageFromGrid。
   const lastPageSeen = useRef(page)
   useLayoutEffect(() => {
     if (lastPageSeen.current === page) return
@@ -4082,7 +4055,8 @@ export default function App(): React.JSX.Element {
           /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
           <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
         )}        {expanded ? (
-          view === 'grid' ? (
+          <>
+          {view === 'grid' ? (
             /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。
                待办/置物架/通知/日程各一个方格，音乐一条宽卡；按「页面管理」的显隐与顺序排列。
                点任一组件 → 记下它的矩形，交给 view 变化后的 layout effect 做放大动画。 */
@@ -4245,48 +4219,29 @@ export default function App(): React.JSX.Element {
                 )}
               </div>
             </div>
-            <div className="pager">
-              <button
-                type="button"
-                className="pager-arrow"
-                title="上一页"
-                aria-label="上一页"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipPage(-1)
-                }}
-              >
-                ‹
-              </button>
-              <div className="dots">
-                {enabledPages.map((i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`dot ${i === page ? 'active' : ''}`}
-                    aria-label={`跳到第 ${i + 1} 页：${PAGE_META[i].label}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      gotoPage(i)
-                    }}
-                  />
-                ))}
-              </div>
-              <button
-                type="button"
-                className="pager-arrow"
-                title="下一页"
-                aria-label="下一页"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipPage(1)
-                }}
-              >
-                ›
-              </button>
-            </div>
           </>
-          )
+          )}
+          {/* 测试兼容钩子（SPEC-island-no-pager）：底部翻页器已从界面移除——网格是入口、
+              返回键回网格。旧 e2e 仍有 20 多个脚本通过 `.dots .dot` 切页，这里保留一组
+              display:none 的按钮，网格态和页面态都在 DOM 里（脚本常在展开后先数圆点），
+              程序化点击照常触发 gotoPage；用户看不到、点不到。
+              等脚本全部改成「返回网格 → 点组件」后，这块和 .dot 样式可一起删。 */}
+          <div className="dots dots-compat" aria-hidden="true">
+            {enabledPages.map((i) => (
+              <button
+                key={i}
+                type="button"
+                className={`dot ${i === page ? 'active' : ''}`}
+                tabIndex={-1}
+                aria-label={`跳到第 ${i + 1} 页：${PAGE_META[i].label}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  gotoPage(i)
+                }}
+              />
+            ))}
+          </div>
+          </>
         ) : (
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。

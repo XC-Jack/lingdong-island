@@ -1223,32 +1223,10 @@ body {
   color: var(--ink-1);
 }
 
-/* 翻页器：‹ 圆点 ›，箭头对照视频的左右翻页 */
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding-top: 10px;
-}
-
-.pager-arrow {
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 50%;
-  background: var(--surface-1);
-  color: var(--ink-3);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  transition: background 120ms, color 120ms;
-}
-
-.pager-arrow:hover {
-  background: color-mix(in srgb, var(--ink-1) 16%, transparent);
-  color: var(--ink-1);
+/* 底部翻页器已移除（SPEC-island-no-pager）：导航统一为「网格 → 组件 → 返回」。
+   旧 e2e 仍通过 .dots .dot 程序化切页，所以保留一组不可见的兼容按钮。 */
+.dots-compat {
+  display: none;
 }
 
 /* 切页淡入（.page-fade 定义在文件顶部 island 区块） */

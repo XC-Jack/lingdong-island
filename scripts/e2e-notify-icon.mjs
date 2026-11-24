@@ -161,15 +161,15 @@ async function main() {
     // 切到通知页（page 2）看 DOM
     await evaluate(ws, `document.querySelector('.island').dispatchEvent(new MouseEvent('click', {bubbles: true}))`)
     await sleep(600)
-    // 直达通知页：连点右箭头或点 dot；用 dots 里 aria-label 定位
+    // 直达通知页（SPEC-island-no-pager：底部箭头已移除）：先点网格上的通知组件，
+    // 退不进去再用隐藏的兼容圆点；两个钩子都按 data-page / aria-label 定位
     const hasNotify = await evaluate(ws, `!!document.querySelector('.notify-list')`)
     if (!hasNotify) {
-      // 翻页到通知页（最多 4 次）
-      for (let i = 0; i < 4 && !hasNotify; i++) {
-        await evaluate(ws, `document.querySelector('.pager-arrow:last-child').dispatchEvent(new MouseEvent('click', {bubbles: true}))`)
+      await evaluate(ws, `document.querySelector('.widget[data-page="2"]')?.click(); 1`)
+      await sleep(600)
+      if (!(await evaluate(ws, `!!document.querySelector('.notify-list')`))) {
+        await evaluate(ws, `[...document.querySelectorAll('.dots-compat .dot')].find(d => (d.getAttribute('aria-label')||'').includes('通知'))?.click(); 1`)
         await sleep(400)
-        const now = await evaluate(ws, `!!document.querySelector('.notify-list')`)
-        if (now) break
       }
     }
     const notifyVisible = await evaluate(ws, `!!document.querySelector('.notify-list')`)
