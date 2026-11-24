@@ -718,14 +718,16 @@ const SHELF_COLLAPSE_MS = 4000
 /** 按扩展名给文件图标配色 */
 function extColor(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) return '#4fc3f7'
-  if (['mp4', 'mkv', 'avi', 'mov'].includes(ext)) return '#ff8a65'
-  if (['mp3', 'wav', 'flac', 'm4a'].includes(ext)) return '#ba68c8'
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '#ffb74d'
-  if (['doc', 'docx', 'pdf', 'txt', 'md'].includes(ext)) return '#81c784'
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return '#aed581'
-  if (['exe', 'msi', 'lnk'].includes(ext)) return '#90a4ae'
-  return '#b0bec5'
+  // 2026-11-24 换皮：原值是 Material Design 2014 那套高饱和色（#4fc3f7/#ff8a65/#ba68c8…），
+  // 在深色面板上很跳。保留「按类型分色」的功能性，但降饱和，同一亮度档，看起来是一套而不是拼盘。
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) return '#7fb3e0'
+  if (['mp4', 'mkv', 'avi', 'mov'].includes(ext)) return '#e09a80'
+  if (['mp3', 'wav', 'flac', 'm4a'].includes(ext)) return '#a98cc8'
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return '#dcb277'
+  if (['doc', 'docx', 'pdf', 'txt', 'md'].includes(ext)) return '#84b894'
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '#a9bd84'
+  if (['exe', 'msi', 'lnk'].includes(ext)) return '#9aa7b0'
+  return '#a8b2b9'
 }
 
 /** 通用文件图标：优先用系统真实图标（文件夹/文件用真实路径取，其余按扩展名缓存），拿不到退回折角纸片 */
@@ -3078,13 +3080,15 @@ function MusicPanel({
   )
 }
 
-/** 页标签：页头图标组件 + 名称（对照视频里每页左上角的彩色小图标 + 页名）；图标用线性 SVG，不用 emoji */
+/** 页标签：页头图标组件 + 名称（对照视频里每页左上角的彩色小图标 + 页名）；图标用线性 SVG，不用 emoji。
+ *  2026-11-24 视觉换皮（SPEC-visual-refresh）：五个页面原本各用一种高饱和色（绿/橙/紫/蓝/粉），
+ *  是「年代感」的主要来源之一；统一成同一个低饱和蓝，页面身份改由图标形状区分。 */
 const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string }[] = [
-  { icon: IcoCheck, label: '待办', accent: '#7dd87d' },
-  { icon: IcoShelf, label: '置物架', accent: '#ffb74d' },
-  { icon: IcoBell, label: '通知', accent: '#9f8bff' },
-  { icon: IcoCal, label: '日程', accent: '#64b5f6' },
-  { icon: IcoMusic, label: '音乐', accent: '#ff8fa3' },
+  { icon: IcoCheck, label: '待办', accent: '#7c9cff' },
+  { icon: IcoShelf, label: '置物架', accent: '#7c9cff' },
+  { icon: IcoBell, label: '通知', accent: '#7c9cff' },
+  { icon: IcoCal, label: '日程', accent: '#7c9cff' },
+  { icon: IcoMusic, label: '音乐', accent: '#7c9cff' },
 ]
 
 export default function App(): React.JSX.Element {
@@ -3934,7 +3938,7 @@ export default function App(): React.JSX.Element {
                   dateWeek 档时钟被 50% 宽的绝对居中盒压成三行并压住标题；改成上下两行后
                   状态行独占整宽居中，标题再长也不会和它抢横向空间。 */}
               <div className="head-top">
-                <span className="panel-badge" style={{ ['--accent' as never]: '#9aa0a6' }}>
+                <span className="panel-badge" style={{ ['--accent' as never]: '#7c9cff' }}>
                   <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
                 </span>
                 <span className="panel-title">{PAGE_META[page].label}</span>

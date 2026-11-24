@@ -22,7 +22,7 @@ function Tiny({ mood }: { mood: PetMood }): JSX.Element {
       viewBox="0 0 24 24"
       aria-hidden="true"
     >
-      <rect x="1" y="4" width="22" height="16" rx="8" fill="#4b2ea8" />
+      <rect x="1" y="4" width="22" height="16" rx="8" fill="#4356b0" />
       {happy ? (
         <>
           {/* 开心：眼睛弯成 ^，嘴角上扬 */}
@@ -80,9 +80,9 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
     <svg className="pet-full" viewBox="0 0 160 160" aria-hidden="true">
       <defs>
         <linearGradient id="capsuleBody" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#6440d6" />
-          <stop offset="55%" stopColor="#4b2ea8" />
-          <stop offset="100%" stopColor="#38207f" />
+          <stop offset="0%" stopColor="#5f7be0" />
+          <stop offset="55%" stopColor="#4356b0" />
+          <stop offset="100%" stopColor="#2e3a78" />
         </linearGradient>
         <radialGradient id="capsuleSheen" cx="0.5" cy="0.1" r="0.7">
           <stop offset="0%" stopColor="#ffffff" stopOpacity="0.42" />
@@ -147,7 +147,7 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
           <ellipse className="pet-eye" cx="57" cy="78" rx={eyeR} ry={eyeR + 1} fill="#ffffff" />
           <ellipse className="pet-eye" cx="103" cy="78" rx={eyeR} ry={eyeR + 1} fill="#ffffff" />
           {surprised ? (
-            <ellipse cx="80" cy="106" rx="7" ry="9" fill="#1c1236" />
+            <ellipse cx="80" cy="106" rx="7" ry="9" fill="#141b2e" />
           ) : null}
         </>
       )}
@@ -157,8 +157,8 @@ function Full({ mood }: { mood: PetMood }): JSX.Element {
 
 const capsule: PetSkin = {
   id: 'capsule',
-  name: '紫胶囊',
-  desc: '灵动岛最早的那只，紫底白眼睛，一直在岛里待着。',
+  name: '胶囊',
+  desc: '灵动岛最早的那只，蓝底白眼睛，一直在岛里待着。',
   Tiny,
   Full
 }
