@@ -301,6 +301,17 @@ body {
   width: 100%;
 }
 
+/* 置物架 / 通知页保留固定页面尺寸（2026-11-24 用户：「别有了消息还没没有小，别老是缩回去了」）。
+   高度取各自空态时的页高（布局 px，实测空态屏高 65.4 / 127.5 ÷ 0.75）：
+   没有内容时由空态撑到这个高度，有少量内容时也不会比空态矮；内容再多仍可撑高或内部滚动。 */
+.page-fade.page-shelf {
+  min-height: 87px;
+}
+
+.page-fade.page-notify {
+  min-height: 170px;
+}
+
 /* 窗口尺寸落定后再播淡入（SPEC-switch-size-sync） */
 .page-fade.page-ready {
   /* 120ms：窗口已同步好之后才开始，这里只负责「别硬切」，不需要再用长动画遮掩 */
@@ -2182,11 +2193,12 @@ body {
   position: absolute;
   left: 10px;
   right: 10px;
-  /* 用户 2026-11-24：「任务显示在上面更好，老是往下挤」——浮层贴月历顶部展开，
-     并且高度不超过月历，任务多时自己在浮层里滚，岛不再被越撑越高。 */
+  /* 浮层贴月历顶部、一直铺到月历底部（用户 2026-11-24：「任务显示在上面更好」
+     「向下铺开，只有一半太丑了」）：整块就是当天视图，内容少时留白，多时列表自己滚。
+     高度锁在月历区域内，岛保持原尺寸，不再被撑高。 */
   top: 38px;
-  max-height: calc(100% - 44px);
-  overflow-y: auto;
+  bottom: 6px;
+  overflow: hidden;
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -2229,7 +2241,13 @@ body {
   height: 104px;
 }
 
-/* 列表不再单独限高：滚动交给浮层本身（上限不超过月历） */
+/* 当天视图里的列表占满浮层剩余高度：.todo-list 的全局 3 行限高只服务待办页 */
+.sched-day .sched-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
 
 /* 浮层里的空态收小：整页空态卡片在 300 宽的浮层里太占地方 */
 .sched-day .notify-empty {

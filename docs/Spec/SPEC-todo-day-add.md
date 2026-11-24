@@ -60,3 +60,9 @@
 2. 日程浮层从「月历中下部、超出就把岛撑高」改成**贴月历顶部、高度不超过月历**：`top:38px` + `max-height:calc(100% - 44px)` + 自身滚动（用户原话「任务显示在上面更好，老是往下挤」）。
 3. 空态提示改为「在「待办」里选日期添加」，不再引导用户在日程页添加。
 4. 验证 [实测]：`e2e-todo-day-pick` 17/0（D5b 改为断言 `8px`）；`e2e-schedule`、`e2e-schedule-day`、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-edit`、`e2e-schedule-scroll` 6/0、`e2e-todo-today` 全过。探针实测浮层打开前后岛高均为 254.4，不再变高。
+
+## 九、再次调整（2026-11-24，用户第二次看预览）
+
+1. 日程当天视图「只有一半太丑」：改成 `top:38px` + `bottom:6px` 铺满月历区域，列表占满剩余高度并自己滚（`.sched-day .sched-list` 解除全局 3 行限高）；岛高保持 254.4。
+2. 置物架 / 通知页「有了消息还没没有小，别老是缩回去了」：给 `.page-fade` 加 `.page-shelf` / `.page-notify` 两个类，`min-height` 分别 87 / 170 布局 px（取空态实测页高），有内容时不再比空态矮。
+3. 验证 [实测]：`typecheck` / `build` 通过；探针：置物架空态与 2 个文件均 255×157.1，通知空态 255×219.2，日程浮层 `top 104.3 / bottom 234.1`、岛 254.4；回归 `e2e-schedule`、`e2e-schedule-day`、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-edit`、`e2e-schedule-scroll` 6/0、`e2e-notify`、`e2e-shelf-view-pref`、`e2e-todo-day-pick` 17/0 全过；`e2e-notify-compact` C1/C2 产品断言通过，收尾 taskkill 128 为脚本既有问题。

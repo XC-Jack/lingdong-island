@@ -4320,7 +4320,9 @@ export default function App(): React.JSX.Element {
                 key={pageAnim}
                 ref={pageFadeRef}
                 onClick={(e) => e.stopPropagation()}
-                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${pageReady ? 'page-ready' : ''}`}
+                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${
+                  page === 1 ? 'page-shelf' : page === 2 ? 'page-notify' : ''
+                } ${pageReady ? 'page-ready' : ''}`}
               >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
