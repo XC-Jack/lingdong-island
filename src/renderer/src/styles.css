@@ -234,6 +234,13 @@ body {
     border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* 切页瞬间关过渡（2026-11-24 快速点击卡顿）：窗口是 setBounds 一次性跳变的，
+   岛若还按 220ms 过渡，收缩时比窗口大、会被裁到过渡结束。nav-snap 由 App 在切页时
+   临时加上，120ms 后移除；那时尺寸已稳定，移除不会补播动画。展开/收起不加这个类。 */
+.island.expanded.nav-snap {
+  transition: none;
+}
+
 /* ---------- 真透视底图（SPEC-island-themes 第二轮，2026-11-24） ----------
    主进程抓「岛背后那块屏幕」→ 渲染层当背景 → 自己模糊。三层关系：
      1) .island-backdrop：截图层，外扩 32px 再 blur，把截图的硬边甩到岛外被圆角裁掉；

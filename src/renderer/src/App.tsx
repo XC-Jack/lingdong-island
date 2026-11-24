@@ -3225,17 +3225,30 @@ export default function App(): React.JSX.Element {
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
   expandedRef.current = expanded
+  // ResizeObserver 的闭包拿不到最新 view：用它判断「这次量到的是不是网格尺寸」
+  const viewRef = useRef<'grid' | number>(view)
+  viewRef.current = view
   // 各页上次量到的尺寸：切页前先按它把窗口扩好，新页渲染完时窗口往往已经到位，
   // 把「变大」那条路径的空白压到 0（首次访问某页没有缓存，仍走回执等待，SPEC-switch-size-sync）。
   const pageSizeCache = useRef<Record<number, { w: number; h: number }>>({})
-  const primeWindowSize = useCallback((i: number) => {
-    const c = pageSizeCache.current[i]
+  // 组件网格的尺寸：返回网格也要提前扩窗（网格 330 比多数页高，2026-11-24 快速点击实测
+  // 窗口比岛矮 27.5px、持续约 100ms，网格底部被裁——就是用户说的「点太快有点卡」）。
+  const gridSizeCache = useRef<{ w: number; h: number } | null>(null)
+  // 最近一次上报/打算用的窗口尺寸。window.innerHeight 要等主进程 setBounds 生效才更新，
+  // 切页时若只看它，会把「已经在扩窗路上」的目标页误判成放不下、多等一次回执（约 30ms 空白）。
+  const intendedWinSize = useRef<{ w: number; h: number } | null>(null)
+  /** 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失 */
+  const growWindowTo = useCallback((c: { w: number; h: number } | null | undefined) => {
     if (!c || !expandedRef.current) return
-    // 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失
     if (c.w > window.innerWidth + 1 || c.h > window.innerHeight + 1) {
+      intendedWinSize.current = c
       void window.island.setExpandedSize(c.w, c.h)
     }
   }, [])
+  const primeWindowSize = useCallback(
+    (i: number) => growWindowTo(pageSizeCache.current[i]),
+    [growWindowTo]
+  )
   const collapseTimer = useRef<number | null>(null)
   /** US-041：避让回调要调 clearCollapseTimer，但那函数声明在后——用 ref 桥接 */
   const clearCollapseTimerRef = useRef<(() => void) | null>(null)
@@ -3260,6 +3273,8 @@ export default function App(): React.JSX.Element {
         if (el.classList.contains('expanded')) {
           // 页面尺寸已经固定（SPEC-fixed-page-size），这里只处理切页时的一次性变化；
           // 回执由切页那条路径自己等（SPEC-switch-size-sync）
+          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+          intendedWinSize.current = { w, h }
           void window.island.setExpandedSize(w, h)
         } else {
           window.island.setCollapsedWidth(w)
@@ -3751,6 +3766,28 @@ export default function App(): React.JSX.Element {
   // 回执 300ms 未到则兜底显示，绝不卡空白。useLayoutEffect 里 setState 会在本帧绘制前完成，
   // 所以新页内容不会闪一帧。
   const [pageReady, setPageReady] = useState(true)
+  // 切页瞬间临时关掉岛的宽高过渡（2026-11-24 快速点击卡顿）。
+  // 窗口是用 setBounds 一次性跳到新尺寸的，而岛自带 220ms 过渡：收缩方向上岛比窗口大，
+  // 会被窗口裁掉直到过渡结束；同时 layout 阶段 getBoundingClientRect 量到的是过渡起点值，
+  // 上报给主进程的窗口尺寸也跟着错。切页时快照到位、120ms 后移除；尺寸已稳定，移除不再触发过渡。
+  const [navSnap, setNavSnap] = useState(false)
+  const navSnapTimer = useRef<number | null>(null)
+  const beginNavSnap = useCallback(() => {
+    // 展开动画本身要靠过渡同步主进程补间，收起态进来时不关；样式也只对 .expanded 生效
+    if (!expandedRef.current) return
+    setNavSnap(true)
+    if (navSnapTimer.current !== null) window.clearTimeout(navSnapTimer.current)
+    navSnapTimer.current = window.setTimeout(() => {
+      navSnapTimer.current = null
+      setNavSnap(false)
+    }, 120)
+  }, [])
+  useEffect(
+    () => () => {
+      if (navSnapTimer.current !== null) window.clearTimeout(navSnapTimer.current)
+    },
+    []
+  )
   // 用 page 而不是 pageAnim 当触发条件：铃铛、拖文件等直达入口会直接 setPage，
   // 不一定 bump pageAnim —— 只盯 pageAnim 会漏掉这些路径（2026-11-24 用户反馈）。
   // 底部翻页器及 flipPage 已按 SPEC-island-no-pager 移除，网格进页走 openPageFromGrid。
@@ -3772,12 +3809,18 @@ export default function App(): React.JSX.Element {
     pageSizeCache.current[page] = { w, h }
     // 新页没比当前窗口大（切到更小/同大的页）：岛完全在窗口内，怎么都不会被裁，
     // 不用等回执，直接显示 —— 把「内容先消失一下」的闪降到零。
-    const fits = w <= window.innerWidth + 1 && h <= window.innerHeight + 1
+    // 「当前窗口」要把刚上报、还没被主进程执行的目标尺寸算进来（intendedWinSize），
+    // 否则 primeWindowSize 明明已经要求扩窗，这里还会把目标页当放不下、白等一次回执。
+    const availW = Math.max(window.innerWidth, intendedWinSize.current?.w ?? 0)
+    const availH = Math.max(window.innerHeight, intendedWinSize.current?.h ?? 0)
+    const fits = w <= availW + 1 && h <= availH + 1
     if (fits) {
+      intendedWinSize.current = { w, h }
       void window.island.setExpandedSize(w, h)
       setPageReady(true)
       return
     }
+    intendedWinSize.current = { w, h }
     setPageReady(false)
     let alive = true
     const fallback = window.setTimeout(() => {
@@ -3795,14 +3838,27 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(fallback)
     }
   }, [page])
+  // 回到网格：网格 330 比多数页高，先按缓存把窗口扩好，再切视图 —— 否则网格会先被
+  // 小窗口裁掉底部，等 80ms 去抖的 ResizeObserver 上报后才补上（实测约 100ms）。
+  useLayoutEffect(() => {
+    if (view !== 'grid' || !expandedRef.current) return
+    const r = islandRef.current?.getBoundingClientRect()
+    if (!r || r.width <= 0 || r.height <= 0) return
+    const w = Math.ceil(r.width)
+    const h = Math.ceil(r.height)
+    gridSizeCache.current = { w, h }
+    intendedWinSize.current = { w, h }
+    void window.island.setExpandedSize(w, h)
+  }, [view])
   const gotoPage = useCallback(
     (i: number) => {
+      beginNavSnap()
       primeWindowSize(i)
       setPage(i)
       setPageAnim((n) => n + 1)
       setView(i)
     },
-    [primeWindowSize]
+    [beginNavSnap, primeWindowSize]
   )
 
   // 组件网格 → 功能页（SPEC-island-widget-grid）：点组件时记下它的屏幕矩形，
@@ -3810,19 +3866,22 @@ export default function App(): React.JSX.Element {
   const openPageFromGrid = useCallback(
     (i: number, el: HTMLElement) => {
       zoomFromRef.current = el.getBoundingClientRect()
+      beginNavSnap()
       primeWindowSize(i)
       setPage(i)
       setPageAnim((n) => n + 1)
       setView(i)
     },
-    [primeWindowSize]
+    [beginNavSnap, primeWindowSize]
   )
 
   // 功能页 → 组件网格：反方向，起点是当前页面内容区域
   const backToGrid = useCallback(() => {
     zoomFromRef.current = pageFadeRef.current?.getBoundingClientRect() ?? null
+    beginNavSnap()
+    growWindowTo(gridSizeCache.current)
     setView('grid')
-  }, [])
+  }, [beginNavSnap, growWindowTo])
 
   // 缩放动画（iOS 打开 App 的手感）：从起点矩形放大到目标容器的矩形。
   // 只在「点组件进去 / 点返回出来」时跑；窗口尺寸仍走原有的 setExpandedSize 链路。
@@ -3864,6 +3923,8 @@ export default function App(): React.JSX.Element {
   // 已经在通知页时不再重放淡入动画（重放 = 页面重挂 = 用户看到的频闪）。
   const openNotifyPage = useCallback(() => {
     clearCollapseTimer()
+    // 收起态点铃铛：这次渲染同时要播展开动画，不能关过渡（beginNavSnap 自己会判断）
+    beginNavSnap()
     if (!expandedRef.current) {
       window.island.setExpanded(true)
       expandedRef.current = true
@@ -3876,7 +3937,7 @@ export default function App(): React.JSX.Element {
     }
     // 铃铛是直达通知页的入口：不管刚才在网格还是别的页，都直接进通知页
     setView(2)
-  }, [clearCollapseTimer, page, primeWindowSize])
+  }, [beginNavSnap, clearCollapseTimer, page, primeWindowSize])
 
   const onDragOverRoot = (e: React.DragEvent): void => {
     e.preventDefault()
@@ -4034,7 +4095,7 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        }`}
+        } ${navSnap ? 'nav-snap' : ''}`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
