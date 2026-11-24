@@ -62,7 +62,7 @@ async function main() {
     // 4) 切到第二页，检查置物架 DOM
     const dom = await call(4, `(async () => {
       // 先展开（岛是收起态，点一下展开）
-      document.querySelector('.island').click()
+      (document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)
       await new Promise(r => setTimeout(r, 400))
       const dots = document.querySelectorAll('.dot')
       if (dots.length < 2) return JSON.stringify({ err: 'dots=' + dots.length })

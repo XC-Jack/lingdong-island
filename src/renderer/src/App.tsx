@@ -3132,9 +3132,18 @@ export default function App(): React.JSX.Element {
   // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
   const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
   const [page, setPage] = useState(0)
+  // 组件首页（SPEC-island-widget-grid）：'grid' = 展开后的 iOS 组件网格；数字 = 对应功能页。
+  // 收起再展开总是回到网格；点组件或翻页才进具体页。注意它与 page 是两层：
+  // page 决定渲染哪一页，view 只决定「现在是在网格还是在页面」。
+  const [view, setView] = useState<'grid' | number>('grid')
   // 翻页函数（flipPage）要读当前页算目标页，用 ref 避免把它塞进依赖里频繁换引用
   const pageRef = useRef(page)
   pageRef.current = page
+  // 组件网格容器与页面内容容器的 ref：缩放动画要量两者的矩形
+  const gridRef = useRef<HTMLDivElement | null>(null)
+  const pageFadeRef = useRef<HTMLDivElement | null>(null)
+  // 点组件时的屏幕矩形（缩放动画的起点）。view 变化后的 layout effect 消费一次后清空。
+  const zoomFromRef = useRef<DOMRect | null>(null)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
   // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
@@ -3444,6 +3453,12 @@ export default function App(): React.JSX.Element {
     window.island?.setExpanded(expanded)
   }, [expanded])
 
+  // 每次收起（点桌面 / 自动超时 / Esc / 避让）后把视图退回组件网格：
+  // 下次展开先看到组件，而不是上次停留的那一页（SPEC-island-widget-grid）。
+  useEffect(() => {
+    if (!expanded) setView('grid')
+  }, [expanded])
+
   // US-041 全屏避让：主进程隐藏/恢复岛时，渲染层同步收起面板（恢复后回收起态，
   // 不做展开记忆——SPEC 明确）并保证横幅计时器不悬挂（隐藏中横幅 DOM 不可见但 timer 还在跑）。
   const [avoidHidden, setAvoidHidden] = useState(false)
@@ -3510,8 +3525,9 @@ export default function App(): React.JSX.Element {
       if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
       setExpanded(false)
       window.island.logDiag('collapse by schedule timer; no active input')
-    }, page === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
-  }, [clearCollapseTimer, page])
+      // 组件网格与待办页用同一档收起时长（网格是「首页」，语义同 page 0）
+    }, view === 'grid' || view === 0 ? AUTO_COLLAPSE_MS : SHELF_COLLAPSE_MS)
+  }, [clearCollapseTimer, view])
 
   const toggle = useCallback(() => {
     setExpanded((prev) => {
@@ -3597,6 +3613,8 @@ export default function App(): React.JSX.Element {
     }
     setPage((p) => (p === 1 ? p : 1))
     setPageAnim((n) => (page === 1 ? n : n + 1))
+    // 拖文件进岛直接落置物架：跳过组件网格
+    setView(1)
   }
 
   // 拖动结束（drop 或拖离窗口）复位去重标记，下一次拖入重新生效
@@ -3635,6 +3653,8 @@ export default function App(): React.JSX.Element {
       // 先按上次量到的尺寸把窗口扩好，再换内容（缓存没有则跳过，走回执等待）
       primeWindowSize(next)
       setPage(next)
+      // 从网格进页面后左右翻页：视图始终停在「页面」层，不会翻回网格
+      setView(next)
     },
     [primeWindowSize]
   )
@@ -3648,6 +3668,8 @@ export default function App(): React.JSX.Element {
   // 页面管理搬走后 4 是音乐页，这行会让「用户裁掉音乐页」时仍然停在音乐页。现在音乐页也照常裁。
   useEffect(() => {
     setPage((p) => (enabledPages.includes(p) ? p : (enabledPages[0] ?? 0)))
+    // 用户正在看的那一页被裁掉时，视图跟着换到第一个保留页；在网格上则不受影响
+    setView((v) => (v === 'grid' || enabledPages.includes(v) ? v : (enabledPages[0] ?? 0)))
   }, [enabledPages])
 
   // 设置窗口改了偏好（SPEC-settings-shell）→ 岛上立刻跟上。
@@ -3768,9 +3790,63 @@ export default function App(): React.JSX.Element {
       primeWindowSize(i)
       setPage(i)
       setPageAnim((n) => n + 1)
+      setView(i)
     },
     [primeWindowSize]
   )
+
+  // 组件网格 → 功能页（SPEC-island-widget-grid）：点组件时记下它的屏幕矩形，
+  // view 变化后的 layout effect 用它做缩放放大。铃铛、拖文件等直达入口没有起点，不播缩放。
+  const openPageFromGrid = useCallback(
+    (i: number, el: HTMLElement) => {
+      zoomFromRef.current = el.getBoundingClientRect()
+      primeWindowSize(i)
+      setPage(i)
+      setPageAnim((n) => n + 1)
+      setView(i)
+    },
+    [primeWindowSize]
+  )
+
+  // 功能页 → 组件网格：反方向，起点是当前页面内容区域
+  const backToGrid = useCallback(() => {
+    zoomFromRef.current = pageFadeRef.current?.getBoundingClientRect() ?? null
+    setView('grid')
+  }, [])
+
+  // 缩放动画（iOS 打开 App 的手感）：从起点矩形放大到目标容器的矩形。
+  // 只在「点组件进去 / 点返回出来」时跑；窗口尺寸仍走原有的 setExpandedSize 链路。
+  const lastViewRef = useRef<'grid' | number>('grid')
+  useLayoutEffect(() => {
+    if (lastViewRef.current === view) return
+    lastViewRef.current = view
+    const from = zoomFromRef.current
+    zoomFromRef.current = null
+    if (!from || !expandedRef.current) return
+    const el = view === 'grid' ? gridRef.current : pageFadeRef.current
+    if (!el) return
+    const to = el.getBoundingClientRect()
+    if (to.width <= 0 || to.height <= 0) return
+    // .app 上 zoom: 0.75：getBoundingClientRect 返回缩放后的屏幕坐标，
+    // 而 transform 写在元素自己的布局坐标系里，位移要除回 zoom；scale 是无单位比例，直接用宽度比。
+    const z = 0.75
+    const dx = (from.left - to.left) / z
+    const dy = (from.top - to.top) / z
+    const sx = from.width / to.width
+    const sy = from.height / to.height
+    const anim = el.animate(
+      [
+        {
+          transformOrigin: '0 0',
+          transform: `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`,
+          opacity: 0.35
+        },
+        { transformOrigin: '0 0', transform: 'none', opacity: 1 }
+      ],
+      { duration: 340, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+    )
+    return () => anim.cancel()
+  }, [view])
 
   // 通知铃铛被点击 → 展开岛并直接落在通知页（page 2）。
   // 用户 2026-11-10 要求：点铃铛不必先展开到第一页再自己翻两下。
@@ -3788,6 +3864,8 @@ export default function App(): React.JSX.Element {
       setPage(2)
       setPageAnim((n) => n + 1)
     }
+    // 铃铛是直达通知页的入口：不管刚才在网格还是别的页，都直接进通知页
+    setView(2)
   }, [clearCollapseTimer, page, primeWindowSize])
 
   const onDragOverRoot = (e: React.DragEvent): void => {
@@ -4004,6 +4082,73 @@ export default function App(): React.JSX.Element {
           /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
           <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
         )}        {expanded ? (
+          view === 'grid' ? (
+            /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。
+               待办/置物架/通知/日程各一个方格，音乐一条宽卡；按「页面管理」的显隐与顺序排列。
+               点任一组件 → 记下它的矩形，交给 view 变化后的 layout effect 做放大动画。 */
+            <div className="widget-grid" ref={gridRef}>
+              <div className="wg-head">
+                <span className="wg-brand">灵动岛</span>
+                <span className="wg-date">{formatClock(now, 'date')}</span>
+                <span className="wg-spacer" />
+                <span className="head-info wg-status">
+                  {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
+                </span>
+              </div>
+              <div className="wg-body">
+                {enabledPages.map((i) => {
+                  const pct = i === 0 && todoStats.total > 0 ? todoStats.done / todoStats.total : 0
+                  const meta =
+                    i === 0
+                      ? todoStats.total > 0
+                        ? `${todoStats.done}/${todoStats.total} 已完成`
+                        : '今天还没安排'
+                      : i === 1
+                        ? '文件收纳'
+                        : i === 2
+                          ? notifyUnread > 0
+                            ? `${notifyUnread} 条未读`
+                            : '没有新消息'
+                          : i === 3
+                            ? '今天与以后'
+                            : '播放控制'
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      className={`widget ${i === 4 ? 'wide' : ''}`}
+                      data-page={i}
+                      aria-label={`打开${PAGE_META[i].label}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openPageFromGrid(i, e.currentTarget)
+                      }}
+                    >
+                      <span className={`widget-icon ${i === 0 ? 'blue' : i === 1 ? 'amber' : i === 2 ? 'red' : i === 3 ? 'green' : 'violet'}`}>
+                        {PAGE_META[i].icon()}
+                      </span>
+                      <span className="widget-label">{PAGE_META[i].label}</span>
+                      <span className="widget-meta">{meta}</span>
+                      {i === 0 && todoStats.total > 0 && (
+                        /* 待办卡右下角的小进度环：与头部 n/m 同一份统计，只是换成图形 */
+                        <svg className="widget-ring" viewBox="0 0 36 36" aria-hidden="true">
+                          <circle className="widget-ring-bg" cx="18" cy="18" r="15.5" />
+                          <circle
+                            className="widget-ring-fg"
+                            cx="18"
+                            cy="18"
+                            r="15.5"
+                            strokeDasharray={`${pct * 97.4} 97.4`}
+                            transform="rotate(-90 18 18)"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
           <>
             <div className="panel-head">
               {/* 第一行：页面身份（徽章 + 标题）+ 岛仔 + 右侧完成度。
@@ -4011,6 +4156,20 @@ export default function App(): React.JSX.Element {
                   dateWeek 档时钟被 50% 宽的绝对居中盒压成三行并压住标题；改成上下两行后
                   状态行独占整宽居中，标题再长也不会和它抢横向空间。 */}
               <div className="head-top">
+                {/* 返回组件首页（SPEC-island-widget-grid）：从网格点进来的页面左侧多一个返回键。
+                    翻页器仍保留，所以这里只负责回网格，不做上一页。 */}
+                <button
+                  type="button"
+                  className="panel-back"
+                  title="返回组件首页"
+                  aria-label="返回组件首页"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    backToGrid()
+                  }}
+                >
+                  ‹
+                </button>
                 <span className="panel-badge">
                   <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
                 </span>
@@ -4057,6 +4216,7 @@ export default function App(): React.JSX.Element {
                   加 wide 让该页整行占满（第 1/4 页内容本身接近满宽，保持原样不动） */}
               <div
                 key={pageAnim}
+                ref={pageFadeRef}
                 onClick={(e) => e.stopPropagation()}
                 className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${pageReady ? 'page-ready' : ''}`}
               >
@@ -4121,6 +4281,7 @@ export default function App(): React.JSX.Element {
               </button>
             </div>
           </>
+          )
         ) : (
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。

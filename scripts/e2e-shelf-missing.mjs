@@ -104,7 +104,7 @@ const main = async () => {
 
     // 展开岛、切到置物架页，并用广播让面板拿到带 missing 的列表
     await cdp(wsUrl, `(async()=>{
-      document.querySelector('.island').click();
+      (document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1);
       await new Promise(r=>setTimeout(r,400));
       document.querySelectorAll('.dot')[1].click();
       await new Promise(r=>setTimeout(r,200));

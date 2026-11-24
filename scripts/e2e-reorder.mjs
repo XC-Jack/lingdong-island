@@ -74,7 +74,7 @@ const main = async () => {
   if (JSON.parse(added).length !== 3) throw new Error('添加失败')
 
   // 展开岛切到置物架
-  await evalJs("document.querySelector('.island').click();1")
+  await evalJs("(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1);1")
   await sleep(500)
   await evalJs("document.querySelectorAll('.dot')[1]?.click();1")
   await sleep(400)

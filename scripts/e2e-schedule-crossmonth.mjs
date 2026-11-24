@@ -61,7 +61,7 @@ try {
   await new Promise((r) => setTimeout(r, 6000))
 
   // 收起态先点 .island 展开
-  await cdpEval(`document.querySelector('.island').click()`)
+  await cdpEval(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   await new Promise((r) => setTimeout(r, 800))
 
   // 直接点日程页 dot[3]（默认页序：待办/置物架/通知/日程），不要点「当前 active」——那等于没切

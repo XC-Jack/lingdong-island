@@ -68,7 +68,7 @@ const main = async () => {
   await sleep(300)
 
   // 展开岛（收起态点一下）
-  await send(`document.querySelector('.island').click()`)
+  await send(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   await sleep(600)
 
   // 切到第四页（日程）

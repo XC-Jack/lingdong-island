@@ -77,7 +77,7 @@ async function stopApp(child) {
 
 async function openNotifyPage(ws) {
   // 展开岛 → 点第 3 个分页点（通知页 page 2）
-  await evaluate(ws, `document.querySelector('.island').click(); 1`)
+  await evaluate(ws, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
   await sleep(450)
   await evaluate(ws, `document.querySelectorAll('.dot')[2].click(); 1`)
   await sleep(900)

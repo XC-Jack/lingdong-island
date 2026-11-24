@@ -121,7 +121,7 @@ try {
   if (startupMs === null) throw new Error('界面没起来，后续测量跳过')
 
   // 展开岛（后面点击都落在展开态上，和用户的实际场景一致）
-  await evalIn(`(() => { document.querySelector('.island').click(); return 1 })()`)
+  await evalIn(`(() => { (document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); return 1 })()`)
   await sleep(1500)
 
   /* ---------------- P3：读在飞的时候，点击还能不能及时回 ---------------- */

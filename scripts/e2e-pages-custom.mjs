@@ -84,8 +84,10 @@ try {
   const c1 = await cdp(ws2, "document.querySelector('.collapsed-clock') ? 'yes' : 'no'")
   if (c1 === 'no') ok('P2a 关掉时钟后收起态无时钟') ; else fail(`P2a 时钟应消失，got ${c1}`)
 
-  // P3 dots 数量 = 3（日程被裁）
+  // P3 dots 数量 = 3（日程被裁）。SPEC-island-widget-grid：展开先到组件网格，点一个组件才进带 dot 的功能页
   await cdp(ws2, "document.querySelector('.island')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  await sleep(400)
+  await cdp(ws2, `document.querySelector('.widget[data-page="0"]')?.click(); 1`)
   await sleep(400)
   const dots = await cdp(ws2, "document.querySelectorAll('.dots .dot').length")
   if (dots === 3) ok('P3a 裁掉日程后圆点 3 个') ; else fail(`P3a 圆点应 3 个，got ${dots}`)
@@ -119,6 +121,9 @@ try {
 const { child: child4, wsUrl: ws4 } = await startWithPref(PREF_REORDER)
 try {
   await cdp(ws4, "document.querySelector('.island')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  await sleep(400)
+  // pages:[3,0,1,2] 时第一页是日程，从网格进日程组件才能看到 dot 顺序
+  await cdp(ws4, `document.querySelector('.widget[data-page="3"]')?.click(); 1`)
   await sleep(400)
   const firstDot = await cdp(
     ws4,

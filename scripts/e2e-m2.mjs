@@ -81,7 +81,7 @@ async function main() {
     const added = JSON.parse(val(await evalJs(`window.island.todosAdd('e2e-m2 临时待办').then(l=>JSON.stringify(l))`, true)))
     console.log('[2b] 加待办后:', added.length)
     // 勾选（未完成→完成）触发 onDonePulse。岛的收起自动收回是 700ms，先重新展开再在同一个 evaluate 里完成点击+观察（跨调用间隔会超 700ms 被收回）
-    await evalJs(`document.querySelector('.island').click(); 1`)
+    await evalJs(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
     await sleep(400)
     const clicked = val(await evalJs(
       `(async()=>{

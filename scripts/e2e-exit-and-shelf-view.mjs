@@ -98,7 +98,7 @@ async function reload(wsUrl) {
 
 /** 展开岛并切到置物架页（第 2 页，索引 1） */
 async function openShelf(wsUrl) {
-  await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
+  await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
   await sleep(450)
   await cdp(wsUrl, `document.querySelectorAll('.dot')[1].click(); 1`)
   await sleep(500)

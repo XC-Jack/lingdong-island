@@ -215,7 +215,10 @@ const readPrefs = () => JSON.parse(readFileSync(PREFS, 'utf8'))
 /** 展开岛（点一下，= 收起态 toggle 成展开） */
 async function expand() {
   await cdpEval(`(() => { const el = document.querySelector('.island'); if (!el) return 'no-island'; if (!el.className.includes('expanded')) el.click(); return 'ok' })()`)
-  await sleep(700)
+  await sleep(500)
+  // SPEC-island-widget-grid：展开后先落在组件网格，点待办组件才进带页头的功能页
+  await cdpEval(`document.querySelector('.widget[data-page="0"]')?.click(); 1`)
+  await sleep(500)
 }
 
 /** 展开态头部结构：岛仔层、信息行子元素、几何、重叠情况 */

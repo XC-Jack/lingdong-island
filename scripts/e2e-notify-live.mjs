@@ -115,7 +115,7 @@ async function main() {
     await sleep(1800)
 
     // 展开岛 → 切到通知页
-    await evaluate(ws, `document.querySelector('.island').click(); 1`)
+    await evaluate(ws, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
     await sleep(450)
     await evaluate(ws, `document.querySelectorAll('.dot')[2].click(); 1`)
     await sleep(900)

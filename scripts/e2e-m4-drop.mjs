@@ -57,7 +57,7 @@ const main = async () => {
   writeFileSync(f2, 'png')
 
   // 展开岛并切到置物架页
-  await cdp(wsUrl, `(async()=>{document.querySelector('.island').click(); await new Promise(r=>setTimeout(r,400)); document.querySelectorAll('.dot')[1].click(); await new Promise(r=>setTimeout(r,200)); return 'ok'})()`)
+  await cdp(wsUrl, `(async()=>{(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); await new Promise(r=>setTimeout(r,400)); document.querySelectorAll('.dot')[1].click(); await new Promise(r=>setTimeout(r,200)); return 'ok'})()`)
 
   // 走真实链路：shelfAdd（主进程落盘）→ emitShelfAdded 广播 → ShelfPanel 即时刷新
   const after = await cdp(wsUrl, `(async()=>{

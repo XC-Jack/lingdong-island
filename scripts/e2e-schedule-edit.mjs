@@ -88,7 +88,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 300))
   }
   await new Promise((r) => setTimeout(r, 300))
-  await evalJs(`document.querySelector('.island').click()`)
+  await evalJs(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   await new Promise((r) => setTimeout(r, 400))
   await evalJs(`document.querySelectorAll('.dot')[3].click()`)
   await new Promise((r) => setTimeout(r, 400))

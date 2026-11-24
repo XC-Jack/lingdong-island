@@ -49,7 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 try {
   await sleep(6000)
   // dev 启动默认收起态——先点岛展开，再切通知页
-  await cdpEval(`document.querySelector('.island').click()`)
+  await cdpEval(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   await sleep(1000)
   // 通知页 = dot[2]
   await cdpEval(`document.querySelectorAll('.dot')[2].dispatchEvent(new MouseEvent('click', {bubbles:true}))`)

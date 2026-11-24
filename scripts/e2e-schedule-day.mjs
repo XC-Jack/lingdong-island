@@ -230,7 +230,7 @@ const main = async () => {
     console.log('[2] M2 通过：磁盘已落新格式，并生成', bakNow.filter((n) => !bakBefore.has(n)).join(', '))
 
     // ---------- 进入日程页 ----------
-    await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
+    await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
     await sleep(600)
     await cdp(wsUrl, `document.querySelectorAll('.dot')[3].click(); 1`)
     await sleep(700)

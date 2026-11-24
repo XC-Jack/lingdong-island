@@ -73,7 +73,7 @@ const main = async () => {
   const wsUrl = await connect()
   // 1. 等 React 挂载出岛，再展开
   await waitFor(wsUrl, `!!document.querySelector('.island')`, { label: '.island 挂载' })
-  await cdp(wsUrl, `document.querySelector('.island').click()`)
+  await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   // 展开后圆点才渲染，等它出现（数量由 pagesCustom 决定，至少 3 个）
   await waitFor(wsUrl, `document.querySelectorAll('.dot').length >= 3`, { label: '.dot 出现' })
   // 2. 切到第三页（通知）——点击后等 React 渲染完再断言

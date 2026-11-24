@@ -190,7 +190,7 @@ const main = async () => {
     await sleep(900)
 
     // ---------- 展开，停在待办页 ----------
-    await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
+    await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
     await sleep(700)
     const title = await cdp(wsUrl, `document.querySelector('.panel-title')?.textContent`)
     assert(title === '待办', 'A1 没进到待办页，标题 = ' + title)
@@ -354,7 +354,7 @@ const main = async () => {
     console.log('[9] A9 通过：收起态数字 =', collapsed.num, '，文案 =', collapsed.title)
 
     // ---------- A10：把剩下的都勾完，收起标记消失 ----------
-    await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
+    await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
     await sleep(500)
     await cdp(
       wsUrl,

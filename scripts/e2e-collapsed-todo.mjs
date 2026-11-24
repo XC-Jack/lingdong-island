@@ -86,7 +86,7 @@ async function collapse(wsUrl) {
 
 /** 点击岛展开（收起态点一下会 toggle 成展开） */
 async function expand(wsUrl) {
-  await cdp(wsUrl, `document.querySelector('.island').click(); 1`)
+  await cdp(wsUrl, `(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1); 1`)
   await sleep(350)
 }
 

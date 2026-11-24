@@ -60,7 +60,7 @@ async function cdpEval(expr) {
 
 try {
   await new Promise((r) => setTimeout(r, 6000))
-  await cdpEval(`document.querySelector('.island').click()`)
+  await cdpEval(`(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1)`)
   await new Promise((r) => setTimeout(r, 800))
   // 待办页 = dot[0]，默认就在；保险再点一次
   await cdpEval(`document.querySelectorAll('.dot')[0].dispatchEvent(new MouseEvent('click', {bubbles:true}))`)
