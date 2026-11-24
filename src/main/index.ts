@@ -533,16 +533,20 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
 // set-banner-visible IPC 保留为空操作（渲染层调用点不删，避免改三处）。
 ipcMain.on('island:set-banner-visible', () => {})
 
-// 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）
-ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
+// 渲染层量出展开态内容尺寸后下发（随各页内容量自适应，clamp 防过小/过大）。
+// 用 handle 而不是 on：渲染层切页时要等「窗口已改好」再显示新页（SPEC-switch-size-sync），
+// 返回值就是这个回执。ipcRenderer.invoke 在 handler 返回后才 resolve。
+ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
   const nw = Number(w)
   const nh = Number(h)
-  if (!Number.isFinite(nw) || !Number.isFinite(nh)) return
+  if (!Number.isFinite(nw) || !Number.isFinite(nh)) return { ...expandedSize }
   const next = {
     width: Math.round(Math.min(EXPANDED_MAX.width, Math.max(EXPANDED_MIN.width, nw))),
     height: Math.round(Math.min(EXPANDED_MAX.height, Math.max(EXPANDED_MIN.height, nh)))
   }
-  if (next.width === expandedSize.width && next.height === expandedSize.height) return
+  if (next.width === expandedSize.width && next.height === expandedSize.height) {
+    return { ...expandedSize }
+  }
   expandedSize = next
   // 只在展开态时立即应用（收起态下次展开时自然生效）
   if (expanded && mainWindow && !mainWindow.isDestroyed()) {
@@ -551,10 +555,11 @@ ipcMain.on('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
     // 实测出现过 78→…→164→142→…→188 这种「先大后小」的抖动。重起是单调的。
     if (tweenTimer) {
       animateTo(true)
-      return
+      return { ...expandedSize }
     }
     applyBoundsNow(true)
   }
+  return { ...expandedSize }
 })
 
 // 打开置物架里的文件（用系统默认程序）

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState } from '../../shared/types'
 import Pet from './pet/Pet'
 import { fitIslandToPopover } from './popFit'
@@ -3176,7 +3176,8 @@ export default function App(): React.JSX.Element {
         const h = Math.ceil(r.height)
         if (w <= 0 || h <= 0) return
         if (el.classList.contains('expanded')) {
-          window.island.setExpandedSize(w, h)
+          // 普通尺寸变化（列表增减、浮层撑高）不关心回执，切页那条路径自己等（SPEC-switch-size-sync）
+          void window.island.setExpandedSize(w, h)
         } else {
           window.island.setCollapsedWidth(w)
         }
@@ -3628,6 +3629,45 @@ export default function App(): React.JSX.Element {
 
   // 切页淡入：换页时给面板体一个短动画类
   const [pageAnim, setPageAnim] = useState(0)
+  // 切页时把「新页显示」推迟到窗口尺寸落定之后（SPEC-switch-size-sync，2026-11-24）。
+  //
+  // 问题：切页那一刻 .island 立刻变成新页尺寸（max-content，没有 CSS 过渡），而窗口要靠
+  // ResizeObserver 上报才跟，上报还有 80ms 去抖 —— 中间 67~93ms（弱机 200~400ms）里岛比窗口大，
+  // 被窗口裁掉，用户看到的就是「UI 乱了」。
+  // 做法：pageAnim 变化时在 layout 阶段量出新页尺寸、立即上报，主进程改完窗口回执后才让新页淡入；
+  // 回执 300ms 未到则兜底显示，绝不卡空白。useLayoutEffect 里 setState 会在本帧绘制前完成，
+  // 所以新页内容不会闪一帧。
+  const [pageReady, setPageReady] = useState(true)
+  const lastPageAnim = useRef(0)
+  useLayoutEffect(() => {
+    if (lastPageAnim.current === pageAnim) return
+    lastPageAnim.current = pageAnim
+    if (!expandedRef.current) {
+      setPageReady(true)
+      return
+    }
+    setPageReady(false)
+    let alive = true
+    const fallback = window.setTimeout(() => {
+      if (alive) setPageReady(true)
+    }, 300)
+    const reveal = (): void => {
+      if (!alive) return
+      window.clearTimeout(fallback)
+      setPageReady(true)
+    }
+    const r = islandRef.current?.getBoundingClientRect()
+    if (r && r.width > 0 && r.height > 0) {
+      // DOM 已是新页，这里读到的是新页尺寸（会强制结算一次布局）
+      void window.island.setExpandedSize(Math.ceil(r.width), Math.ceil(r.height)).finally(reveal)
+    } else {
+      reveal()
+    }
+    return () => {
+      alive = false
+      window.clearTimeout(fallback)
+    }
+  }, [pageAnim])
   const gotoPage = useCallback((i: number) => {
     setPage(i)
     setPageAnim((n) => n + 1)
@@ -3905,7 +3945,7 @@ export default function App(): React.JSX.Element {
               <div
                 key={pageAnim}
                 onClick={(e) => e.stopPropagation()}
-                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''}`}
+                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${pageReady ? 'page-ready' : ''}`}
               >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />

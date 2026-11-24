@@ -58,9 +58,12 @@ body {
     border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画 */
+/* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画。
+   淡入由 .page-ready 触发（SPEC-switch-size-sync）：切页时新页先隐藏，等主进程把窗口
+   改到新尺寸、回了执，再加这个类播动画 —— 否则新页会先以「岛比窗口大」的状态被窗口裁掉
+   67~93ms（弱机更久）。fill-mode both 保证动画结束后停在 opacity:1。 */
 .page-fade {
-  animation: page-fade-in 180ms ease-out;
+  opacity: 0;
   /* flex 收缩链：允许被父级压矮，否则列表内容会把岛撑到 max-height 之外溢出被裁
      （US-037：「任务加到后面看不见」的根因之一） */
   min-height: 0;
@@ -84,6 +87,11 @@ body {
    不能用全局 .page-fade{width:100%}：日程页靠 max-content 撑开，撑满会与自适应尺寸互锁。 */
 .page-fade.wide {
   width: 100%;
+}
+
+/* 窗口尺寸落定后再播淡入（SPEC-switch-size-sync） */
+.page-fade.page-ready {
+  animation: page-fade-in 180ms ease-out both;
 }
 
 .island.collapsed {
@@ -2276,7 +2284,7 @@ body {
     animation: none;
   }
 
-  .page-fade {
+  .page-fade.page-ready {
     animation-duration: 1ms;
   }
 

@@ -56,9 +56,10 @@ const api = {
   setCollapsedWidth(px: number): void {
     ipcRenderer.send('island:set-collapsed-width', px)
   },
-  /** 展开态内容尺寸上报（主进程 clamp 到 420~720 × 220~420 后定窗口大小） */
-  setExpandedSize(w: number, h: number): void {
-    ipcRenderer.send('island:set-expanded-size', w, h)
+  /** 展开态内容尺寸上报（主进程 clamp 到 255~540 × 113~315 后定窗口大小）。
+   *  返回主进程实际采用的尺寸：切页时渲染层等这个回执再显示新页（SPEC-switch-size-sync）。 */
+  setExpandedSize(w: number, h: number): Promise<{ width: number; height: number }> {
+    return ipcRenderer.invoke('island:set-expanded-size', w, h)
   },
   /** 文件拖悬停在窗口上（收起态时让主进程放大窗口） */
   dragHover(): void {
