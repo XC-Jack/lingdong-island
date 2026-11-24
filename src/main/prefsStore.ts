@@ -1,8 +1,16 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { AVOID_MODES, CLOCK_FORMATS, PET_MODES, PET_SKIN_IDS } from '../shared/types'
-import type { AvoidMode, ClockFormat, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos } from '../shared/types'
+import { AVOID_MODES, CLOCK_FORMATS, ISLAND_THEMES, PET_MODES, PET_SKIN_IDS } from '../shared/types'
+import type {
+  AvoidMode,
+  ClockFormat,
+  IslandTheme,
+  NeteaseCdpMode,
+  PetMode,
+  PetSkinId,
+  PetWindowPos
+} from '../shared/types'
 
 /** 收起态可裁剪组件的键（与 App.tsx 的 COLLAPSED_KEYS 保持一致） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -70,6 +78,11 @@ interface PrefsShape {
    * 点选即记住：下次这些进程在跑时和内置已知播放器一样参与自动选源。
    */
   musicKnownPlayers?: string[]
+  /**
+   * 岛的主题（SPEC-island-themes）。缺失 = `glass-light`（用户选定的默认）。
+   * 与其它字段一样不在缺失时写盘，这样以后改默认主题，老用户能跟着变。
+   */
+  islandTheme?: IslandTheme
 }
 
 /** 页面索引的合法上限：0 待办 / 1 置物架 / 2 通知 / 3 日程 / 4 音乐 */
@@ -171,6 +184,13 @@ function normalizeNeteaseCdpMode(v: unknown): NeteaseCdpMode | undefined {
 function normalizeClockFormat(v: unknown): ClockFormat | undefined {
   return typeof v === 'string' && (CLOCK_FORMATS as readonly string[]).includes(v)
     ? (v as ClockFormat)
+    : undefined
+}
+
+/** 主题（SPEC-island-themes）：白名单，手改坏了按缺失处理（= 默认亮色玻璃） */
+function normalizeIslandTheme(v: unknown): IslandTheme | undefined {
+  return typeof v === 'string' && (ISLAND_THEMES as readonly string[]).includes(v)
+    ? (v as IslandTheme)
     : undefined
 }
 
@@ -295,6 +315,8 @@ function load(): PrefsShape {
     if (nm) out.neteaseCdpMode = nm
     const cf = normalizeClockFormat(parsed.clockFormat)
     if (cf) out.clockFormat = cf
+    const th = normalizeIslandTheme(parsed.islandTheme)
+    if (th) out.islandTheme = th
     if (typeof parsed.desktopLyricEnabled === 'boolean') {
       out.desktopLyricEnabled = parsed.desktopLyricEnabled
     }
@@ -389,7 +411,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, desktopLyricEnabled, musicSourcePin, musicKnownPlayers } =
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, islandTheme, desktopLyricEnabled, musicSourcePin, musicKnownPlayers } =
     (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
@@ -400,6 +422,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
       avoidMode?: unknown
       neteaseCdpMode?: unknown
       clockFormat?: unknown
+      islandTheme?: unknown
       desktopLyricEnabled?: unknown
       musicSourcePin?: unknown
       musicKnownPlayers?: unknown
@@ -432,6 +455,9 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const cf = normalizeClockFormat(clockFormat)
   if (cf) data.clockFormat = cf
   else if (clockFormat !== undefined) delete data.clockFormat
+  const th = normalizeIslandTheme(islandTheme)
+  if (th) data.islandTheme = th
+  else if (islandTheme !== undefined) delete data.islandTheme
   if (typeof desktopLyricEnabled === 'boolean') data.desktopLyricEnabled = desktopLyricEnabled
   else if (desktopLyricEnabled !== undefined) delete data.desktopLyricEnabled
   const pin = normalizeExeName(musicSourcePin)

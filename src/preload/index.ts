@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, ResidueCleanupBackup, ResidueDiscardBackupResult, Todo, UpdateState } from '../shared/types'
+import type { AppInfo, AvoidMode, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ClockFormat, IslandTheme, LyricQuery, LyricResult, MusicCommand, MusicState, NeteaseCdpMode, PetMode, PetSkinId, PetWindowPos, AdminCleanupId, AdminCleanupRunResult, AdminCleanupScanResult, ResidueBackup, ResidueCleanResult, ResidueScanResult, SettingsSection, ShelfItem, ShelfOpenResult, ShelfRevealResult, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, ResidueCleanupBackup, ResidueDiscardBackupResult, Todo, UpdateState } from '../shared/types'
 
 export type { Todo, ShelfItem, ShelfOpenResult, ShelfRevealResult, SettingsSection, AppInfo, MusicState, MusicCommand, LyricQuery, LyricResult, UpdateState, CleanupItemDef, CleanupItemScan, CleanupRunResult, CleanupScope, CleanupTargetId, ResidueScanResult, ResidueCleanResult, ResidueBackup, SoftwareResidueScanResult, ResidueCleanupRunResult, ResidueUndoResult, ResidueCleanupBackup, ResidueDiscardBackupResult, AdminCleanupScanResult, AdminCleanupRunResult, AdminCleanupId }
 
@@ -609,6 +609,8 @@ export interface PrefsShape {
   neteaseCdpMode?: NeteaseCdpMode
   /** 时钟显示档位（SPEC-clock-date-format）；缺失=time（仅时间） */
   clockFormat?: ClockFormat
+  /** 岛的主题（SPEC-island-themes）；缺失=glass-light（亮色乳白玻璃） */
+  islandTheme?: IslandTheme
   /** 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）；缺失=true */
   desktopLyricEnabled?: boolean
 }

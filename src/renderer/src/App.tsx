@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ISLAND_THEMES } from '../../shared/types'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState } from '../../shared/types'
 import Pet from './pet/Pet'
 import { fitIslandToPopover } from './popFit'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
+
+/**
+ * 主题落到 `<html data-theme>`（SPEC-island-themes）。
+ * CSS 里只有 glass-dark / mono 两块覆盖，glass-light 直接用 :root 的默认值，
+ * 所以「非法或缺失」和「显式 glass-light」是同一个结果，不需要额外分支。
+ */
+function applyIslandTheme(v: unknown): void {
+  const t = typeof v === 'string' && (ISLAND_THEMES as readonly string[]).includes(v) ? v : 'glass-light'
+  if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t
+}
 
 /** 通知页数据结构（与 preload/notifyStore 保持一致；独立声明避免跨 tsconfig project 引用） */
 interface NotifyItem {
@@ -3081,14 +3092,14 @@ function MusicPanel({
 }
 
 /** 页标签：页头图标组件 + 名称（对照视频里每页左上角的彩色小图标 + 页名）；图标用线性 SVG，不用 emoji。
- *  2026-11-24 视觉换皮（SPEC-visual-refresh）：五个页面原本各用一种高饱和色（绿/橙/紫/蓝/粉），
- *  是「年代感」的主要来源之一；统一成同一个低饱和蓝，页面身份改由图标形状区分。 */
-const PAGE_META: { icon: () => React.JSX.Element; label: string; accent: string }[] = [
-  { icon: IcoCheck, label: '待办', accent: '#7c9cff' },
-  { icon: IcoShelf, label: '置物架', accent: '#7c9cff' },
-  { icon: IcoBell, label: '通知', accent: '#7c9cff' },
-  { icon: IcoCal, label: '日程', accent: '#7c9cff' },
-  { icon: IcoMusic, label: '音乐', accent: '#7c9cff' },
+ *  2026-11-24：五页不再各配一种颜色，配色统一交给主题的 --accent（SPEC-island-themes），
+ *  页面身份由图标形状区分；这里只留图标与名称，不再携带色值。 */
+const PAGE_META: { icon: () => React.JSX.Element; label: string }[] = [
+  { icon: IcoCheck, label: '待办' },
+  { icon: IcoShelf, label: '置物架' },
+  { icon: IcoBell, label: '通知' },
+  { icon: IcoCal, label: '日程' },
+  { icon: IcoMusic, label: '音乐' },
 ]
 
 export default function App(): React.JSX.Element {
@@ -3133,6 +3144,7 @@ export default function App(): React.JSX.Element {
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
         if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+        applyIslandTheme(prefs.islandTheme)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -3640,6 +3652,7 @@ export default function App(): React.JSX.Element {
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
       if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+      applyIslandTheme(prefs.islandTheme)
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -3938,7 +3951,7 @@ export default function App(): React.JSX.Element {
                   dateWeek 档时钟被 50% 宽的绝对居中盒压成三行并压住标题；改成上下两行后
                   状态行独占整宽居中，标题再长也不会和它抢横向空间。 */}
               <div className="head-top">
-                <span className="panel-badge" style={{ ['--accent' as never]: '#7c9cff' }}>
+                <span className="panel-badge">
                   <span className="panel-badge-icon">{PAGE_META[page].icon()}</span>
                 </span>
                 <span className="panel-title">{PAGE_META[page].label}</span>

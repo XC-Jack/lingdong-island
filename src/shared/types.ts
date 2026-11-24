@@ -488,6 +488,15 @@ export interface MusicState {
 export type ClockFormat = 'time' | 'date' | 'dateWeek'
 export const CLOCK_FORMATS: ClockFormat[] = ['time', 'date', 'dateWeek']
 
+/**
+ * 岛的主题（SPEC-island-themes）。
+ * glass-light=亮色乳白玻璃（默认，用户 2026-11-24 选定）／glass-dark=纯黑玻璃／
+ * mono=纯黑极简。值直接作为 `<html data-theme>` 的取值，渲染层的 CSS 按它取变量。
+ * ⚠️ 已落盘的值不能改名，否则用户的选择会静默丢失。
+ */
+export const ISLAND_THEMES = ['glass-light', 'glass-dark', 'mono'] as const
+export type IslandTheme = (typeof ISLAND_THEMES)[number]
+
 /** 网易云后台控制的三档策略（SPEC-netease-cdp-mode） */
 export type NeteaseCdpMode = 'auto' | 'manual' | 'off'
 
