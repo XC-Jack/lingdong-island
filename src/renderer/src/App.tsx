@@ -3108,6 +3108,9 @@ export default function App(): React.JSX.Element {
   // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
   const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
   const [page, setPage] = useState(0)
+  // 翻页函数（flipPage）要读当前页算目标页，用 ref 避免把它塞进依赖里频繁换引用
+  const pageRef = useRef(page)
+  pageRef.current = page
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
   // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
@@ -3154,6 +3157,17 @@ export default function App(): React.JSX.Element {
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
   expandedRef.current = expanded
+  // 各页上次量到的尺寸：切页前先按它把窗口扩好，新页渲染完时窗口往往已经到位，
+  // 把「变大」那条路径的空白压到 0（首次访问某页没有缓存，仍走回执等待，SPEC-switch-size-sync）。
+  const pageSizeCache = useRef<Record<number, { w: number; h: number }>>({})
+  const primeWindowSize = useCallback((i: number) => {
+    const c = pageSizeCache.current[i]
+    if (!c || !expandedRef.current) return
+    // 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失
+    if (c.w > window.innerWidth + 1 || c.h > window.innerHeight + 1) {
+      void window.island.setExpandedSize(c.w, c.h)
+    }
+  }, [])
   const collapseTimer = useRef<number | null>(null)
   /** US-041：避让回调要调 clearCollapseTimer，但那函数声明在后——用 ref 桥接 */
   const clearCollapseTimerRef = useRef<(() => void) | null>(null)
@@ -3584,17 +3598,21 @@ export default function App(): React.JSX.Element {
   // 而是下面那条残留守卫 `if (p === 4) return list[0]` 造成的（翻到音乐页弹回第一页）。
   // 注意：这里原来还有一条 `if (p === 4) return list[0]`——那是「page 4 = 页面管理面板」时代的守卫，
   // 页面管理搬进设置窗口后 4 变成了音乐页，这条残留导致翻到音乐页就被弹回第一页。
-  const flipPage = useCallback((dir: 1 | -1) => {
-    setPage((p) => {
+  const flipPage = useCallback(
+    (dir: 1 | -1) => {
       const list = enabledPagesRef.current
-      if (list.length === 0) return 0
+      if (list.length === 0) return
       // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
-      let idx = list.indexOf(p)
+      let idx = list.indexOf(pageRef.current)
       if (idx === -1) idx = 0
       // 取模循环：第一页按左回到最后一页、最后一页按右回到第一页。
-      return list[(idx + dir + list.length) % list.length]
-    })
-  }, [])
+      const next = list[(idx + dir + list.length) % list.length]
+      // 先按上次量到的尺寸把窗口扩好，再换内容（缓存没有则跳过，走回执等待）
+      primeWindowSize(next)
+      setPage(next)
+    },
+    [primeWindowSize]
+  )
 
   // enabledPages 的 ref：flipPage 不依赖它重建，避免翻页函数频繁换引用
   const enabledPagesRef = useRef(enabledPages)
@@ -3638,11 +3656,29 @@ export default function App(): React.JSX.Element {
   // 回执 300ms 未到则兜底显示，绝不卡空白。useLayoutEffect 里 setState 会在本帧绘制前完成，
   // 所以新页内容不会闪一帧。
   const [pageReady, setPageReady] = useState(true)
-  const lastPageAnim = useRef(0)
+  // 用 page 而不是 pageAnim 当触发条件：箭头翻页（flipPage）只改 page、不 bump pageAnim，
+  // 而它就是用户最常用的切页方式 —— 只盯 pageAnim 会漏掉整整一半路径（2026-11-24 用户反馈）。
+  const lastPageSeen = useRef(page)
   useLayoutEffect(() => {
-    if (lastPageAnim.current === pageAnim) return
-    lastPageAnim.current = pageAnim
+    if (lastPageSeen.current === page) return
+    lastPageSeen.current = page
     if (!expandedRef.current) {
+      setPageReady(true)
+      return
+    }
+    const r = islandRef.current?.getBoundingClientRect()
+    if (!r || r.width <= 0 || r.height <= 0) {
+      setPageReady(true)
+      return
+    }
+    const w = Math.ceil(r.width)
+    const h = Math.ceil(r.height)
+    pageSizeCache.current[page] = { w, h }
+    // 新页没比当前窗口大（切到更小/同大的页）：岛完全在窗口内，怎么都不会被裁，
+    // 不用等回执，直接显示 —— 把「内容先消失一下」的闪降到零。
+    const fits = w <= window.innerWidth + 1 && h <= window.innerHeight + 1
+    if (fits) {
+      void window.island.setExpandedSize(w, h)
       setPageReady(true)
       return
     }
@@ -3656,22 +3692,21 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(fallback)
       setPageReady(true)
     }
-    const r = islandRef.current?.getBoundingClientRect()
-    if (r && r.width > 0 && r.height > 0) {
-      // DOM 已是新页，这里读到的是新页尺寸（会强制结算一次布局）
-      void window.island.setExpandedSize(Math.ceil(r.width), Math.ceil(r.height)).finally(reveal)
-    } else {
-      reveal()
-    }
+    // DOM 已是新页，这里读到的是新页尺寸（会强制结算一次布局）
+    void window.island.setExpandedSize(w, h).finally(reveal)
     return () => {
       alive = false
       window.clearTimeout(fallback)
     }
-  }, [pageAnim])
-  const gotoPage = useCallback((i: number) => {
-    setPage(i)
-    setPageAnim((n) => n + 1)
-  }, [])
+  }, [page])
+  const gotoPage = useCallback(
+    (i: number) => {
+      primeWindowSize(i)
+      setPage(i)
+      setPageAnim((n) => n + 1)
+    },
+    [primeWindowSize]
+  )
 
   // 通知铃铛被点击 → 展开岛并直接落在通知页（page 2）。
   // 用户 2026-11-10 要求：点铃铛不必先展开到第一页再自己翻两下。
@@ -3685,10 +3720,11 @@ export default function App(): React.JSX.Element {
       setExpanded(true)
     }
     if (page !== 2) {
+      primeWindowSize(2)
       setPage(2)
       setPageAnim((n) => n + 1)
     }
-  }, [clearCollapseTimer, page])
+  }, [clearCollapseTimer, page, primeWindowSize])
 
   const onDragOverRoot = (e: React.DragEvent): void => {
     e.preventDefault()

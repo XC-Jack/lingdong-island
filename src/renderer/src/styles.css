@@ -91,7 +91,8 @@ body {
 
 /* 窗口尺寸落定后再播淡入（SPEC-switch-size-sync） */
 .page-fade.page-ready {
-  animation: page-fade-in 180ms ease-out both;
+  /* 120ms：窗口已同步好之后才开始，这里只负责「别硬切」，不需要再用长动画遮掩 */
+  animation: page-fade-in 120ms ease-out both;
 }
 
 .island.collapsed {
