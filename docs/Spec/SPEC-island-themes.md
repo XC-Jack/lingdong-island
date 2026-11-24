@@ -100,7 +100,7 @@
 
 | 层 | 位置 | 职责 |
 | --- | --- | --- |
-| 主进程 `ipcMain.handle('island:backdrop')` | `src/main/index.ts` | `desktopCapturer.getSources({types:['screen'], thumbnailSize: 全屏物理像素 × 0.35})` 抓屏 → 按 `display_id` 选屏 → 把岛窗口 bounds 换算成缩略图坐标裁下来 → 返回 data URL |
+| 主进程 `ipcMain.handle('island:backdrop')` | `src/main/index.ts` | `desktopCapturer.getSources({types:['screen'], thumbnailSize: 全屏物理像素 × 0.35})` 抓屏 → 按 `display_id` 选屏 → 岛窗口 bounds 换算成缩略图坐标 → 裁一圈（岛 + 四边同宽 pad）→ **把岛占的矩形用左右两侧桌面像素横向插值填掉** → 返回 data URL |
 | preload `islandBackdrop()` | `src/preload/index.ts` | IPC 桥 |
 | 渲染层抓取循环 | `src/renderer/src/App.tsx` | 只在 `islandTheme === 'glass-light'` 且岛没被全屏避让时跑；收起 5s / 展开 1.5s 一次；拿不到就 900ms 后重试（启动初期窗口还没 show 会返回 null） |
 | `.island-backdrop` | `styles.css` | 截图当 `background-image`，`inset:-32px` 外扩后 `blur(22px) saturate(1.28)` |
@@ -110,15 +110,17 @@
 
 ### 9.2 三条硬约束
 
-1. **抓之前必须开 `setContentProtection(true)`**，否则会把岛自己拍进底图（WDA_EXCLUDEFROMCAPTURE，实验见 `.tmp/glass-probe/capture.js`）；`finally` 里立刻关掉。
+1. **不能用「抓屏期间开关 `setContentProtection`」来躲开岛自己**。第一版就是这么做的（抓前 true、`finally` 关），结果被用户当场发现「老是闪，突然消失突然出现」：录屏逐帧实测，每次抓屏那 4~5 帧里岛显示的是**一张旧的缓存画面**（启动时的收起态小胶囊，亮度 140 vs 正常 205），每隔 1.5s 一次，就是 DWM 在切换 `WDA_EXCLUDEFROMCAPTURE` 时换了缓存 surface。
+   → 现方案：**照常抓**（岛会在图里），再在 `toBitmap()` 的原始像素上把岛那块矩形填掉——每行取左右紧贴的桌面列，`smoothstep` 横向插值。反正最后要 `blur(22px)`，低频色块和真桌面看不出区别。pad 必须四边同宽（取能放下的最大值），否则 crop 中心偏离岛中心、cover 之后底图整体错位。
 2. **图只在内存里**：data URL 只给渲染层当 CSS 背景，不落盘、不写日志、不上传。
 3. **主进程不自己起定时器**：岛隐藏（全屏避让）时渲染层不拉，就没有任何抓屏开销。
 
 ### 9.3 实测数据
 
-- 单次抓取（渲染层视角，含 IPC 往返）：116 / 119 / 130 / 145 / 157 / 183 ms（多次运行），缩略图 35% 全屏 [实测 `.tmp/island-themes/backdrop-shot.cjs`]。
-- CPU（Electron 全部进程，12 秒墙钟）：收起 亮色 0.44s vs 纯黑 0.30s（差 0.14s）；展开 亮色 0.97s vs 纯黑 0.13s（差 0.84s ≈ 单核 7%）[实测 `.tmp/island-themes/measure-backdrop-cpu.cjs`]。展开时抓得勤（1.5s 一次），代价集中在这里；收起态基本无感。
-- 裁切对齐：把假桌面做成「左半白 / 右半黑」硬边，岛内过渡带的中点落在 320px，岛外硬边在 322px（同一张 640px 宽上下文截图）→ 偏差 ≤ 2px，在模糊半径内，无错位 [实测 `shots/backdrop/light-expanded-ctx.png` 逐行采样]。
+- 单次抓取（渲染层视角，含 IPC 往返）：不插图时 116–183 ms；插图版 164–204 ms（多出的是 `toBitmap`/`createFromBitmap` 的往返）[实测 `.tmp/island-themes/backdrop-shot.cjs`]。
+- CPU（Electron 全部进程，12 秒墙钟）：收起 亮色 0.39s vs 纯黑 0.16s（差 0.23s）；展开 亮色 0.97s vs 纯黑 0.22s（差 0.75s ≈ 单核 6%）[实测 `.tmp/island-themes/measure-backdrop-cpu.cjs`]。展开时抓得勤（1.5s 一次），代价集中在这里；收起态基本无感。
+- **闪烁修复的前后对照**：录屏 14 秒（25fps）逐帧算岛中心平均亮度。修复前 `max 204.7 / min 140.6`，每 37 帧（1.5s）出现连续 4~5 帧的低值，抽帧看就是「缩成启动时的收起态小胶囊」；修复后 `max = min = 198.4`，一条直线 [实测 `.tmp/island-themes/record-flicker.cjs`，`shots/flicker/before|after2`]。
+- 裁切对齐：把假桌面做成「左半白 / 右半黑」硬边，岛内过渡带的中点落在 316~322px，岛外硬边在 322px（同一张 640px 宽上下文截图）→ 偏差 ≤ 6px，在模糊半径内，无错位 [实测 `shots/backdrop/split1-ctx.png` 逐行采样]。
 - 与参考图的色值（同一张黄昏壁纸、同位置）：岛中心 220/190/174，参考图 `mockup-b-640.png` 220/187/170；右上冷区 214/213/224 vs 198/203/223；底部暖区 217/182/165 vs 205/167/155 [实测，`.tmp/island-themes/shots/backdrop/mock3.png`]。第一轮同位置是 247/250 级的中性白——这就是用户说的「纯白」。
 
 ### 9.4 开关链路
@@ -127,7 +129,7 @@
 
 ### 9.5 已知取舍
 
-1. **屏幕共享/录屏会闪**：每次抓屏要开 ~150ms 的内容保护，这期间别人看到的是「岛那一块是透明的」。频率：展开时约每 1.5s 一次。若以后用户反馈，可加设置项关掉真透视或降低频率。
+1. **岛背后的颜色是「插值」出来的，不是真拍到的**：岛占的那块在抓屏里是玻璃自己，只能拿左右两侧推断。桌面在岛背后有强竖直边界（比如窗口边正好藏在岛下面）时，模糊后的过渡位置会和真实桌面略有出入；因为最终 `blur(22px)` + 62% veil，肉眼不可辨。
 2. **抓屏失败静默回退**：远程桌面、显卡驱动异常时 `getSources` 可能返回空/抛错，此时底图不出现，岛退回第一轮的静态乳白 veil，不会报错也不会白屏。
 3. **多显示器 DPI**：按 `display.scaleFactor` 和缩略图实际尺寸反推比例，理论上支持混合 DPI，但只在单屏 1.25 缩放下实测过 [未验证]。
 4. 底图是**整屏抓取再裁**，缩略图越小边缘越糊；35% 是可读性与耗时的折中。
