@@ -1,9 +1,9 @@
 // e2e-shelf-view-pref.mjs：验证 US-037「置物架视图记忆迁移 prefs.json」
 // 背景：localStorage 版（US-034）跨重启会丢（file:// 源 localStorage 本机实测重启即 null），
 //      视图记忆改走主进程 prefs.json（prefs:get/prefs:set IPC）。
-// 覆盖：①无偏好记录时默认「大图标」且 prefs.json 无 shelfView ②选「列表」立即生效且写进 prefs.json
-//      ③重载页面（模拟重启）后仍是「列表」④改选「小图标」重载也记得
-//      ⑤prefs.json 里 shelfView 被改坏时回落「大图标」不白屏
+// 覆盖：①无偏好记录时默认「大图标」且 prefs.json 无 shelfView ②点切换键切到「列表」立即生效且写进 prefs.json
+//      ③重载页面（模拟重启）后仍是「列表」④再点一次切回「大图标」，重载也记得
+//      ⑤prefs.json 里 shelfView 被改坏时回落「大图标」不白屏（旧值 md/sm 同样回落）
 //      ⑥写 shelfView 不破坏 pagesCustom（页面管理偏好互不干扰）
 // 用法：node scripts/e2e-shelf-view-pref.mjs（自动启动 electron，CDP 端口 9331；Node 22+ 自带全局 WebSocket）
 // 注意：只动 userData/prefs.json 的 shelfView 字段（测试值跑完还原），不碰 shelf.json / todos.json / schedule.json。
@@ -102,7 +102,7 @@ async function openShelf(wsUrl) {
 const currentViewClass = `(() => {
   const drop = document.querySelector('.shelf-drop');
   if (!drop) return null;
-  return ['lg','md','sm','list'].find(c => drop.classList.contains(c)) ?? null;
+  return ['lg','list'].find(c => drop.classList.contains(c)) ?? null;
 })()`
 
 /** 直接读磁盘上的 prefs.json（主进程文件，跨重载都真实持久） */
@@ -151,15 +151,13 @@ const main = async () => {
     console.log('[A1] 无偏好时:', JSON.stringify(a1), 'prefs:', JSON.stringify(readPrefs()))
     assert(a1.view === 'lg', `无偏好时默认应为 lg，实际 ${a1.view}`)
 
-    // ---------- A2：选「列表」立即生效且写进 prefs.json ----------
+    // ---------- A2：点切换键切到「列表」，立即生效且写进 prefs.json ----------
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
-    await sleep(200)
-    await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][3].click(); 1`)
     await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`) // 等 IPC 写盘
     const a2 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
     const prefs2 = readPrefs()
-    console.log('[A2] 选「列表」后:', JSON.stringify(a2), 'prefs.shelfView:', prefs2.shelfView)
-    assert(a2.view === 'list', `选完应立刻变成 list，实际 ${a2.view}`)
+    console.log('[A2] 点切换键后:', JSON.stringify(a2), 'prefs.shelfView:', prefs2.shelfView)
+    assert(a2.view === 'list', `点一下应切到 list，实际 ${a2.view}`)
     assert(prefs2.shelfView === 'list', `prefs.json 应记 shelfView=list，实际 ${JSON.stringify(prefs2.shelfView)}`)
 
     // ---------- A3：重载（等价于重启）后仍是「列表」 ----------
@@ -169,18 +167,16 @@ const main = async () => {
     console.log('[A3] 重载后:', JSON.stringify(a3))
     assert(a3.view === 'list', `重载后应记得 list，实际 ${a3.view}`)
 
-    // ---------- A4：改选「小图标」重载也记得 ----------
+    // ---------- A4：再点一次切回「大图标」，重载也记得 ----------
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
-    await sleep(200)
-    await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][2].click(); 1`)
     await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`)
     await reload(wsUrl)
     await openShelf(wsUrl)
     const a4 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
     const prefs4 = readPrefs()
-    console.log('[A4] 改选「小图标」后重载:', JSON.stringify(a4), 'prefs.shelfView:', prefs4.shelfView)
-    assert(a4.view === 'sm', `重载后应记得 sm，实际 ${a4.view}`)
-    assert(prefs4.shelfView === 'sm', `prefs.json 应更新为 sm，实际 ${JSON.stringify(prefs4.shelfView)}`)
+    console.log('[A4] 切回「大图标」后重载:', JSON.stringify(a4), 'prefs.shelfView:', prefs4.shelfView)
+    assert(a4.view === 'lg', `重载后应记得 lg，实际 ${a4.view}`)
+    assert(prefs4.shelfView === 'lg', `prefs.json 应更新为 lg，实际 ${JSON.stringify(prefs4.shelfView)}`)
 
     // ---------- A5：prefs.json 里 shelfView 被改坏 → 回落「大图标」，不白屏 ----------
     const prefs5 = readPrefs()
@@ -196,6 +192,16 @@ const main = async () => {
     assert(a5.view === 'lg', `非法值应回落到 lg，实际 ${a5.view}`)
     assert(a5.alive === true, '值非法也不该白屏')
 
+    // ---------- A5b：旧版记录的中/小图标（md/sm）已被移除 → 回落「大图标」 ----------
+    const prefs5b = readPrefs()
+    prefs5b.shelfView = 'sm'
+    writeFileSync(PREFS_FILE, JSON.stringify(prefs5b, null, 2), 'utf8')
+    await reload(wsUrl)
+    await openShelf(wsUrl)
+    const a5b = await settle(wsUrl, `({ view: ${currentViewClass} })`)
+    console.log('[A5b] 旧值 sm 重载后:', JSON.stringify(a5b))
+    assert(a5b.view === 'lg', `已移除的 sm 应回落到 lg，实际 ${a5b.view}`)
+
     // ---------- A6：写 shelfView 不破坏 pagesCustom（互不干扰） ----------
     // 先造一份带 pagesCustom 的 prefs，再走 UI 切视图，断言 pagesCustom 原样保留。
     // 注意：pages 必须包含置物架页（索引 1），否则置物架被裁掉、后面的选择器点不到。
@@ -207,8 +213,6 @@ const main = async () => {
     await reload(wsUrl)
     await openShelf(wsUrl)
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
-    await sleep(200)
-    await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][0].click(); 1`)
     await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`)
     const prefs6 = readPrefs()
     console.log('[A6] 切视图后 pagesCustom:', JSON.stringify(prefs6.pagesCustom))
@@ -218,7 +222,7 @@ const main = async () => {
         prefs6.pagesCustom.collapsed.todo === false,
       '切视图不应动 pagesCustom'
     )
-    assert(prefs6.shelfView === 'lg', `A6 切回大图标应落盘 lg，实际 ${JSON.stringify(prefs6.shelfView)}`)
+    assert(prefs6.shelfView === 'list', `A6 点切换键应落盘 list，实际 ${JSON.stringify(prefs6.shelfView)}`)
 
     // ---------- 恢复已由 finally 统一处理（prefsBackup） ----------
     console.log('[清理] prefs.json 已在 finally 还原')

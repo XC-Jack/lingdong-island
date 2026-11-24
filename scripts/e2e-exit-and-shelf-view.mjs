@@ -107,7 +107,7 @@ async function openShelf(wsUrl) {
 const currentViewClass = `(() => {
   const drop = document.querySelector('.shelf-drop');
   if (!drop) return null;
-  return ['lg','md','sm','list'].find(c => drop.classList.contains(c)) ?? null;
+  return ['lg','list'].find(c => drop.classList.contains(c)) ?? null;
 })()`
 
 const main = async () => {
@@ -145,14 +145,12 @@ const main = async () => {
     assert(a1.view === 'lg', `无偏好时默认应为 lg，实际 ${a1.view}`)
     assert(readPrefs().shelfView === undefined, '还没选过就不该写 prefs.json')
 
-    // ---------- A2：选「列表」立即生效并落盘 ----------
+    // ---------- A2：点切换键切到「列表」，立即生效并落盘 ----------
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
-    await sleep(200)
-    await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][3].click(); 1`)
     await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`) // 等 IPC 写盘
     const a2 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
-    console.log('[A2] 选「列表」后:', JSON.stringify(a2), 'prefs.shelfView:', readPrefs().shelfView)
-    assert(a2.view === 'list', `选完应立刻变成 list，实际 ${a2.view}`)
+    console.log('[A2] 点切换键后:', JSON.stringify(a2), 'prefs.shelfView:', readPrefs().shelfView)
+    assert(a2.view === 'list', `点一下应切到 list，实际 ${a2.view}`)
     assert(readPrefs().shelfView === 'list', `选择应写进 prefs.json，实际 ${JSON.stringify(readPrefs().shelfView)}`)
 
     // ---------- A3：重载（等价于重启）后仍是「列表」 ----------
@@ -162,17 +160,15 @@ const main = async () => {
     console.log('[A3] 重载后:', JSON.stringify(a3))
     assert(a3.view === 'list', `重载后应记得 list，实际 ${a3.view}`)
 
-    // ---------- A4：换成「小图标」重载也记得 ----------
+    // ---------- A4：再点一次切回「大图标」，重载也记得 ----------
     await cdp(wsUrl, `document.querySelector('.shelf-view-btn').click(); 1`)
-    await sleep(200)
-    await cdp(wsUrl, `[...document.querySelectorAll('.shelf-view-item')][2].click(); 1`)
     await settle(wsUrl, `new Promise(r=>setTimeout(r,600)).then(()=>1)`)
     await reload(wsUrl)
     await openShelf(wsUrl)
     const a4 = await settle(wsUrl, `({ view: ${currentViewClass} })`)
-    console.log('[A4] 改选「小图标」后重载:', JSON.stringify(a4), 'prefs.shelfView:', readPrefs().shelfView)
-    assert(a4.view === 'sm', `重载后应记得 sm，实际 ${a4.view}`)
-    assert(readPrefs().shelfView === 'sm', `prefs.json 应更新为 sm，实际 ${JSON.stringify(readPrefs().shelfView)}`)
+    console.log('[A4] 切回「大图标」后重载:', JSON.stringify(a4), 'prefs.shelfView:', readPrefs().shelfView)
+    assert(a4.view === 'lg', `重载后应记得 lg，实际 ${a4.view}`)
+    assert(readPrefs().shelfView === 'lg', `prefs.json 应更新为 lg，实际 ${JSON.stringify(readPrefs().shelfView)}`)
 
     // ---------- A5：偏好值被改坏时回落「大图标」，不白屏 ----------
     const prefs5 = readPrefs()

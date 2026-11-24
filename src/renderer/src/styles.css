@@ -234,6 +234,52 @@ body {
     border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* 切页瞬间关过渡（2026-11-24 快速点击卡顿）：窗口是 setBounds 一次性跳变的，
+   岛若还按 220ms 过渡，收缩时比窗口大、会被裁到过渡结束。nav-snap 由 App 在切页时
+   临时加上，120ms 后移除；那时尺寸已稳定，移除不会补播动画。展开/收起不加这个类。 */
+.island.expanded.nav-snap {
+  transition: none;
+}
+
+/* 打开/收起的一次性入场动画（2026-11-25，SPEC-island-motion）：
+   窗口由主进程 220ms 单调补间（500ms 太长，开合一次一直看着窗口在动，就是用户说的「震动 + 卡」），
+   `.island` 这边只做淡入 + 轻微缩放，两套尺寸动画不叠加。
+   只允许 ≤1 的缩放：窗口此时与岛同大，放大 1px 都会被窗口切掉。 */
+.island.island-anim-open {
+  transform-origin: 50% 0;
+  /* 宽高过渡关掉，尺寸只由窗口补间驱动；入场只做缩放/淡入 */
+  transition: none;
+  animation: island-open 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.island.island-anim-close {
+  transform-origin: 50% 0;
+  transition: none;
+  animation: island-close 180ms ease-out both;
+}
+
+@keyframes island-open {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes island-close {
+  from {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ---------- 真透视底图（SPEC-island-themes 第二轮，2026-11-24） ----------
    主进程抓「岛背后那块屏幕」→ 渲染层当背景 → 自己模糊。三层关系：
      1) .island-backdrop：截图层，外扩 32px 再 blur，把截图的硬边甩到岛外被圆角裁掉；
@@ -301,6 +347,17 @@ body {
   width: 100%;
 }
 
+/* 置物架 / 通知页保留固定页面尺寸（2026-11-24 用户：「别有了消息还没没有小，别老是缩回去了」）。
+   高度取各自空态时的页高（布局 px，实测空态屏高 65.4 / 127.5 ÷ 0.75）：
+   没有内容时由空态撑到这个高度，有少量内容时也不会比空态矮；内容再多仍可撑高或内部滚动。 */
+.page-fade.page-shelf {
+  min-height: 87px;
+}
+
+.page-fade.page-notify {
+  min-height: 170px;
+}
+
 /* 窗口尺寸落定后再播淡入（SPEC-switch-size-sync） */
 .page-fade.page-ready {
   /* 120ms：窗口已同步好之后才开始，这里只负责「别硬切」，不需要再用长动画遮掩 */
@@ -346,10 +403,14 @@ body {
      最小宽 380→340 后，置物架「标题右缘→状态区左缘」仍有 8.5 布局 px 余量、音乐页 20.5，
      视觉岛宽 285→255（每侧少约 11）。再往下（330/320）置物架只剩 4.8/1，会有贴脸风险，故停在 340。 */
   flex-shrink: 0;
-  width: max-content;
+  /* 2026-11-24 用户：「这个代办页就做如图这么大，现在每个页面不要再做伸缩了，伸缩老是卡」。
+     改为每页各自固定尺寸：宽度统一 340（视觉 255），高度按页在下方 .island.page-* 里给；
+     页内内容变化、开关浮层都不再改变岛尺寸，只有切页时窗口换一次尺寸。 */
+  width: 340px;
   min-width: 340px;
   max-width: 720px;
-  height: max-content;
+  /* 默认高度 = 待办页（用户截图那档，视觉 232.7） */
+  height: 310px;
   min-height: 150px;
   /* 上限 420 布局 px（=视觉 315）沿用主进程 EXPANDED_MAX.height。
      日程页日历要表头 + 6 行日期 + 内边距，2026-11-11 实测完整显示需要 320 布局 px 高，420 有余量。 */
@@ -359,13 +420,48 @@ body {
   /* 2026-11-16 用户 m03988「两边有点多余，去除掉」：24→16。内容区宽度反而 +16，
      配合上面 min-width 380→340，视觉岛宽 285→255，两侧空白各少约 11 视觉 px。 */
   padding: 20px 16px;
-  /* 浮层撑高补偿（SPEC-island-popover-clip，2026-11-22）：岛内弹层是绝对定位，
-     不参与内容高度，越过岛底就被 overflow:hidden 裁掉、还落在窗口外点不到。
-     popFit.ts 打开浮层时把「超出量」写进 --pop-extra，这里把岛撑高，窗口随之变大。
-     关闭浮层时变量被清掉，这一项回到 20px。 */
-  padding-bottom: calc(20px + var(--pop-extra, 0px));
+  /* 固定高度后不再为浮层让高度（SPEC-fixed-page-size）：浮层都在岛内展开，
+     padding-bottom 恒为 20。 */
+  padding-bottom: 20px;
   display: flex;
   flex-direction: column;
+}
+
+/* 每页固定高度（布局 px，= 该页当前完整内容实测屏高 ÷ 0.75）。
+   2026-11-24 用户选择「每页各自固定」：页内不再随任务数/消息数/浮层伸缩；
+   切页时窗口仍会换一次尺寸。改这些值前先量该页屏高，并同步 docs/facts/视觉设计规范.md。
+     view-grid 330（视觉 247.4）、待办 310（232.7）、置物架 251（188.4）、
+     通知 292（219.2）、日程 339（254.4）、音乐 292（219.1，有歌曲时的历史实测值）。 */
+.island.expanded.view-grid {
+  height: 330px;
+}
+
+.island.expanded.page-0 {
+  height: 310px;
+}
+
+.island.expanded.page-1 {
+  height: 251px;
+}
+
+.island.expanded.page-2 {
+  height: 292px;
+}
+
+.island.expanded.page-3 {
+  height: 339px;
+}
+
+.island.expanded.page-4 {
+  height: 292px;
+}
+
+/* 音乐页歌词模式例外：并排的「左栏 212 + 竖线 + 歌词 260」需要约 535 布局 px 宽、
+   约 358 布局 px 高（实测历史值 401.4×268.6 视觉）。这是用户主动点「词」进入的模式，
+   不属于日常内容伸缩，保留原有尺寸；关闭歌词后回到固定尺寸。 */
+.island.expanded.page-4:has(.music-panel.lyric-open) {
+  width: max-content;
+  height: 358px;
 }
 
 /* ---------- 收起态 ---------- */
@@ -1223,32 +1319,10 @@ body {
   color: var(--ink-1);
 }
 
-/* 翻页器：‹ 圆点 ›，箭头对照视频的左右翻页 */
-.pager {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding-top: 10px;
-}
-
-.pager-arrow {
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 50%;
-  background: var(--surface-1);
-  color: var(--ink-3);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  transition: background 120ms, color 120ms;
-}
-
-.pager-arrow:hover {
-  background: color-mix(in srgb, var(--ink-1) 16%, transparent);
-  color: var(--ink-1);
+/* 底部翻页器已移除（SPEC-island-no-pager）：导航统一为「网格 → 组件 → 返回」。
+   旧 e2e 仍通过 .dots .dot 程序化切页，所以保留一组不可见的兼容按钮。 */
+.dots-compat {
+  display: none;
 }
 
 /* 切页淡入（.page-fade 定义在文件顶部 island 区块） */
@@ -1476,8 +1550,115 @@ body {
 .todo-add {
   display: flex;
   gap: 8px;
+  align-items: center;
   /* 时间选择面板（.sched-time-pop）按此定位（US-033：待办页也能选时间） */
   position: relative;
+}
+
+/* 日期按钮 + 选日期浮层（2026-11-24：给待办添加一个可以选天来添加的入口） */
+.todo-day-wrap {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.todo-day-btn {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface-1);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+}
+
+/* 选了非今天：亮成强调色，和「今天」区分开 */
+.todo-day-btn.picked,
+.todo-day-btn.open {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent-soft);
+}
+
+.todo-day-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  padding: 8px;
+  background: var(--bg-pop);
+  border: 1px solid color-mix(in srgb, var(--ink-1) 10%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+}
+
+/* 浮层里的月历固定 204：.cal 现在默认撑满父级（308） */
+.todo-day-pop .cal {
+  width: 204px;
+}
+
+/* 待办页固定高度后（.island.expanded.page-0 = 310 布局 px，页面区约 188），
+   日期/时间浮层不能再把岛撑高，改成在页面内部展开：
+   · 日期浮层从页面底部向上盖住输入行和列表，月历压紧到 20px 格、1px 间距；
+   · 时间浮层留在输入行下方，两列高度压到 112，正好落在页面底部之上。
+   定位锚从 .todo-add 提到 .todo-panel，才能用 bottom:0 贴页面底。 */
+.island.page-0 .todo-panel {
+  position: relative;
+}
+
+.island.page-0 .todo-add {
+  position: static;
+}
+
+.island.page-0 .todo-day-wrap {
+  position: static;
+}
+
+.island.page-0 .todo-day-pop {
+  top: auto;
+  bottom: 0;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px;
+}
+
+.island.page-0 .todo-day-pop .cal {
+  gap: 1px;
+  padding: 4px;
+}
+
+.island.page-0 .todo-day-pop .cal-grid {
+  gap: 1px;
+}
+
+.island.page-0 .todo-day-pop .cal-day {
+  width: 20px;
+  height: 20px;
+  /* 全局 .cal-day 有 min-height:24，不覆盖的话行高不变、浮层还是放不下 */
+  min-height: 20px;
+}
+
+.island.page-0 .sched-time-pop {
+  top: 38px;
+}
+
+.island.page-0 .time-pop-col {
+  height: 112px;
+}
+
+.todo-day-hint {
+  padding: 2px 4px 6px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+.todo-day-hint b {
+  font-weight: 600;
+  color: var(--accent-soft);
 }
 
 .todo-input {
@@ -1581,61 +1762,6 @@ body {
   color: var(--ink-1);
 }
 
-/* 当前选中视图：强调色高亮 */
-.shelf-view-btn.active {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent-soft);
-}
-
-/* 视图选择菜单（用户 m02221：点开可选择，而不是循环切换） */
-.shelf-view-wrap {
-  position: relative;
-  display: inline-flex;
-}
-.shelf-view-btn.open {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  color: var(--accent-soft);
-}
-.shelf-view-pop {
-  position: absolute;
-  top: 30px;
-  right: 0;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  min-width: 96px;
-  padding: 4px;
-  background: var(--bg-pop);
-  border: 1px solid color-mix(in srgb, var(--ink-1) 10%, transparent);
-  border-radius: 12px;
-  box-shadow: var(--shadow-pop);
-}
-.shelf-view-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: color-mix(in srgb, var(--ink-1) 85%, transparent);
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-}
-.shelf-view-item svg {
-  width: 13px;
-  height: 13px;
-  flex: none;
-}
-.shelf-view-item:hover {
-  background: color-mix(in srgb, var(--ink-1) 8%, transparent);
-}
-.shelf-view-item.picked {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent-soft);
-}
-
 .shelf-drop {
   flex: 0 1 auto;
   max-width: 100%;
@@ -1657,8 +1783,11 @@ body {
   overflow: visible;
 }
 
+/* 列表区域与图标区域同高（2026-11-24 用户：「保持大图标的大小，不要变大变小了，
+   界面老卡」）：两个视图切换时岛尺寸必须完全不变，否则每次切换都要重设窗口。
+   93 = 大图标网格的布局高度（实测屏高 70 ÷ 0.75）；行数少时留白，多了在框内滚动。 */
 .shelf-drop.list .shelf-list {
-  max-height: 130px;
+  height: 93px;
 }
 
 .shelf-drop.over {
@@ -1678,7 +1807,7 @@ body {
   color: var(--ink-3);
 }
 
-/* 网格（图标视图）：横向一排滚动（对照截图），三档大小由 shelf-drop 上的 lg/md/sm 类控制 */
+/* 网格（大图标视图）：横向一排滚动（对照截图），格子大小由 shelf-drop 上的 lg 类控制 */
 .shelf-grid {
   list-style: none;
   padding: 10px;
@@ -1686,9 +1815,11 @@ body {
   flex-wrap: nowrap;
   align-items: flex-start;
   gap: 8px;
+  /* 与列表视图的 93px 对齐：两视图切换时岛高不变（见 .shelf-list 处的说明） */
+  height: 93px;
 }
 
-/* 三档图标大小：格子宽 + 图标本体一起缩（lg 84/40 / md 64/30 / sm 48/22），大小差异要一眼能看出来 */
+/* 大图标：格子宽 + 图标本体（84/40）；中/小图标已按用户要求移除（2026-11-24） */
 .shelf-drop.lg .shelf-cell {
   width: 84px;
 }
@@ -1698,38 +1829,12 @@ body {
   height: 40px;
 }
 
-.shelf-drop.md .shelf-cell {
-  width: 64px;
-}
-
-.shelf-drop.md .shelf-cell-body .shelf-icon {
-  width: 30px;
-  height: 30px;
-}
-
-.shelf-drop.sm .shelf-cell {
-  width: 48px;
-}
-
-.shelf-drop.sm .shelf-cell-body .shelf-icon {
-  width: 22px;
-  height: 22px;
-}
-
-.shelf-drop.sm .shelf-cell-body {
-  padding: 6px 2px 4px;
-}
-
-.shelf-drop.sm .shelf-cell-name {
-  font-size: 10.5px;
-}
-
 /* 横向滚动区：图标视图一排放不下时左右滚。
    max-width 是关键：不限制的话 nowrap 行的自然宽度会把整个岛（width:max-content）撑到 720 上限，
    内容溢出窗口、工具条被顶出窗外点不到，且宽度被撑满后 scrollWidth==clientWidth 滚动永远不触发。
    2026-11-16 用户 m01366「显示太多了，4个最多」：宽度按「正好放下 4 格」算，
    多出来的格子靠左右箭头（首尾循环）和滚轮查看。
-   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ lg 380 / md 300 / sm 236。 */
+   4 格 = 格子宽 ×4 + 间距 8 ×3 + 网格左右内边距 10 ×2 ⇒ 380。 */
 .shelf-hscroll {
   display: flex;
   align-items: center;
@@ -1745,14 +1850,6 @@ body {
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
-}
-
-.shelf-drop.md .shelf-strip {
-  max-width: 300px;
-}
-
-.shelf-drop.sm .shelf-strip {
-  max-width: 236px;
 }
 
 .shelf-strip::-webkit-scrollbar {
@@ -2132,36 +2229,118 @@ body {
 
 /* ---------- 日程页 ---------- */
 
-/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局）
-   2026-11-11 用户要求各页尺寸统一、不随内容拉伸，所以这里改成按容器宽度分配
-   （原来 width:max-content 会把岛撑到 416，比别的页宽 100px，翻页时整块跳）。 */
+/* 整页只有月历（SPEC-schedule-day-popover，2026-11-24 用户：「只要显示日历就行，
+   右边和待办重复了」）。宽度对齐组件网格的 308，岛回到和别的页一样宽。 */
 .sched-split {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
-  width: 100%;
-  /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
-  min-height: 0;
-  /* 2026-11-11：岛固定宽度后，窄屏下日历(204)+右栏(168)+间距(12) 仍比可用宽度略宽，
-     给左栏加收缩权限，避免整体顶出岛右缘被裁。 */
+  position: relative;
+  width: 308px;
   min-width: 0;
 }
 
-/* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
+/* 当日安排浮层：常驻 DOM（visibility 隐藏），点日期后弹出。
+   常驻是为了兼容旧 e2e——6 个脚本直接查 .sched-input / .sched-list，不先点日期。
+   浮层是绝对定位，开关不影响岛的高度和窗口尺寸。 */
 .sched-day {
-  flex: 1;
-  min-width: 168px;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  /* 浮层贴月历顶部、一直铺到月历底部（用户 2026-11-24：「任务显示在上面更好」
+     「向下铺开，只有一半太丑了」）：整块就是当天视图，内容少时留白，多时列表自己滚。
+     高度锁在月历区域内，岛保持原尺寸，不再被撑高。 */
+  top: 38px;
+  bottom: 6px;
+  overflow: hidden;
+  z-index: 6;
   display: flex;
   flex-direction: column;
-  min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
-  min-width: 0;
+  min-height: 0;
+  padding: 8px 8px 2px;
+  background: var(--bg-pop);
+  border: 1px solid color-mix(in srgb, var(--ink-1) 10%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.sched-day.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* 日程页不再提供添加（2026-11-24 用户：日历只看当天任务，加到待办页）。
+   保留 DOM 只给旧 e2e 造数据，用户不可见、不可聚焦。 */
+.sched-add.sched-add-compat {
+  display: none;
+}
+
+/* 浮层里的时间选择面板改成向上展开：向下开会越过岛的 EXPANDED_MAX 高度被裁，
+   向上则落在浮层头部上方，始终在岛内。列高也收一档。 */
+.sched-day .sched-time-pop {
+  top: auto;
+  bottom: calc(100% + 4px);
+  right: 0;
+  width: 150px;
+}
+
+.sched-day .time-pop-col {
+  height: 104px;
+}
+
+/* 当天视图里的列表占满浮层剩余高度：.todo-list 的全局 3 行限高只服务待办页 */
+.sched-day .sched-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+}
+
+/* 浮层里的空态收小：整页空态卡片在 300 宽的浮层里太占地方 */
+.sched-day .notify-empty {
+  min-height: 0;
+  padding: 8px 0 4px;
+}
+
+.sched-day .notify-empty-inner {
+  background: transparent;
+  padding: 6px 8px;
+  gap: 3px;
+}
+
+/* 空态图标在浮层里省掉：浮层本来就不高，图标和标题已经说明同一件事 */
+.sched-day .notify-empty-icon {
+  display: none;
+}
+
+.sched-day .notify-empty-sub {
+  font-size: 10.5px;
 }
 
 .sched-day-head {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
   padding: 2px 4px 6px;
+}
+
+.sched-day-close {
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sched-day-close:hover {
+  color: var(--ink-1);
 }
 
 .sched-day-sub {
@@ -2173,7 +2352,7 @@ body {
 /* 月历 */
 .cal {
   flex: none;
-  width: 204px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -2238,14 +2417,19 @@ body {
   color: color-mix(in srgb, var(--ink-1) 78%, transparent);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  padding: 4px 0 6px;
-  /* 日历格子改圆形：iOS 日历的「今天/选中」就是一整颗圆 */
-  border-radius: 50%;
+  /* 固定 24×24 正方形、8 圆角：用户 2026-11-24 明确「不要圆的，要正方形圆四圆角的」。
+     尺寸锁死不随列宽拉伸，避免再次被拉成椭圆/长条。 */
+  width: 24px;
+  height: 24px;
+  margin: 0 auto;
+  padding: 0;
+  border-radius: 8px;
   cursor: pointer;
   line-height: 1;
   /* 美化-04 回退（2026-11-11 用户实机反馈）：格子里只放日期数字，保持每行等高对称。
      曾经做成纵向 flex 塞当天安排的小标签，结果有安排的那行被撑高、整行错位。 */
-  display: block;
+  display: grid;
+  place-items: center;
   text-align: center;
   min-height: 24px;
 }

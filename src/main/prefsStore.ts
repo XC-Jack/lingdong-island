@@ -143,9 +143,10 @@ function normalizePagesCustom(v: unknown): PagesCustom | undefined {
   return { pages, collapsed, order }
 }
 
-/** 置物架视图记忆（US-037）：只认四个合法值；不合法返回 undefined（调用方回落默认） */
+/** 置物架视图记忆（US-037）：只剩大图标/列表两种；旧值 md/sm 或不合法返回
+    undefined（调用方回落默认 lg；用户 2026-11-24 要求移除中/小图标并改为切换键） */
 function normalizeShelfView(v: unknown): string | undefined {
-  return v === 'lg' || v === 'md' || v === 'sm' || v === 'list' ? v : undefined
+  return v === 'lg' || v === 'list' ? v : undefined
 }
 
 /**

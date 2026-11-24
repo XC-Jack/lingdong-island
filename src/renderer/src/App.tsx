@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ISLAND_THEMES } from '../../shared/types'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState, IslandTheme } from '../../shared/types'
 import Pet from './pet/Pet'
-import { fitIslandToPopover } from './popFit'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -85,7 +84,7 @@ function localDayKey(d: Date = new Date()): string {
 }
 
 /** 置物架视图的四种形态 */
-type ShelfView = 'lg' | 'md' | 'sm' | 'list'
+type ShelfView = 'lg' | 'list'
 
 /** 收起态可裁剪组件的键（与勾选 UI 一一对应） */
 const COLLAPSED_KEYS = ['pet', 'clock', 'battery', 'net', 'todo', 'bell'] as const
@@ -332,32 +331,6 @@ const IcoGrid = (): React.JSX.Element => (
   </IconSvg>
 )
 
-/** 中图标视图（九宫格缺角，与大图标区分） */
-const IcoGridMd = (): React.JSX.Element => (
-  <IconSvg>
-    <rect x="4" y="4" width="6.5" height="6.5" rx="1.4" />
-    <rect x="13.5" y="4" width="6.5" height="6.5" rx="1.4" />
-    <rect x="4" y="13.5" width="6.5" height="6.5" rx="1.4" />
-    <rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.4" />
-    <rect x="8.75" y="8.75" width="6.5" height="6.5" rx="1.4" />
-  </IconSvg>
-)
-
-/** 小图标视图（密集点阵，与小图标区分） */
-const IcoGridSm = (): React.JSX.Element => (
-  <IconSvg>
-    <rect x="4" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="4" width="4.5" height="4.5" rx="1" />
-    <rect x="4" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="9.75" width="4.5" height="4.5" rx="1" />
-    <rect x="4" y="15.5" width="4.5" height="4.5" rx="1" />
-    <rect x="9.75" y="15.5" width="4.5" height="4.5" rx="1" />
-    <rect x="15.5" y="15.5" width="4.5" height="4.5" rx="1" />
-  </IconSvg>
-)
-
 /** 时钟（日程时间选择按钮，点它弹原生时间选择器） */
 const IcoClock = (): React.JSX.Element => (
   <IconSvg>
@@ -395,6 +368,11 @@ function TodoPanel({
   const [time, setTime] = useState('')
   const [timePop, setTimePop] = useState(false)
   const timePopRef = useRef<HTMLDivElement>(null)
+  // 新增时可选日期（2026-11-24 用户：给待办加一个选天添加的入口）。
+  // 默认今天；日历页只管看，不再提供添加。
+  const [addDay, setAddDay] = useState<string>(() => localDayKey())
+  const [dayPop, setDayPop] = useState(false)
+  const dayPopRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let alive = true
@@ -419,12 +397,25 @@ function TodoPanel({
     return () => document.removeEventListener('mousedown', onDown)
   }, [timePop])
 
-  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
-  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  // 选日期浮层：点外面或按 Esc 收起
   useEffect(() => {
-    if (!timePop) return
-    return fitIslandToPopover(timePopRef.current)
-  }, [timePop])
+    if (!dayPop) return
+    const onDown = (e: MouseEvent): void => {
+      if (!dayPopRef.current?.contains(e.target as Node)) {
+        const btn = (e.target as Element).closest?.('.todo-day-btn')
+        if (!btn) setDayPop(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setDayPop(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [dayPop])
 
   // 只取今天（本地日期）的日程：明天的、昨天的一律不进来
   const today = localDayKey()
@@ -446,21 +437,26 @@ function TodoPanel({
   }, [done, total, onStats])
 
   const hm = formatClock(new Date())
+  // 日期按钮的文案 / 选日期浮层里的小蓝点（有安排的日期）
+  const addDayLabel = addDay === today ? '今天' : `${Number(addDay.slice(5, 7))}月${Number(addDay.slice(8, 10))}日`
+  const addDayMarked = useMemo(() => new Set(items.map((it) => it.day)), [items])
 
   const add = useCallback(async () => {
     const text = draft.trim()
     if (!text) return
     setDraft('')
     const t = time
+    const day = addDay
     setTime('')
     setTimePop(false)
-    // 存为「今天的日程」：今天在待办页与日程页都能看到，明天从待办页消失
-    setItems(await window.island.scheduleAdd(text, t || null, today))
+    // 存为所选日期的日程（默认今天）：今天在待办页与日程页都能看到，
+    // 选明天就只进日历，待办页列表仍只列今天（2026-11-24 用户要求）
+    setItems(await window.island.scheduleAdd(text, t || null, day))
     // 加完保持输入框焦点，方便连着录几条
     draftInputRef.current?.focus()
     // 新条目在列表尾部，列表超长时会滚出可视区——滚到底让用户看见它加上了（US-037）
     requestAnimationFrame(() => todoListRef.current?.scrollTo({ top: todoListRef.current.scrollHeight }))
-  }, [draft, time, today])
+  }, [draft, time, addDay])
 
   const toggle = useCallback(
     async (t: Todo) => {
@@ -524,7 +520,9 @@ function TodoPanel({
           ref={draftInputRef}
           className="todo-input"
           value={draft}
-          placeholder="加一条今天要做的事，回车连记…"
+          placeholder={
+            addDay === today ? '加一条今天要做的事，回车连记…' : `加到 ${addDayLabel}，回车连记…`
+          }
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）。
@@ -533,6 +531,31 @@ function TodoPanel({
             if (e.key === 'Enter') void add()
           }}
         />
+        {/* 日期按钮：选这条任务加到哪一天（默认今天）。日历页只负责看，添加入口在这里。 */}
+        <div className="todo-day-wrap">
+          <button
+            type="button"
+            className={`todo-day-btn ${addDay !== today ? 'picked' : ''} ${dayPop ? 'open' : ''}`}
+            title={addDay === today ? '加到今天，点击换一天' : `将加到 ${addDayLabel}，点击换一天`}
+            aria-label={`选择日期：${addDayLabel}`}
+            aria-expanded={dayPop}
+            onClick={() => setDayPop((v) => !v)}
+          >
+            {addDayLabel}
+          </button>
+          {dayPop && (
+            <div className="todo-day-pop" ref={dayPopRef}>
+              <MonthCalendar
+                selected={addDay}
+                markedDays={addDayMarked}
+                onSelect={(d) => {
+                  setAddDay(d)
+                  setDayPop(false)
+                }}
+              />
+            </div>
+          )}
+        </div>
         {/* 时钟按钮：可选时间，选过之后高亮显示，再点可收起 */}
         <button
           type="button"
@@ -598,6 +621,12 @@ function TodoPanel({
           </div>
         )}
       </div>
+      {/* 选了非今天的日期时，列表仍只列今天，明确告诉用户新任务加到哪、去哪看 */}
+      {addDay !== today && (
+        <div className="todo-day-hint">
+          将任务加到 <b>{addDayLabel}</b> · 在「日程」日历里查看
+        </div>
+      )}
       <ul className="todo-list" ref={todoListRef}>
         {schedSorted.length === 0 && todoSorted.length === 0 && (
           <li className="todo-empty">今天还没有安排，加一条吧</li>
@@ -786,7 +815,8 @@ function ShelfPanel(): React.JSX.Element {
   const [notice, setNotice] = useState<{ kind: 'missing' | 'failed'; text: string; removeId?: string } | null>(
     null
   )
-  // 视图：大/中/小图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
+  // 视图只有两种（用户 2026-11-24：「就保留大图标和列表，点切换键来切换」）：
+  // 大图标（横向一排滚动，两侧箭头）或列表（纵向滚动）
   // 初值默认「大图标」，mount 后从 prefs.json 异步回填（US-037）——与页面裁剪同为
   // 「先默认后异步回填」的既有模式；localStorage 版跨重启会丢已废弃。
   const [view, setView] = useState<ShelfView>('lg')
@@ -800,7 +830,7 @@ function ShelfPanel(): React.JSX.Element {
       .then((prefs) => {
         if (!alive || viewDirty.current) return
         const v = prefs.shelfView
-        if (v === 'lg' || v === 'md' || v === 'sm' || v === 'list') setView(v)
+        if (v === 'lg' || v === 'list') setView(v)
       })
       .catch(() => {
         /* 读不到就用默认 */
@@ -811,8 +841,6 @@ function ShelfPanel(): React.JSX.Element {
   }, [])
   // 清空按钮二次确认态：第一次点变「确认清空？」，再点才真正清
   const [confirmClear, setConfirmClear] = useState(false)
-  // 视图选择菜单展开态：点视图按钮弹出四项菜单（大/中/小/列表）
-  const [viewPop, setViewPop] = useState(false)
   // 图标视图横向滚动：是否还有更多内容（决定两侧箭头显隐）
   const [canScroll, setCanScroll] = useState(false)
   /** 正在拖动换位的条目 id（网格内排序用） */
@@ -820,23 +848,6 @@ function ShelfPanel(): React.JSX.Element {
   const reorderSeq = useRef(0)
   /** 图标视图滚动容器 */
   const scrollRef = useRef<HTMLDivElement>(null)
-  /** 视图选择菜单容器：开着时点外面自动收起 */
-  const viewPopRef = useRef<HTMLSpanElement>(null)
-  /** 菜单本体（绝对定位浮层）：打开时让岛为它让出高度，否则后两项落在窗口外点不到 */
-  const viewPopEl = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (!viewPop) return
-    return fitIslandToPopover(viewPopEl.current)
-  }, [viewPop])
-  useEffect(() => {
-    if (!viewPop) return
-    const onDown = (e: MouseEvent): void => {
-      if (!viewPopRef.current?.contains(e.target as Node)) setViewPop(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [viewPop])
-
   const updateCanScroll = useCallback(() => {
     const el = scrollRef.current
     if (!el) {
@@ -1002,48 +1013,23 @@ function ShelfPanel(): React.JSX.Element {
       <div className="shelf-toolbar">
         <span className="shelf-count">{items.length} 个文件</span>
         <span className="shelf-toolbar-spacer" />
-        {/* 视图切换：点开弹四项选择菜单（大/中/小/列表），不是循环切换（用户 m02221 要求可选择） */}
-        <span className="shelf-view-wrap" ref={viewPopRef}>
-          <button
-            type="button"
-            className={`shelf-view-btn ${viewPop ? 'open' : ''}`}
-            title="选择视图"
-            aria-label="选择视图"
-            aria-expanded={viewPop}
-            onClick={() => setViewPop((v) => !v)}
-          >
-            {view === 'lg' ? <IcoGrid /> : view === 'md' ? <IcoGridMd /> : view === 'sm' ? <IcoGridSm /> : <IcoList />}
-          </button>
-          {viewPop && (
-            <span className="shelf-view-pop" role="menu" aria-label="选择视图" ref={viewPopEl}>
-              {([
-                ['lg', '大图标', <IcoGrid />],
-                ['md', '中图标', <IcoGridMd />],
-                ['sm', '小图标', <IcoGridSm />],
-                ['list', '列表', <IcoList />],
-              ] as const).map(([v, label, icon]) => (
-                <button
-                  key={v}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={view === v}
-                  className={`shelf-view-item ${view === v ? 'picked' : ''}`}
-                  onClick={() => {
-                    viewDirty.current = true
-                    setView(v)
-                    window.island.prefsSet({ shelfView: v }).catch(() => {
-                      /* 写不进去就算了，不打扰用户 */
-                    })
-                    setViewPop(false)
-                  }}
-                >
-                  {icon}
-                  {label}
-                </button>
-              ))}
-            </span>
-          )}
-        </span>
+        {/* 视图切换：只有大图标/列表两种，点一下直接切到另一种（用户 2026-11-24 要求） */}
+        <button
+          type="button"
+          className="shelf-view-btn"
+          title={view === 'lg' ? '切换为列表' : '切换为大图标'}
+          aria-label={view === 'lg' ? '切换为列表视图' : '切换为大图标视图'}
+          onClick={() => {
+            const next: ShelfView = view === 'lg' ? 'list' : 'lg'
+            viewDirty.current = true
+            setView(next)
+            window.island.prefsSet({ shelfView: next }).catch(() => {
+              /* 写不进去就算了，不打扰用户 */
+            })
+          }}
+        >
+          {view === 'lg' ? <IcoGrid /> : <IcoList />}
+        </button>
         <button
           type="button"
           className={`todo-del ${confirmClear ? 'confirm-clear' : ''}`}
@@ -1622,6 +1608,12 @@ function SchedulePanel(): React.JSX.Element {
   const timePopRef = useRef<HTMLDivElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => localDayKey())
+  // 当日安排浮层（SPEC-schedule-day-popover，2026-11-24 用户要求日程页只留日历）：
+  // 点某一天才弹出，浮层里看/加安排；再点同一天、点浮层外或按 Esc 收起。
+  // 浮层常驻 DOM（用 visibility 隐藏），旧的 6 个 e2e 脚本直接查 .sched-input / .sched-list，
+  // 不依赖「先点日期」这一步。
+  const [dayOpen, setDayOpen] = useState(false)
+  const dayPopRef = useRef<HTMLDivElement>(null)
   // 行内编辑（与待办页双击编辑同款交互）：editingSchedId 是正在编辑的日程 id
   const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
   const [schedEditDraft, setSchedEditDraft] = useState('')
@@ -1656,12 +1648,39 @@ function SchedulePanel(): React.JSX.Element {
     return () => document.removeEventListener('mousedown', onDown)
   }, [timePop])
 
-  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
-  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  // 当日安排浮层开着时：点浮层外收起；按 Esc 收起（用冒泡阶段，编辑框自己的 Esc 会先 stopPropagation）
   useEffect(() => {
-    if (!timePop) return
-    return fitIslandToPopover(timePopRef.current)
-  }, [timePop])
+    if (!dayOpen) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (dayPopRef.current?.contains(t)) return
+      // 点日历里的其他日期：由 pickDay 换日期并保持浮层开着，不算「点外面」
+      if ((t as Element).closest?.('.cal')) return
+      setDayOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setDayOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [dayOpen])
+
+  // 点日期：换选中日并张开浮层；再点同一天则收起
+  const pickDay = useCallback(
+    (day: string) => {
+      if (dayOpen && day === selDay) {
+        setDayOpen(false)
+        return
+      }
+      setSelDay(day)
+      setDayOpen(true)
+    },
+    [dayOpen, selDay]
+  )
 
   const add = useCallback(() => {
     const t = text.trim()
@@ -1710,16 +1729,33 @@ function SchedulePanel(): React.JSX.Element {
 
   return (
     <div className="sched-split">
-      {/* 左栏：月历 */}
-      <MonthCalendar selected={selDay} onSelect={setSelDay} markedDays={markedDays} />
-      {/* 右栏：当日安排 */}
-      <div className="sched-day">
+      {/* 整页只有月历；当日安排在点日期后弹出的浮层里（SPEC-schedule-day-popover） */}
+      <MonthCalendar selected={selDay} onSelect={pickDay} markedDays={markedDays} />
+      <div
+        ref={dayPopRef}
+        className={`sched-day ${dayOpen ? 'open' : ''}`}
+        aria-hidden={!dayOpen}
+      >
         <div className="sched-day-head">
           <span className="sched-day-sub">
-            {dayItems.length} 条日程 · {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
+            {/* 浮层会盖住月历下半部，选中日期写在这里，用户一眼知道这是哪天 */}
+            {Number(selDay.slice(5, 7))}月{Number(selDay.slice(8, 10))}日 · {dayItems.length} 条日程 ·{' '}
+            {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
           </span>
+          <button
+            type="button"
+            className="sched-day-close"
+            title="收起"
+            aria-label="收起当日安排"
+            onClick={() => setDayOpen(false)}
+          >
+            收起
+          </button>
         </div>
-        <div className="sched-add">
+        {/* 添加任务的功能已按 2026-11-24 用户要求挪到待办页（可选日期），这里不再显示输入行。
+            但保留 DOM（display:none）给旧 e2e：5 个日程脚本靠 .sched-input / .todo-add-btn 造数据。
+            用户点不到、看不到，键盘也聚焦不到。 */}
+        <div className="sched-add sched-add-compat">
           <input
             className="sched-input"
             placeholder="加个安排…"
@@ -1795,7 +1831,8 @@ function SchedulePanel(): React.JSX.Element {
                 <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <span className="shelf-drop-hint">这一天还没有安排</span>
-              <span className="notify-empty-sub">加一条试试，可带时间到点提醒</span>
+              {/* 日程页已不再提供添加（2026-11-24），这里不能再引导用户「加一条」 */}
+              <span className="notify-empty-sub">在「待办」里选日期添加</span>
             </div>
           </div>
         ) : (
@@ -3136,9 +3173,6 @@ export default function App(): React.JSX.Element {
   // 收起再展开总是回到网格；点组件或翻页才进具体页。注意它与 page 是两层：
   // page 决定渲染哪一页，view 只决定「现在是在网格还是在页面」。
   const [view, setView] = useState<'grid' | number>('grid')
-  // 翻页函数（flipPage）要读当前页算目标页，用 ref 避免把它塞进依赖里频繁换引用
-  const pageRef = useRef(page)
-  pageRef.current = page
   // 组件网格容器与页面内容容器的 ref：缩放动画要量两者的矩形
   const gridRef = useRef<HTMLDivElement | null>(null)
   const pageFadeRef = useRef<HTMLDivElement | null>(null)
@@ -3191,17 +3225,32 @@ export default function App(): React.JSX.Element {
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
   expandedRef.current = expanded
+  // ResizeObserver 的闭包拿不到最新 view：用它判断「这次量到的是不是网格尺寸」
+  const viewRef = useRef<'grid' | number>(view)
+  viewRef.current = view
+  // 展开/收起入场动画进行中（缩放会让 rect 偏小，ResizeObserver 这段时间不报尺寸）
+  const entranceRef = useRef<'open' | 'close' | null>(null)
   // 各页上次量到的尺寸：切页前先按它把窗口扩好，新页渲染完时窗口往往已经到位，
   // 把「变大」那条路径的空白压到 0（首次访问某页没有缓存，仍走回执等待，SPEC-switch-size-sync）。
   const pageSizeCache = useRef<Record<number, { w: number; h: number }>>({})
-  const primeWindowSize = useCallback((i: number) => {
-    const c = pageSizeCache.current[i]
+  // 组件网格的尺寸：返回网格也要提前扩窗（网格 330 比多数页高，2026-11-24 快速点击实测
+  // 窗口比岛矮 27.5px、持续约 100ms，网格底部被裁——就是用户说的「点太快有点卡」）。
+  const gridSizeCache = useRef<{ w: number; h: number } | null>(null)
+  // 最近一次上报/打算用的窗口尺寸。window.innerHeight 要等主进程 setBounds 生效才更新，
+  // 切页时若只看它，会把「已经在扩窗路上」的目标页误判成放不下、多等一次回执（约 30ms 空白）。
+  const intendedWinSize = useRef<{ w: number; h: number } | null>(null)
+  /** 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失 */
+  const growWindowTo = useCallback((c: { w: number; h: number } | null | undefined) => {
     if (!c || !expandedRef.current) return
-    // 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失
     if (c.w > window.innerWidth + 1 || c.h > window.innerHeight + 1) {
+      intendedWinSize.current = c
       void window.island.setExpandedSize(c.w, c.h)
     }
   }, [])
+  const primeWindowSize = useCallback(
+    (i: number) => growWindowTo(pageSizeCache.current[i]),
+    [growWindowTo]
+  )
   const collapseTimer = useRef<number | null>(null)
   /** US-041：避让回调要调 clearCollapseTimer，但那函数声明在后——用 ref 桥接 */
   const clearCollapseTimerRef = useRef<(() => void) | null>(null)
@@ -3219,21 +3268,26 @@ export default function App(): React.JSX.Element {
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         timer = null
+        // 入场动画期间 transform 会缩放 rect，量出来偏小；这段的上报由展开/收起
+        // 那条路径自己负责，动画结束后再补一次（见 entrance 那段）。
+        if (entranceRef.current) return
         const r = el.getBoundingClientRect()
         const w = Math.ceil(r.width)
         const h = Math.ceil(r.height)
         if (w <= 0 || h <= 0) return
         if (el.classList.contains('expanded')) {
-          // 普通尺寸变化（列表增减、浮层撑高）不关心回执，切页那条路径自己等（SPEC-switch-size-sync）
+          // 页面尺寸已经固定（SPEC-fixed-page-size），这里只处理切页时的一次性变化；
+          // 回执由切页那条路径自己等（SPEC-switch-size-sync）
+          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+          intendedWinSize.current = { w, h }
           void window.island.setExpandedSize(w, h)
         } else {
           window.island.setCollapsedWidth(w)
         }
       }, 80)
     })
-    // **必须观测 border-box**（2026-11-22，SPEC-island-popover-clip）：默认的 content-box
-    // 在「只改 padding」时不触发，而 popFit.ts 让岛为弹层让出高度用的正是 padding-bottom ——
-    // 结果是岛长高了、窗口没跟上，弹层照样被窗口裁掉。窗口尺寸本来就该跟岛的**外框**走。
+    // **必须观测 border-box**：窗口尺寸本来就该跟岛的**外框**走，只测 content-box
+    // 会漏掉 padding / 边框变化，岛和窗口对不上。
     ro.observe(el, { box: 'border-box' })
     return () => {
       if (timer !== null) window.clearTimeout(timer)
@@ -3448,10 +3502,63 @@ export default function App(): React.JSX.Element {
   // 唯一的开关在设置窗口「常规」分区（src/renderer/src/settings/SettingsApp.tsx），
   // 主进程 IPC `autostart:get`/`autostart:set`/`autostart:changed` 全部保留不动。
 
-  // 状态变化时同步给主进程，由它调整窗口尺寸
-  useEffect(() => {
+  // 展开/收起的一次性入场动画（2026-11-25 用户「打开和关闭时的震动动画容易卡」）。
+  // 窗口由主进程 220ms 单调补间到目标尺寸，`.island` 同时淡入+轻微缩放（styles.css island-open/close）。
+  // 缩放动画会让 getBoundingClientRect 返回缩小后的尺寸，所以：
+  //   1) 展开前先把过渡临时关掉、量出目标尺寸再开窗；
+  //   2) 动画期间 ResizeObserver 不上报（entranceRef）；
+  //   3) 动画结束后补一次真实尺寸，避免按动画中的中间值把窗口定小。
+  const [entrance, setEntrance] = useState<'open' | 'close' | null>(null)
+  entranceRef.current = entrance
+  const firstExpandEffect = useRef(true)
+  const reportCurrentSize = useCallback(() => {
+    const el = islandRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) return
+    if (expandedRef.current) {
+      const w = Math.ceil(r.width)
+      const h = Math.ceil(r.height)
+      if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+      intendedWinSize.current = { w, h }
+      void window.island.setExpandedSize(w, h)
+    } else {
+      window.island.setCollapsedWidth(Math.ceil(r.width))
+    }
+  }, [])
+  useLayoutEffect(() => {
+    if (firstExpandEffect.current) {
+      firstExpandEffect.current = false
+      window.island?.setExpanded(expanded)
+      return
+    }
+    if (expanded) {
+      const el = islandRef.current
+      if (el) {
+        // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
+        // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
+        const prev = el.style.transition
+        el.style.transition = 'none'
+        const r = el.getBoundingClientRect()
+        el.style.transition = prev
+        if (r.width > 0 && r.height > 0) {
+          const w = Math.ceil(r.width)
+          const h = Math.ceil(r.height)
+          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+          intendedWinSize.current = { w, h }
+          void window.island.setExpandedSize(w, h)
+        }
+      }
+    }
     window.island?.setExpanded(expanded)
-  }, [expanded])
+    setEntrance(expanded ? 'open' : 'close')
+    const id = window.setTimeout(() => {
+      setEntrance(null)
+      // 等 class 移除后的那一帧再量，此时 transform 已经归零
+      window.requestAnimationFrame(() => window.requestAnimationFrame(reportCurrentSize))
+    }, 260)
+    return () => window.clearTimeout(id)
+  }, [expanded, reportCurrentSize])
 
   // 每次收起（点桌面 / 自动超时 / Esc / 避让）后把视图退回组件网格：
   // 下次展开先看到组件，而不是上次停留的那一页（SPEC-island-widget-grid）。
@@ -3635,33 +3742,8 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [expanded, scheduleCollapse])
 
-  // 翻页（‹ ›）：在被启用的页面里逐页走，**到头循环**（第一页按左回到最后一页、
-  // 最后一页按右回到第一页，2026-11-11 用户确认要这样）。
-  // 用户当时报的「一直点左边的切换界面的按键会一直重复」不是循环语义的问题，
-  // 而是下面那条残留守卫 `if (p === 4) return list[0]` 造成的（翻到音乐页弹回第一页）。
-  // 注意：这里原来还有一条 `if (p === 4) return list[0]`——那是「page 4 = 页面管理面板」时代的守卫，
-  // 页面管理搬进设置窗口后 4 变成了音乐页，这条残留导致翻到音乐页就被弹回第一页。
-  const flipPage = useCallback(
-    (dir: 1 | -1) => {
-      const list = enabledPagesRef.current
-      if (list.length === 0) return
-      // 当前页可能刚被裁掉：以「列表中的位置」为基准翻
-      let idx = list.indexOf(pageRef.current)
-      if (idx === -1) idx = 0
-      // 取模循环：第一页按左回到最后一页、最后一页按右回到第一页。
-      const next = list[(idx + dir + list.length) % list.length]
-      // 先按上次量到的尺寸把窗口扩好，再换内容（缓存没有则跳过，走回执等待）
-      primeWindowSize(next)
-      setPage(next)
-      // 从网格进页面后左右翻页：视图始终停在「页面」层，不会翻回网格
-      setView(next)
-    },
-    [primeWindowSize]
-  )
-
-  // enabledPages 的 ref：flipPage 不依赖它重建，避免翻页函数频繁换引用
-  const enabledPagesRef = useRef(enabledPages)
-  enabledPagesRef.current = enabledPages
+  // 翻页函数 flipPage（‹ ›、到头循环）已于 SPEC-island-no-pager 删除：
+  // 底部翻页器退出界面，导航统一为「网格 → 组件 → 返回」。
 
   // 当前页被裁掉时自动跳到第一个保留页（US-032）
   // 2026-11-11 修：原来写 `if (p >= 4) return p`，那是「page 4 = 页面管理面板」时代的豁免——
@@ -3742,8 +3824,33 @@ export default function App(): React.JSX.Element {
   // 回执 300ms 未到则兜底显示，绝不卡空白。useLayoutEffect 里 setState 会在本帧绘制前完成，
   // 所以新页内容不会闪一帧。
   const [pageReady, setPageReady] = useState(true)
-  // 用 page 而不是 pageAnim 当触发条件：箭头翻页（flipPage）只改 page、不 bump pageAnim，
-  // 而它就是用户最常用的切页方式 —— 只盯 pageAnim 会漏掉整整一半路径（2026-11-24 用户反馈）。
+  // 切页瞬间临时关掉岛的宽高过渡（2026-11-24 快速点击卡顿）。
+  // 窗口是用 setBounds 一次性跳到新尺寸的，而岛自带 220ms 过渡：收缩方向上岛比窗口大，
+  // 会被窗口裁掉直到过渡结束；同时 layout 阶段 getBoundingClientRect 量到的是过渡起点值，
+  // 上报给主进程的窗口尺寸也跟着错。切页时快照到位、120ms 后移除；尺寸已稳定，移除不再触发过渡。
+  const [navSnap, setNavSnap] = useState(false)
+  const navSnapTimer = useRef<number | null>(null)
+  const beginNavSnap = useCallback(() => {
+    // 展开动画本身要靠过渡同步主进程补间，收起态进来时不关；样式也只对 .expanded 生效
+    if (!expandedRef.current) return
+    // 入场缩放会让切页时的 getBoundingClientRect 偏小（窗口会被报小），导航一开始就收掉它
+    setEntrance(null)
+    setNavSnap(true)
+    if (navSnapTimer.current !== null) window.clearTimeout(navSnapTimer.current)
+    navSnapTimer.current = window.setTimeout(() => {
+      navSnapTimer.current = null
+      setNavSnap(false)
+    }, 120)
+  }, [])
+  useEffect(
+    () => () => {
+      if (navSnapTimer.current !== null) window.clearTimeout(navSnapTimer.current)
+    },
+    []
+  )
+  // 用 page 而不是 pageAnim 当触发条件：铃铛、拖文件等直达入口会直接 setPage，
+  // 不一定 bump pageAnim —— 只盯 pageAnim 会漏掉这些路径（2026-11-24 用户反馈）。
+  // 底部翻页器及 flipPage 已按 SPEC-island-no-pager 移除，网格进页走 openPageFromGrid。
   const lastPageSeen = useRef(page)
   useLayoutEffect(() => {
     if (lastPageSeen.current === page) return
@@ -3762,12 +3869,18 @@ export default function App(): React.JSX.Element {
     pageSizeCache.current[page] = { w, h }
     // 新页没比当前窗口大（切到更小/同大的页）：岛完全在窗口内，怎么都不会被裁，
     // 不用等回执，直接显示 —— 把「内容先消失一下」的闪降到零。
-    const fits = w <= window.innerWidth + 1 && h <= window.innerHeight + 1
+    // 「当前窗口」要把刚上报、还没被主进程执行的目标尺寸算进来（intendedWinSize），
+    // 否则 primeWindowSize 明明已经要求扩窗，这里还会把目标页当放不下、白等一次回执。
+    const availW = Math.max(window.innerWidth, intendedWinSize.current?.w ?? 0)
+    const availH = Math.max(window.innerHeight, intendedWinSize.current?.h ?? 0)
+    const fits = w <= availW + 1 && h <= availH + 1
     if (fits) {
+      intendedWinSize.current = { w, h }
       void window.island.setExpandedSize(w, h)
       setPageReady(true)
       return
     }
+    intendedWinSize.current = { w, h }
     setPageReady(false)
     let alive = true
     const fallback = window.setTimeout(() => {
@@ -3785,14 +3898,27 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(fallback)
     }
   }, [page])
+  // 回到网格：网格 330 比多数页高，先按缓存把窗口扩好，再切视图 —— 否则网格会先被
+  // 小窗口裁掉底部，等 80ms 去抖的 ResizeObserver 上报后才补上（实测约 100ms）。
+  useLayoutEffect(() => {
+    if (view !== 'grid' || !expandedRef.current) return
+    const r = islandRef.current?.getBoundingClientRect()
+    if (!r || r.width <= 0 || r.height <= 0) return
+    const w = Math.ceil(r.width)
+    const h = Math.ceil(r.height)
+    gridSizeCache.current = { w, h }
+    intendedWinSize.current = { w, h }
+    void window.island.setExpandedSize(w, h)
+  }, [view])
   const gotoPage = useCallback(
     (i: number) => {
+      beginNavSnap()
       primeWindowSize(i)
       setPage(i)
       setPageAnim((n) => n + 1)
       setView(i)
     },
-    [primeWindowSize]
+    [beginNavSnap, primeWindowSize]
   )
 
   // 组件网格 → 功能页（SPEC-island-widget-grid）：点组件时记下它的屏幕矩形，
@@ -3800,19 +3926,22 @@ export default function App(): React.JSX.Element {
   const openPageFromGrid = useCallback(
     (i: number, el: HTMLElement) => {
       zoomFromRef.current = el.getBoundingClientRect()
+      beginNavSnap()
       primeWindowSize(i)
       setPage(i)
       setPageAnim((n) => n + 1)
       setView(i)
     },
-    [primeWindowSize]
+    [beginNavSnap, primeWindowSize]
   )
 
   // 功能页 → 组件网格：反方向，起点是当前页面内容区域
   const backToGrid = useCallback(() => {
     zoomFromRef.current = pageFadeRef.current?.getBoundingClientRect() ?? null
+    beginNavSnap()
+    growWindowTo(gridSizeCache.current)
     setView('grid')
-  }, [])
+  }, [beginNavSnap, growWindowTo])
 
   // 缩放动画（iOS 打开 App 的手感）：从起点矩形放大到目标容器的矩形。
   // 只在「点组件进去 / 点返回出来」时跑；窗口尺寸仍走原有的 setExpandedSize 链路。
@@ -3854,6 +3983,8 @@ export default function App(): React.JSX.Element {
   // 已经在通知页时不再重放淡入动画（重放 = 页面重挂 = 用户看到的频闪）。
   const openNotifyPage = useCallback(() => {
     clearCollapseTimer()
+    // 收起态点铃铛：这次渲染同时要播展开动画，不能关过渡（beginNavSnap 自己会判断）
+    beginNavSnap()
     if (!expandedRef.current) {
       window.island.setExpanded(true)
       expandedRef.current = true
@@ -3866,7 +3997,7 @@ export default function App(): React.JSX.Element {
     }
     // 铃铛是直达通知页的入口：不管刚才在网格还是别的页，都直接进通知页
     setView(2)
-  }, [clearCollapseTimer, page, primeWindowSize])
+  }, [beginNavSnap, clearCollapseTimer, page, primeWindowSize])
 
   const onDragOverRoot = (e: React.DragEvent): void => {
     e.preventDefault()
@@ -4022,7 +4153,9 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       <div
-        className={`island ${expanded ? 'expanded' : 'collapsed'}`}
+        className={`island ${expanded ? 'expanded' : 'collapsed'} ${
+          expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
+        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''}`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
@@ -4082,7 +4215,8 @@ export default function App(): React.JSX.Element {
           /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
           <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
         )}        {expanded ? (
-          view === 'grid' ? (
+          <>
+          {view === 'grid' ? (
             /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。
                待办/置物架/通知/日程各一个方格，音乐一条宽卡；按「页面管理」的显隐与顺序排列。
                点任一组件 → 记下它的矩形，交给 view 变化后的 layout effect 做放大动画。 */
@@ -4223,7 +4357,9 @@ export default function App(): React.JSX.Element {
                 key={pageAnim}
                 ref={pageFadeRef}
                 onClick={(e) => e.stopPropagation()}
-                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${pageReady ? 'page-ready' : ''}`}
+                className={`page-fade ${page === 1 || page === 2 ? 'wide' : ''} ${
+                  page === 1 ? 'page-shelf' : page === 2 ? 'page-notify' : ''
+                } ${pageReady ? 'page-ready' : ''}`}
               >
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
@@ -4245,48 +4381,29 @@ export default function App(): React.JSX.Element {
                 )}
               </div>
             </div>
-            <div className="pager">
-              <button
-                type="button"
-                className="pager-arrow"
-                title="上一页"
-                aria-label="上一页"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipPage(-1)
-                }}
-              >
-                ‹
-              </button>
-              <div className="dots">
-                {enabledPages.map((i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className={`dot ${i === page ? 'active' : ''}`}
-                    aria-label={`跳到第 ${i + 1} 页：${PAGE_META[i].label}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      gotoPage(i)
-                    }}
-                  />
-                ))}
-              </div>
-              <button
-                type="button"
-                className="pager-arrow"
-                title="下一页"
-                aria-label="下一页"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  flipPage(1)
-                }}
-              >
-                ›
-              </button>
-            </div>
           </>
-          )
+          )}
+          {/* 测试兼容钩子（SPEC-island-no-pager）：底部翻页器已从界面移除——网格是入口、
+              返回键回网格。旧 e2e 仍有 20 多个脚本通过 `.dots .dot` 切页，这里保留一组
+              display:none 的按钮，网格态和页面态都在 DOM 里（脚本常在展开后先数圆点），
+              程序化点击照常触发 gotoPage；用户看不到、点不到。
+              等脚本全部改成「返回网格 → 点组件」后，这块和 .dot 样式可一起删。 */}
+          <div className="dots dots-compat" aria-hidden="true">
+            {enabledPages.map((i) => (
+              <button
+                key={i}
+                type="button"
+                className={`dot ${i === page ? 'active' : ''}`}
+                tabIndex={-1}
+                aria-label={`跳到第 ${i + 1} 页：${PAGE_META[i].label}`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  gotoPage(i)
+                }}
+              />
+            ))}
+          </div>
+          </>
         ) : (
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。

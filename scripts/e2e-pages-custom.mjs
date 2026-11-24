@@ -92,13 +92,16 @@ try {
   const dots = await cdp(ws2, "document.querySelectorAll('.dots .dot').length")
   if (dots === 3) ok('P3a 裁掉日程后圆点 3 个') ; else fail(`P3a 圆点应 3 个，got ${dots}`)
 
-  // P4 从最后一页往后翻应循环回第一页（2026-11-11 用户确认要循环：第一页可跳最后一页）
-  await cdp(ws2, "document.querySelectorAll('.dots .dot')[2]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  // P4 底部翻页器已移除（SPEC-island-no-pager）：界面上不能再有箭头/圆点；
+  //    隐藏的兼容圆点仍要能程序化切页（二十多个旧 e2e 依赖）
+  const pagerCount = await cdp(ws2, "document.querySelectorAll('.pager, .pager-arrow').length")
+  if (pagerCount === 0) ok('P4a 功能页底部没有翻页器') ; else fail(`P4a 不该再有翻页器，got ${pagerCount}`)
+  await cdp(ws2, "document.querySelectorAll('.dots .dot')[2]?.click(); 1")
   await sleep(300)
-  await cdp(ws2, "document.querySelectorAll('.pager-arrow')[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true })); 'clicked'")
+  await cdp(ws2, "document.querySelectorAll('.dots .dot')[0]?.click(); 1")
   await sleep(300)
   const activeIdx = await cdp(ws2, "Array.from(document.querySelectorAll('.dots .dot')).findIndex(d => d.classList.contains('active'))")
-  if (activeIdx === 0) ok('P4a 最后一页再往后翻循环回第一页') ; else fail(`P4a 应循环回第一页(下标 0)，got ${activeIdx}`)
+  if (activeIdx === 0) ok('P4b 兼容圆点仍能切回第一页') ; else fail(`P4b 应切回第一页(下标 0)，got ${activeIdx}`)
 } catch (e) {
   fail(e.message)
 } finally {
