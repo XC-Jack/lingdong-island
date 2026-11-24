@@ -1622,6 +1622,12 @@ function SchedulePanel(): React.JSX.Element {
   const timePopRef = useRef<HTMLDivElement>(null)
   // 选中的日期（YYYY-MM-DD，默认今天）
   const [selDay, setSelDay] = useState<string>(() => localDayKey())
+  // 当日安排浮层（SPEC-schedule-day-popover，2026-11-24 用户要求日程页只留日历）：
+  // 点某一天才弹出，浮层里看/加安排；再点同一天、点浮层外或按 Esc 收起。
+  // 浮层常驻 DOM（用 visibility 隐藏），旧的 6 个 e2e 脚本直接查 .sched-input / .sched-list，
+  // 不依赖「先点日期」这一步。
+  const [dayOpen, setDayOpen] = useState(false)
+  const dayPopRef = useRef<HTMLDivElement>(null)
   // 行内编辑（与待办页双击编辑同款交互）：editingSchedId 是正在编辑的日程 id
   const [editingSchedId, setEditingSchedId] = useState<string | null>(null)
   const [schedEditDraft, setSchedEditDraft] = useState('')
@@ -1656,12 +1662,47 @@ function SchedulePanel(): React.JSX.Element {
     return () => document.removeEventListener('mousedown', onDown)
   }, [timePop])
 
-  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
-  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  // 当日安排浮层开着时：点浮层外收起；按 Esc 收起（用冒泡阶段，编辑框自己的 Esc 会先 stopPropagation）
   useEffect(() => {
-    if (!timePop) return
-    return fitIslandToPopover(timePopRef.current)
-  }, [timePop])
+    if (!dayOpen) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (dayPopRef.current?.contains(t)) return
+      // 点日历里的其他日期：由 pickDay 换日期并保持浮层开着，不算「点外面」
+      if ((t as Element).closest?.('.cal')) return
+      setDayOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setDayOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [dayOpen])
+
+  // 浮层（以及浮层里套着的时间选择面板）比月历还高时会被岛的 overflow:hidden 裁掉，
+  // 复用既有机制给岛补高度，让窗口跟着长（SPEC-island-popover-clip 同款）。
+  // 两个浮层必须合并成一次测量：各写各的 --pop-extra 会互相覆盖，后写的那个把岛压回去。
+  useEffect(() => {
+    if (!dayOpen) return
+    return fitIslandToPopover(dayPopRef.current, timePop ? timePopRef.current : null)
+  }, [dayOpen, items.length, timePop])
+
+  // 点日期：换选中日并张开浮层；再点同一天则收起
+  const pickDay = useCallback(
+    (day: string) => {
+      if (dayOpen && day === selDay) {
+        setDayOpen(false)
+        return
+      }
+      setSelDay(day)
+      setDayOpen(true)
+    },
+    [dayOpen, selDay]
+  )
 
   const add = useCallback(() => {
     const t = text.trim()
@@ -1710,14 +1751,28 @@ function SchedulePanel(): React.JSX.Element {
 
   return (
     <div className="sched-split">
-      {/* 左栏：月历 */}
-      <MonthCalendar selected={selDay} onSelect={setSelDay} markedDays={markedDays} />
-      {/* 右栏：当日安排 */}
-      <div className="sched-day">
+      {/* 整页只有月历；当日安排在点日期后弹出的浮层里（SPEC-schedule-day-popover） */}
+      <MonthCalendar selected={selDay} onSelect={pickDay} markedDays={markedDays} />
+      <div
+        ref={dayPopRef}
+        className={`sched-day ${dayOpen ? 'open' : ''}`}
+        aria-hidden={!dayOpen}
+      >
         <div className="sched-day-head">
           <span className="sched-day-sub">
-            {dayItems.length} 条日程 · {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
+            {/* 浮层会盖住月历下半部，选中日期写在这里，用户一眼知道这是哪天 */}
+            {Number(selDay.slice(5, 7))}月{Number(selDay.slice(8, 10))}日 · {dayItems.length} 条日程 ·{' '}
+            {showTodos ? `${todos.length} 条待办` : '待办只在今天'}
           </span>
+          <button
+            type="button"
+            className="sched-day-close"
+            title="收起"
+            aria-label="收起当日安排"
+            onClick={() => setDayOpen(false)}
+          >
+            收起
+          </button>
         </div>
         <div className="sched-add">
           <input

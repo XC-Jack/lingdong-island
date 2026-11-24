@@ -2110,36 +2110,105 @@ body {
 
 /* ---------- 日程页 ---------- */
 
-/* 左右分栏：左月历 + 右当日安排（对照视频日程页布局）
-   2026-11-11 用户要求各页尺寸统一、不随内容拉伸，所以这里改成按容器宽度分配
-   （原来 width:max-content 会把岛撑到 416，比别的页宽 100px，翻页时整块跳）。 */
+/* 整页只有月历（SPEC-schedule-day-popover，2026-11-24 用户：「只要显示日历就行，
+   右边和待办重复了」）。宽度对齐组件网格的 308，岛回到和别的页一样宽。 */
 .sched-split {
-  display: flex;
-  gap: 12px;
-  align-items: stretch;
-  width: 100%;
-  /* flex 收缩链（US-037）：日程右栏列表长了也要在岛内滚动，不能溢出窗口 */
-  min-height: 0;
-  /* 2026-11-11：岛固定宽度后，窄屏下日历(204)+右栏(168)+间距(12) 仍比可用宽度略宽，
-     给左栏加收缩权限，避免整体顶出岛右缘被裁。 */
+  position: relative;
+  width: 308px;
   min-width: 0;
 }
 
-/* 右栏当日安排（min-width 保证输入行完整：时间框108 + 加号 + 输入框） */
+/* 当日安排浮层：常驻 DOM（visibility 隐藏），点日期后弹出。
+   常驻是为了兼容旧 e2e——6 个脚本直接查 .sched-input / .sched-list，不先点日期。
+   浮层是绝对定位，开关不影响岛的高度和窗口尺寸。 */
 .sched-day {
-  flex: 1;
-  min-width: 168px;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 108px;
+  z-index: 6;
   display: flex;
   flex-direction: column;
-  min-height: 0; /* 让 .todo-list 能收缩出滚动条（US-037） */
-  min-width: 0;
+  min-height: 0;
+  padding: 8px 8px 2px;
+  background: var(--bg-pop);
+  border: 1px solid color-mix(in srgb, var(--ink-1) 10%, transparent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.sched-day.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* 浮层里的时间选择面板改成向上展开：向下开会越过岛的 EXPANDED_MAX 高度被裁，
+   向上则落在浮层头部上方，始终在岛内。列高也收一档。 */
+.sched-day .sched-time-pop {
+  top: auto;
+  bottom: calc(100% + 4px);
+  right: 0;
+  width: 150px;
+}
+
+.sched-day .time-pop-col {
+  height: 104px;
+}
+
+/* 浮层里的列表自己滚，不把浮层撑出月历 */
+.sched-day .sched-list {
+  max-height: 104px;
+  overflow-y: auto;
+}
+
+/* 浮层里的空态收小：整页空态卡片在 300 宽的浮层里太占地方 */
+.sched-day .notify-empty {
+  min-height: 0;
+  padding: 8px 0 4px;
+}
+
+.sched-day .notify-empty-inner {
+  background: transparent;
+  padding: 6px 8px;
+  gap: 3px;
+}
+
+/* 空态图标在浮层里省掉：浮层本来就不高，图标和标题已经说明同一件事 */
+.sched-day .notify-empty-icon {
+  display: none;
+}
+
+.sched-day .notify-empty-sub {
+  font-size: 10.5px;
 }
 
 .sched-day-head {
   display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: 8px;
   padding: 2px 4px 6px;
+}
+
+.sched-day-close {
+  border: none;
+  background: none;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sched-day-close:hover {
+  color: var(--ink-1);
 }
 
 .sched-day-sub {
@@ -2151,7 +2220,7 @@ body {
 /* 月历 */
 .cal {
   flex: none;
-  width: 204px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 4px;

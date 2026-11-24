@@ -28,11 +28,15 @@
  *
  * 用法：`useEffect(() => { if (!open) return; return fitIslandToPopover(ref.current) }, [open])`
  *
+ * 可以一次传多个浮层（日程页：当日安排浮层里还套着时间选择面板），按最靠下的底边补偿；
+ * 两个浮层各自写 `--pop-extra` 会互相覆盖，所以必须合并成一次测量。
+ *
  * @returns 清理函数（清掉补偿并取消排队的测量）
  */
-export function fitIslandToPopover(pop: HTMLElement | null): () => void {
-  if (!pop) return () => {}
-  const island = (pop.closest('.island') ?? document.querySelector('.island')) as HTMLElement | null
+export function fitIslandToPopover(pop: HTMLElement | null, ...others: (HTMLElement | null)[]): () => void {
+  const pops = [pop, ...others].filter((p): p is HTMLElement => p !== null)
+  if (pops.length === 0) return () => {}
+  const island = (pops[0].closest('.island') ?? document.querySelector('.island')) as HTMLElement | null
   if (!island) return () => {}
 
   let raf1 = 0
@@ -44,12 +48,12 @@ export function fitIslandToPopover(pop: HTMLElement | null): () => void {
     // 清掉与重新设置发生在同一个任务里，布局只会结算一次，ResizeObserver 不会看到中间态。
     island.style.removeProperty('--pop-extra')
     const ir = island.getBoundingClientRect()
-    const pr = pop.getBoundingClientRect()
+    const bottom = Math.max(...pops.map((p) => p.getBoundingClientRect().bottom))
     if (ir.height <= 0) return
     // 视觉 px → 布局 px 的换算：offsetHeight 是布局 px，getBoundingClientRect().height 是视觉 px
     // （`.app` 上 zoom 0.75）。比例用实测值，不写死 0.75。
     const perLayout = island.offsetHeight > 0 ? ir.height / island.offsetHeight : 1
-    const extra = pr.bottom - ir.bottom
+    const extra = bottom - ir.bottom
     if (extra <= 0.5) return // 本来就没超出，不用补偿
     island.style.setProperty('--pop-extra', `${Math.ceil(extra / perLayout)}px`)
   }
