@@ -357,10 +357,14 @@ body {
      最小宽 380→340 后，置物架「标题右缘→状态区左缘」仍有 8.5 布局 px 余量、音乐页 20.5，
      视觉岛宽 285→255（每侧少约 11）。再往下（330/320）置物架只剩 4.8/1，会有贴脸风险，故停在 340。 */
   flex-shrink: 0;
-  width: max-content;
+  /* 2026-11-24 用户：「这个代办页就做如图这么大，现在每个页面不要再做伸缩了，伸缩老是卡」。
+     改为每页各自固定尺寸：宽度统一 340（视觉 255），高度按页在下方 .island.page-* 里给；
+     页内内容变化、开关浮层都不再改变岛尺寸，只有切页时窗口换一次尺寸。 */
+  width: 340px;
   min-width: 340px;
   max-width: 720px;
-  height: max-content;
+  /* 默认高度 = 待办页（用户截图那档，视觉 232.7） */
+  height: 310px;
   min-height: 150px;
   /* 上限 420 布局 px（=视觉 315）沿用主进程 EXPANDED_MAX.height。
      日程页日历要表头 + 6 行日期 + 内边距，2026-11-11 实测完整显示需要 320 布局 px 高，420 有余量。 */
@@ -370,13 +374,48 @@ body {
   /* 2026-11-16 用户 m03988「两边有点多余，去除掉」：24→16。内容区宽度反而 +16，
      配合上面 min-width 380→340，视觉岛宽 285→255，两侧空白各少约 11 视觉 px。 */
   padding: 20px 16px;
-  /* 浮层撑高补偿（SPEC-island-popover-clip，2026-11-22）：岛内弹层是绝对定位，
-     不参与内容高度，越过岛底就被 overflow:hidden 裁掉、还落在窗口外点不到。
-     popFit.ts 打开浮层时把「超出量」写进 --pop-extra，这里把岛撑高，窗口随之变大。
-     关闭浮层时变量被清掉，这一项回到 20px。 */
-  padding-bottom: calc(20px + var(--pop-extra, 0px));
+  /* 固定高度后不再为浮层让高度（SPEC-fixed-page-size）：浮层都在岛内展开，
+     padding-bottom 恒为 20。 */
+  padding-bottom: 20px;
   display: flex;
   flex-direction: column;
+}
+
+/* 每页固定高度（布局 px，= 该页当前完整内容实测屏高 ÷ 0.75）。
+   2026-11-24 用户选择「每页各自固定」：页内不再随任务数/消息数/浮层伸缩；
+   切页时窗口仍会换一次尺寸。改这些值前先量该页屏高，并同步 docs/facts/视觉设计规范.md。
+     view-grid 330（视觉 247.4）、待办 310（232.7）、置物架 251（188.4）、
+     通知 292（219.2）、日程 339（254.4）、音乐 292（219.1，有歌曲时的历史实测值）。 */
+.island.expanded.view-grid {
+  height: 330px;
+}
+
+.island.expanded.page-0 {
+  height: 310px;
+}
+
+.island.expanded.page-1 {
+  height: 251px;
+}
+
+.island.expanded.page-2 {
+  height: 292px;
+}
+
+.island.expanded.page-3 {
+  height: 339px;
+}
+
+.island.expanded.page-4 {
+  height: 292px;
+}
+
+/* 音乐页歌词模式例外：并排的「左栏 212 + 竖线 + 歌词 260」需要约 535 布局 px 宽、
+   约 358 布局 px 高（实测历史值 401.4×268.6 视觉）。这是用户主动点「词」进入的模式，
+   不属于日常内容伸缩，保留原有尺寸；关闭歌词后回到固定尺寸。 */
+.island.expanded.page-4:has(.music-panel.lyric-open) {
+  width: max-content;
+  height: 358px;
 }
 
 /* ---------- 收起态 ---------- */
@@ -1513,6 +1552,56 @@ body {
 /* 浮层里的月历固定 204：.cal 现在默认撑满父级（308） */
 .todo-day-pop .cal {
   width: 204px;
+}
+
+/* 待办页固定高度后（.island.expanded.page-0 = 310 布局 px，页面区约 188），
+   日期/时间浮层不能再把岛撑高，改成在页面内部展开：
+   · 日期浮层从页面底部向上盖住输入行和列表，月历压紧到 20px 格、1px 间距；
+   · 时间浮层留在输入行下方，两列高度压到 112，正好落在页面底部之上。
+   定位锚从 .todo-add 提到 .todo-panel，才能用 bottom:0 贴页面底。 */
+.island.page-0 .todo-panel {
+  position: relative;
+}
+
+.island.page-0 .todo-add {
+  position: static;
+}
+
+.island.page-0 .todo-day-wrap {
+  position: static;
+}
+
+.island.page-0 .todo-day-pop {
+  top: auto;
+  bottom: 0;
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px;
+}
+
+.island.page-0 .todo-day-pop .cal {
+  gap: 1px;
+  padding: 4px;
+}
+
+.island.page-0 .todo-day-pop .cal-grid {
+  gap: 1px;
+}
+
+.island.page-0 .todo-day-pop .cal-day {
+  width: 20px;
+  height: 20px;
+  /* 全局 .cal-day 有 min-height:24，不覆盖的话行高不变、浮层还是放不下 */
+  min-height: 20px;
+}
+
+.island.page-0 .sched-time-pop {
+  top: 38px;
+}
+
+.island.page-0 .time-pop-col {
+  height: 112px;
 }
 
 .todo-day-hint {

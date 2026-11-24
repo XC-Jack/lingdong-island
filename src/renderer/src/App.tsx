@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ISLAND_THEMES } from '../../shared/types'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState, IslandTheme } from '../../shared/types'
 import Pet from './pet/Pet'
-import { fitIslandToPopover } from './popFit'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
@@ -417,14 +416,6 @@ function TodoPanel({
       document.removeEventListener('keydown', onKey)
     }
   }, [dayPop])
-
-  // 时间/日期浮层是绝对定位，不参与岛的内容高度：不补偿的话，越过岛底的部分会被
-  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
-  // 两个浮层合并成一次测量，否则各写各的 --pop-extra 会互相覆盖。
-  useEffect(() => {
-    if (!timePop && !dayPop) return
-    return fitIslandToPopover(timePop ? timePopRef.current : null, dayPop ? dayPopRef.current : null)
-  }, [timePop, dayPop])
 
   // 只取今天（本地日期）的日程：明天的、昨天的一律不进来
   const today = localDayKey()
@@ -1677,14 +1668,6 @@ function SchedulePanel(): React.JSX.Element {
       document.removeEventListener('keydown', onKey)
     }
   }, [dayOpen])
-
-  // 浮层（以及浮层里套着的时间选择面板）比月历还高时会被岛的 overflow:hidden 裁掉，
-  // 复用既有机制给岛补高度，让窗口跟着长（SPEC-island-popover-clip 同款）。
-  // 两个浮层必须合并成一次测量：各写各的 --pop-extra 会互相覆盖，后写的那个把岛压回去。
-  useEffect(() => {
-    if (!dayOpen) return
-    return fitIslandToPopover(dayPopRef.current, timePop ? timePopRef.current : null)
-  }, [dayOpen, items.length, timePop])
 
   // 点日期：换选中日并张开浮层；再点同一天则收起
   const pickDay = useCallback(
@@ -3275,16 +3258,16 @@ export default function App(): React.JSX.Element {
         const h = Math.ceil(r.height)
         if (w <= 0 || h <= 0) return
         if (el.classList.contains('expanded')) {
-          // 普通尺寸变化（列表增减、浮层撑高）不关心回执，切页那条路径自己等（SPEC-switch-size-sync）
+          // 页面尺寸已经固定（SPEC-fixed-page-size），这里只处理切页时的一次性变化；
+          // 回执由切页那条路径自己等（SPEC-switch-size-sync）
           void window.island.setExpandedSize(w, h)
         } else {
           window.island.setCollapsedWidth(w)
         }
       }, 80)
     })
-    // **必须观测 border-box**（2026-11-22，SPEC-island-popover-clip）：默认的 content-box
-    // 在「只改 padding」时不触发，而 popFit.ts 让岛为弹层让出高度用的正是 padding-bottom ——
-    // 结果是岛长高了、窗口没跟上，弹层照样被窗口裁掉。窗口尺寸本来就该跟岛的**外框**走。
+    // **必须观测 border-box**：窗口尺寸本来就该跟岛的**外框**走，只测 content-box
+    // 会漏掉 padding / 边框变化，岛和窗口对不上。
     ro.observe(el, { box: 'border-box' })
     return () => {
       if (timer !== null) window.clearTimeout(timer)
@@ -4049,7 +4032,9 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       <div
-        className={`island ${expanded ? 'expanded' : 'collapsed'}`}
+        className={`island ${expanded ? 'expanded' : 'collapsed'} ${
+          expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
+        }`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
