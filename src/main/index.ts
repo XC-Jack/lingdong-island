@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
 import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -560,6 +560,70 @@ ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
     applyBoundsNow(true)
   }
   return { ...expandedSize }
+})
+
+// ---------- 岛背后的「真透视」底色（SPEC-island-themes 第二轮） ----------
+// 目标：B 主题（亮色乳白玻璃）要像效果图那样，能隐约看见桌面颜色在岛底下晕开。
+//
+// 为什么非得抓屏（两条都是实测结论，见 docs/facts/本机约束与踩坑.md）：
+//   1) 透明 Electron 窗口上 backdrop-filter 采不到窗口背后的桌面像素，只会采样到窗口自己的透明底；
+//   2) Windows 的 backgroundMaterial('acrylic'/'mica') 加在透明窗上会把窗口变成不透明灰板，反而丢掉透明。
+// 所以只剩「自己抓一块桌面 → 交给渲染层当背景 → CSS 模糊」这一条路。
+//
+// 三条硬约束：
+//   1) 抓之前开 setContentProtection(true)，否则会连岛自己一起拍进去（WDA_EXCLUDEFROMCAPTURE 生效，
+//      实验见 .tmp/glass-probe/capture.js）；抓完 finally 里立刻关掉。
+//   2) 图只回给渲染层当 CSS 背景，不落盘、不进日志；渲染层也只在内存里持有。
+//   3) 由渲染层按需拉取（收起 5s / 展开 1.5s 一次），主进程不自己起定时器 —— 岛隐藏时没人拉就没有开销。
+let backdropBusy = false
+
+ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
+  const win = mainWindow
+  if (!win || win.isDestroyed() || !win.isVisible()) return null
+  if (backdropBusy) return null // 上一次还没抓完（低端机/4K 屏可能超 200ms），直接跳过这一拍
+  backdropBusy = true
+  // 抓屏期间关掉内容保护会拍到岛自己；窗口若本来就因别的原因开着保护，这里也不越权关
+  let touchedProtection = false
+  try {
+    const bounds = win.getBounds() // DIP
+    const display = screen.getDisplayMatching(bounds)
+    const sf = display.scaleFactor || 1
+    // 缩略图只取全屏物理像素的 35%：模糊之后根本看不出画质差别，耗时却从 ~150ms 降到 ~60ms
+    const thumbW = Math.max(64, Math.round(display.size.width * sf * 0.35))
+    const thumbH = Math.max(64, Math.round(display.size.height * sf * 0.35))
+
+    win.setContentProtection(true)
+    touchedProtection = true
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: thumbW, height: thumbH }
+    })
+    if (!sources.length) return null
+    const src = sources.find((s) => s.display_id === String(display.id)) ?? sources[0]
+    const img = src.thumbnail
+    const size = img.getSize()
+    if (size.width < 8 || size.height < 8) return null
+    // 缩略图 px / 屏幕物理 px；显示器可能被系统缩放，用实际尺寸反推最稳
+    const ratio = size.width / (display.size.width * sf)
+    const toPx = (dip: number): number => Math.round(dip * sf * ratio)
+    const x = Math.max(0, Math.min(toPx(bounds.x - display.bounds.x), size.width - 8))
+    const y = Math.max(0, Math.min(toPx(bounds.y - display.bounds.y), size.height - 8))
+    const w = Math.max(8, Math.min(toPx(bounds.width), size.width - x))
+    const h = Math.max(8, Math.min(toPx(bounds.height), size.height - y))
+    return img.crop({ x, y, width: w, height: h }).toDataURL()
+  } catch {
+    // 抓屏失败（远程桌面、显卡驱动异常等）不能影响界面：渲染层拿不到就退回静态乳白玻璃
+    return null
+  } finally {
+    backdropBusy = false
+    if (touchedProtection) {
+      try {
+        win.setContentProtection(false)
+      } catch {
+        /* 窗口可能已销毁 */
+      }
+    }
+  }
 })
 
 // 打开置物架里的文件（用系统默认程序）

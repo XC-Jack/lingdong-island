@@ -65,6 +65,14 @@ const api = {
   dragHover(): void {
     ipcRenderer.send('island:drag-hover')
   },
+  /**
+   * 岛背后的桌面底图（SPEC-island-themes 第二轮，真透视）。
+   * 主进程抓岛所在那块屏幕、裁成岛的大小，返回 data URL；抓不到时返回 null。
+   * 图只在内存里用，不落盘。渲染层按主题/可见性决定要不要拉、多久拉一次。
+   */
+  islandBackdrop(): Promise<string | null> {
+    return ipcRenderer.invoke('island:backdrop')
+  },
   /** 窗口失焦（点了桌面或其他程序）——渲染层借此自动收回 */
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)

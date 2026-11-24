@@ -10,12 +10,27 @@
 :root {
   /* ===== B：亮色乳白玻璃（默认） ===== */
   --ink-1: #14161b;
-  --island-top: rgba(253, 253, 255, 0.965);
-  --island-bottom: rgba(235, 239, 245, 0.965);
-  --sheen: rgba(255, 255, 255, 0.85);
-  --border-island: rgba(0, 0, 0, 0.07);
-  --shadow-island: inset 0 1px 0 #ffffff, 0 16px 34px rgba(12, 22, 44, 0.18);
-  --bg-pop: rgba(252, 253, 255, 0.99);
+  /* 玻璃本体只有 0.62 不透明度：桌面会从底下透上来，这是「液态玻璃」与「白色卡片」的分界。
+     数值是对着参考图（mockup-b-640.png）逐点采样定的：同一块黄昏壁纸下，岛中心
+     R/G/B 落在 220/190/174，参考图 220/187/170（详见 SPEC-island-themes 第八节）。
+     三块低饱和色斑（左上受光 / 右上冷光 / 右下暖光）补上参考图里由壁纸带出来的虹彩：
+     顶部偏冷、底部偏暖，冷暖不靠壁纸自己给，否则换张纯灰壁纸就死白一片。 */
+  --island-top: rgba(247, 243, 244, 0.62);
+  --island-bottom: rgba(233, 218, 211, 0.62);
+  --island-hi: rgba(255, 255, 255, 0.4);
+  --island-cool: rgba(180, 202, 255, 0.28);
+  --island-warm: rgba(255, 178, 140, 0.44);
+  /* 岛体底色的完整图层栈：顶部受光 + 三块低饱和色斑 + 上下渐变的乳白本体。
+     抽成变量是为了「真透视」模式复用一份：模糊底图之上要盖同一份 veil，
+     否则抓来的桌面会直接从文字底下顶上来，对比度崩掉。 */
+  --island-veil:
+    radial-gradient(130% 110% at 8% -10%, var(--island-hi) 0%, transparent 58%),
+    radial-gradient(95% 85% at 104% 4%, var(--island-cool) 0%, transparent 62%),
+    radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
+  --border-island: rgba(255, 255, 255, 0.85);
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 18px 40px rgba(8, 16, 32, 0.26);
+  --bg-pop: rgba(251, 251, 254, 0.97);
   --shadow-pop: 0 10px 28px rgba(12, 22, 44, 0.18);
   --shadow-pop-sm: 0 6px 18px rgba(12, 22, 44, 0.15);
   --bg-chip: #ffffff;
@@ -37,6 +52,15 @@
   --music-play-hover: #c22f50;
   --music-play-ink: #ffffff;
 
+  /* 表面与描边方向相反：深色主题往「加亮」叠（白覆盖），亮色玻璃往「提白」叠——
+     控件要比玻璃更白，才对得上参考图里那些乳白小方块；用黑叠会变成一片灰块。 */
+  --surface-1: rgba(255, 255, 255, 0.3);
+  --surface-2: rgba(255, 255, 255, 0.44);
+  --surface-3: rgba(255, 255, 255, 0.62);
+  --line: rgba(255, 255, 255, 0.42);
+  --line-2: rgba(255, 255, 255, 0.58);
+  --line-3: rgba(255, 255, 255, 0.76);
+
   /* 文字的次要档：浅底上必须比深色主题更重——42% 的黑压在乳白底上只有 2.6:1，读不清。
      深色主题的同一档是 72/50/42/22（白在黑上对比度足够），分别写在各主题块里。 */
   --ink-2: color-mix(in srgb, var(--ink-1) 82%, transparent);
@@ -44,16 +68,8 @@
   --ink-4: color-mix(in srgb, var(--ink-1) 52%, transparent);
   --ink-5: color-mix(in srgb, var(--ink-1) 26%, transparent); /* 仅装饰图标，不用于文字 */
 
-  /* 表面与描边：三套主题共用同一套派生（浅底上 5% 黑 = 很浅的灰，够用又不脏） */
-  --surface-1: color-mix(in srgb, var(--ink-1) 5%, transparent);
-  --surface-2: color-mix(in srgb, var(--ink-1) 8%, transparent);
-  --surface-3: color-mix(in srgb, var(--ink-1) 12%, transparent);
-  --line: color-mix(in srgb, var(--ink-1) 8%, transparent);
-  --line-2: color-mix(in srgb, var(--ink-1) 12%, transparent);
-  --line-3: color-mix(in srgb, var(--ink-1) 20%, transparent);
-
-  /* 圆角阶梯（同心：外框 24 → 卡片 16 → 控件 10；胶囊仍用 999） */
-  --r-lg: 24px;
+  /* 圆角阶梯（同心：外框 28 → 卡片 16 → 控件 10；胶囊仍用 999） */
+  --r-lg: 28px;
   --r-md: 16px;
   --r-sm: 10px;
 
@@ -68,7 +84,9 @@
   --ink-1: #ffffff;
   --island-top: rgba(10, 10, 12, 0.97);
   --island-bottom: rgba(5, 5, 7, 0.97);
-  --sheen: rgba(255, 255, 255, 0.085);
+  --island-hi: rgba(255, 255, 255, 0.085);
+  --island-cool: transparent;
+  --island-warm: transparent;
   --border-island: rgba(255, 255, 255, 0.11);
   --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 18px 44px rgba(0, 0, 0, 0.55);
   --bg-pop: rgba(18, 18, 21, 0.985);
@@ -117,7 +135,9 @@
   --line-3: #34343a;
   --island-top: #000000;
   --island-bottom: #000000;
-  --sheen: transparent;
+  --island-hi: transparent;
+  --island-cool: transparent;
+  --island-warm: transparent;
   --border-island: transparent;
   --shadow-island: none;
   --bg-pop: #101012;
@@ -194,12 +214,16 @@ body {
 }
 
 .island {
-  /* 伪玻璃：顶部一层受光渐变 + 上深下浅的两段底色，比纯色平涂有厚度；
-     不做真实 backdrop-filter —— 探针实测（SPEC-island-themes 第〇节）：
-     透明置顶窗里它采不到窗口背后的桌面像素，桌面是原样清晰透出的，加了也没用。 */
-  background:
-    linear-gradient(180deg, var(--sheen) 0%, transparent 48%),
-    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
+  /* 玻璃本体 = --island-veil（受光 + 色斑 + 乳白渐变）。
+     真实模糊不在这里做：透明窗上的 backdrop-filter 采不到窗口背后的桌面像素
+     （探针实测，SPEC-island-themes 第〇节），真透视靠主进程抓屏 + 下面两层伪元素，
+     见 .island-backdrop / .island-veil。 */
+  background: var(--island-veil);
+  /* 建立层叠上下文：抓屏底图用 z-index:-1 压在「岛体背景之上、内容之下」，
+     没有 isolate 时负层级会跑到岛体背景后面去（整层看不见）。 */
+  isolation: isolate;
+  /* 抓屏底图的定位基准。岛内浮层各自有 relative 包裹层，不受影响（已逐个核对）。 */
+  position: relative;
   border: 1px solid var(--border-island);
   /* 顶沿再压一道 1px 内高光：模拟玻璃受光的锐边，让边缘「切」出来而不是糊进背景 */
   box-shadow: var(--shadow-island);
@@ -208,6 +232,42 @@ body {
     width 220ms cubic-bezier(0.22, 1, 0.36, 1),
     height 220ms cubic-bezier(0.22, 1, 0.36, 1),
     border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------- 真透视底图（SPEC-island-themes 第二轮，2026-11-24） ----------
+   主进程抓「岛背后那块屏幕」→ 渲染层当背景 → 自己模糊。三层关系：
+     1) .island-backdrop：截图层，外扩 32px 再 blur，把截图的硬边甩到岛外被圆角裁掉；
+     2) .island-veil：和岛体同款的乳白 veil，压亮度、保文字对比度；
+     3) 正常流内容。
+   两层都用 z-index:-1 + 父级 isolation:isolate，落在「岛体背景之上、内容之下」，
+   不用给几百个子元素挨个排层级。只有亮色玻璃主题会挂这两层（见 App.tsx 的抓取循环）。 */
+.island-backdrop,
+.island-veil {
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+}
+.island-backdrop {
+  inset: -32px;
+  background-size: cover;
+  background-position: center;
+  /* 22px 是布局 px（整树 zoom 0.75，视觉约 16.5px）：再大桌面就糊成一块纯色，
+     再小能看出截图放大后的像素格。saturate 略提一档，补偿抓屏缩略图偏灰。 */
+  filter: blur(22px) saturate(1.28);
+  /* 第一帧底图到手前不出现，避免和静态 veil 之间闪一下 */
+  animation: backdrop-in 240ms ease-out both;
+}
+.island-veil {
+  inset: 0;
+  background: var(--island-veil);
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* 展开态各页内容区：自身按内容量决定页高（列表超出 max-height 内滚动）；切页淡入动画。

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ISLAND_THEMES } from '../../shared/types'
-import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState } from '../../shared/types'
+import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState, IslandTheme } from '../../shared/types'
 import Pet from './pet/Pet'
 import { fitIslandToPopover } from './popFit'
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
@@ -11,9 +11,13 @@ const AUTO_COLLAPSE_MS = 700
  * CSS 里只有 glass-dark / mono 两块覆盖，glass-light 直接用 :root 的默认值，
  * 所以「非法或缺失」和「显式 glass-light」是同一个结果，不需要额外分支。
  */
-function applyIslandTheme(v: unknown): void {
-  const t = typeof v === 'string' && (ISLAND_THEMES as readonly string[]).includes(v) ? v : 'glass-light'
+function applyIslandTheme(v: unknown): IslandTheme {
+  const t = (typeof v === 'string' && (ISLAND_THEMES as readonly string[]).includes(v)
+    ? v
+    : 'glass-light') as IslandTheme
   if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t
+  // 返回值给调用方同步一份 state：抓屏底图只有亮色玻璃主题要（另外两套是不透明的）
+  return t
 }
 
 /** 通知页数据结构（与 preload/notifyStore 保持一致；独立声明避免跨 tsconfig project 引用） */
@@ -3104,6 +3108,11 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string }[] = [
 
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
+  // 岛主题（SPEC-island-themes）：默认亮色玻璃，mount 后从 prefs 回填。
+  // 除了写 <html data-theme>，还留一份 state 给「真透视」抓屏循环判条件。
+  const [islandTheme, setIslandTheme] = useState<IslandTheme>('glass-light')
+  // 岛背后的桌面底图（data URL，只在内存里）。只有亮色玻璃主题需要，换主题立刻清空。
+  const [backdrop, setBackdrop] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
   // 充电中（status:snapshot 一直带着 charging，UI 从未用过——电量态轮次开始消费）
@@ -3144,7 +3153,7 @@ export default function App(): React.JSX.Element {
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
         if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
-        applyIslandTheme(prefs.islandTheme)
+        setIslandTheme(applyIslandTheme(prefs.islandTheme))
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -3652,7 +3661,7 @@ export default function App(): React.JSX.Element {
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
       if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
-      applyIslandTheme(prefs.islandTheme)
+      setIslandTheme(applyIslandTheme(prefs.islandTheme))
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
       // 广播来自「已落盘的真实状态」，比本地乐观更新的值更权威，直接覆盖
@@ -3661,6 +3670,44 @@ export default function App(): React.JSX.Element {
     })
     return off
   }, [])
+
+  /**
+   * 真透视（SPEC-island-themes 第二轮）：定期向主进程要「岛背后那块桌面」当底图。
+   * 主进程抓屏 60~150ms 且异步，这里只管起定时器；收起 5s、展开 1.5s 一次——
+   * 展开时用户更可能换页/挪窗口，色块变化更明显，抓得勤一点。
+   * 换主题（另两套是不透明玻璃）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
+   * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
+   */
+  useEffect(() => {
+    if (islandTheme !== 'glass-light' || avoidHidden) {
+      setBackdrop(null)
+      return
+    }
+    let alive = true
+    let timer: number | undefined
+    /** 拉一次底图；返回是否拿到（没拿到就早点重试——启动初期窗口还没 show 时会返回 null） */
+    const pull = (): Promise<boolean> => {
+      if (document.hidden) return Promise.resolve(false)
+      return window.island
+        .islandBackdrop()
+        .then((url) => {
+          if (alive && url) setBackdrop(url)
+          return !!url
+        })
+        .catch(() => false) // 失败静默：底图是锦上添花，不能因此报错或弹窗
+    }
+    const tick = (): void => {
+      void pull().then((ok) => {
+        if (!alive) return
+        timer = window.setTimeout(tick, ok ? (expanded ? 1500 : 5000) : 900)
+      })
+    }
+    tick()
+    return () => {
+      alive = false
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [islandTheme, expanded, avoidHidden])
 
   // 切页淡入：换页时给面板体一个短动画类
   const [pageAnim, setPageAnim] = useState(0)
@@ -3940,6 +3987,19 @@ export default function App(): React.JSX.Element {
           }
         }}
       >
+        {/* 真透视底图（SPEC-island-themes 第二轮）：截图 + 同款 veil，两层都在 z-index:-1，
+            压在岛体背景之上、内容之下（见 styles.css 的 .island-backdrop 段）。
+            没有底图时这两层不存在，岛体自己就是静态的 veil。 */}
+        {backdrop && (
+          <>
+            <div
+              className="island-backdrop"
+              style={{ backgroundImage: `url(${backdrop})` }}
+              aria-hidden="true"
+            />
+            <div className="island-veil" aria-hidden="true" />
+          </>
+        )}
         {avoidHidden && !expanded && (
           /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
           <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
