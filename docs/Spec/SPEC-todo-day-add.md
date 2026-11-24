@@ -67,8 +67,11 @@
 2. 置物架 / 通知页「有了消息还没没有小，别老是缩回去了」：给 `.page-fade` 加 `.page-shelf` / `.page-notify` 两个类，`min-height` 分别 87 / 170 布局 px（取空态实测页高），有内容时不再比空态矮。
 3. 验证 [实测]：`typecheck` / `build` 通过；探针：置物架空态与 2 个文件均 255×157.1，通知空态 255×219.2，日程浮层 `top 104.3 / bottom 234.1`、岛 254.4；回归 `e2e-schedule`、`e2e-schedule-day`、`e2e-schedule-crossmonth` 8/0、`e2e-schedule-edit`、`e2e-schedule-scroll` 6/0、`e2e-notify`、`e2e-shelf-view-pref`、`e2e-todo-day-pick` 17/0 全过；`e2e-notify-compact` C1/C2 产品断言通过，收尾 taskkill 128 为脚本既有问题。
 
-## 十、置物架视图菜单改横排（2026-11-24，用户第三次看预览）
+## 十、置物架视图改为大图标/列表两态切换（2026-11-24，最终版）
 
-1. 用户原话「你置物架没改呀，我点那个切换查看方式就变大了」：上一轮只锁了页面本体高度，没管页面内弹出的菜单。竖排 4 项约 140 布局 px，高于置物架页 87 px，`fitIslandToPopover` 把超出部分写成 `--pop-extra`，岛被撑高。
-2. 改为横排：`.shelf-view-pop` `flex-direction:row`、`gap:2px`、`padding:3px`；`.shelf-view-item` `gap:4px` / `padding:5px 6px` / `font-size:10.5px` / `white-space:nowrap`。同时删除 `ShelfPanel` 中打开菜单时的 `fitIslandToPopover` 调用。
-3. 验证 [实测]：`typecheck` / `build` 通过；探针（`.tmp/page-size-probe.mjs`）三种状态岛均为 255×157.1，菜单盒 22.5–206.7 × 98.3–123.1 在岛内；回归 `e2e-shelf-view-pref`、`e2e-exit-and-shelf-view`、`e2e-shelf-missing` 全过。
+> 本节先后的两个中间方案已作废：①竖排四项下拉菜单（一打开就把岛撑高，用户：「你置物架没改呀，我点那个切换查看方式就变大了」）；②横排四项菜单（不撑高，但用户不要横的：「置物架切换的查看方式就要竖的，不要横的」）。随后用户又改为「算了，置物架就保留大图标和列表就行了，另外两个不要了，点切换键来切换」——菜单整体取消。
+
+1. 视图只剩 `lg`（大图标）与 `list`（列表）：删除中图标/小图标两个选项、`IcoGridMd` / `IcoGridSm` 组件、`.shelf-drop.md/.sm` 样式与 `.shelf-view-pop/.shelf-view-item` 菜单样式。
+2. `.shelf-view-btn` 从「打开菜单」改为「直接切换」：点击在两种视图之间切换并写入 prefs.json；按钮图标显示当前视图，`title` / `aria-label` 写「切换为列表」/「切换为大图标」。
+3. 旧偏好 `md`/`sm` 在 `normalizeShelfView` 里不再合法，回落默认「大图标」；preload 的 `PrefsShape.shelfView` 类型同步收窄为 `'lg' | 'list'`。
+4. 验证 [实测]：`typecheck` / `build` 通过；探针（`.tmp/shelf-toggle-probe.mjs`）点击两次依次得到 lg → list → lg，按钮 title 随状态变化，岛尺寸随内容为 188.7 / 216.2 / 188.7 屏幕 px（3 个文件）；`e2e-shelf-view-pref`（含新增 A5b：旧值 sm 回落 lg）、`e2e-exit-and-shelf-view`、`e2e-shelf-missing` 全过。
