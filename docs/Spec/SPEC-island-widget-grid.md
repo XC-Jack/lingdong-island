@@ -56,7 +56,50 @@
 
 ## 七、自检记录
 
-（实现后填写）
+### 7.1 实际改了什么（[实测]，2026-11-24）
+
+| 类别 | 改动 |
+| --- | --- |
+| 视图层 | `App.tsx` 新增 `view: 'grid' \| number`；收起时重置为 `grid`；翻页、铃铛、拖文件入口同步 `setView` |
+| 网格 | `.widget-grid`：308 布局 px 宽，2 列方格 + 音乐宽卡；卡面 `--surface-1`，图标色由 accent/warn/danger/ok/music-play 派生 |
+| 动画 | 点组件记下矩形，`view` 变化后的 `useLayoutEffect` 用 WAAPI 做 340ms FLIP 缩放（zoom 0.75 已折算位移） |
+| 返回 | 功能页头部左侧新增 `.panel-back`，回网格并反向缩放 |
+| 待办页 | 列表行圆角 10→16、行距 6→8、内边距加大；输入框与加号改胶囊/圆形；时间按钮在待办页改圆形 |
+| e2e | 19 个脚本（20 处）在展开后补点 `.widget[data-page="0"]`；`e2e-head-order` 的 `expand()` 与 `e2e-pages-custom` 的两处 `dispatchEvent` 单独补点组件 |
+
+### 7.2 跑了什么（[实测]）
+
+- `npm run typecheck`：node + web 均通过。
+- `npm run build`：electron-vite 构建成功。
+- 截图（`.tmp/widget-grid/`）：网格页 `glass-light` / `glass-dark` / `mono` 三套、待办页、音乐旧页；网格在 258×248 视觉，待办页 255×190 视觉。
+- 动画实测：进页面时 `.page-fade` 上存在 2 个 WAAPI 动画，起始 `scale(0.69, 0.94)`；返回时 `.widget-grid` 起始 `scale(0.99, 0.48)`；结束后均回到 `none / opacity 1`。
+- 回归：
+  - `e2e-todo-today` PASS
+  - `e2e-head-order` 14 过 / 0 败
+  - `e2e-collapse-order` 22 过 / 0 败
+  - `e2e-pages-custom` 6 项 PASS
+  - `e2e-schedule-day` PASS
+  - `e2e-collapsed-todo` PASS
+  - `e2e-shelf-view-pref` PASS
+  - `e2e-notify` PASS
+  - `e2e-m2` PASS
+  - `e2e-schedule-crossmonth` 8 过 / 0 败
+  - `e2e-exit-and-shelf-view` PASS
+  - `e2e-notify-compact` C1/C2 通过（收尾 `taskkill` 128 是脚本既有问题）
+- `perf-click-latency`：P2 启动 684 ms 通过；P3 最后一项 P95 62–85 ms **未通过，但在 `main` 基线上同样为 81 ms**，样本结构一致（最后一次离群），判为既有环境抖动，不是本轮引入。
+
+### 7.3 没验证的
+
+- 未录屏逐帧核对缩放动画的中间帧（CDP 截图抓不到 340ms 内的帧）；只验证了动画对象与首尾状态。
+- 用 `main` 基线的 `perf-click-latency` 对照只跑了一次。
+- 批量改过的其余 9 个 e2e 脚本（`e2e-m4`、`e2e-m4-drop`、`e2e-reorder`、`e2e-schedule-edit`、`e2e-schedule-scroll`、`e2e-schedule`、`e2e-notify-group`、`e2e-notify-live`、`e2e-shelf-missing`）未逐一跑。
+- 真实鼠标操作下的缩放观感、触屏/高 DPI 未测。
+
+### 7.4 已知取舍
+
+- 网格页（258×248 视觉）比待办页（255×190）高：两者切换时窗口高度会跳一次，主进程 `applyBoundsNow` 立即改窗口，实测无裁切；但「岛突然变高/变矮」的观感要等用户判断。
+- 返回动画的目标是整块网格，而不是点击前的那个组件矩形；视觉上是从页面缩成整页网格。
+- 其余四页内部仍是旧样式，只是从网格能点进去。
 
 ## 八、验收记录
 

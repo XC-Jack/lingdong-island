@@ -1520,6 +1520,11 @@ body {
   transition: background 140ms ease;
 }
 
+/* 待办页的时间按钮跟着输入胶囊走圆形（日程页仍是方角，等那一页铺开时再统一） */
+.todo-add .sched-time-btn {
+  border-radius: 50%;
+}
+
 .todo-add-btn:hover {
   background: var(--accent-hover);
 }
