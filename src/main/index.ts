@@ -571,8 +571,11 @@ ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
 // 所以只剩「自己抓一块桌面 → 交给渲染层当背景 → CSS 模糊」这一条路。
 //
 // 三条硬约束：
-//   1) 抓之前开 setContentProtection(true)，否则会连岛自己一起拍进去（WDA_EXCLUDEFROMCAPTURE 生效，
-//      实验见 .tmp/glass-probe/capture.js）；抓完 finally 里立刻关掉。
+//   1) **不能靠开关 setContentProtection 来躲开岛自己**（第一版这么干，被用户抓包「老是闪」）：
+//      Windows 在切换 WDA_EXCLUDEFROMCAPTURE 的那一瞬间会把窗口换成一张旧的缓存画面 ——
+//      录屏逐帧实测，每 1.5s 有 4~5 帧显示的是「启动时的收起态小胶囊」，肉眼就是突然缩一下再弹回来。
+//      现在改成：照常抓（岛会在图里），再把岛占的那块矩形**用左右两侧的真实桌面像素横向插值填掉**。
+//      反正最后要 blur(22px)，插值出来的低频色块和真桌面看不出区别。
 //   2) 图只回给渲染层当 CSS 背景，不落盘、不进日志；渲染层也只在内存里持有。
 //   3) 由渲染层按需拉取（收起 5s / 展开 1.5s 一次），主进程不自己起定时器 —— 岛隐藏时没人拉就没有开销。
 let backdropBusy = false
@@ -582,8 +585,6 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
   if (!win || win.isDestroyed() || !win.isVisible()) return null
   if (backdropBusy) return null // 上一次还没抓完（低端机/4K 屏可能超 200ms），直接跳过这一拍
   backdropBusy = true
-  // 抓屏期间关掉内容保护会拍到岛自己；窗口若本来就因别的原因开着保护，这里也不越权关
-  let touchedProtection = false
   try {
     const bounds = win.getBounds() // DIP
     const display = screen.getDisplayMatching(bounds)
@@ -592,8 +593,6 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
     const thumbW = Math.max(64, Math.round(display.size.width * sf * 0.35))
     const thumbH = Math.max(64, Math.round(display.size.height * sf * 0.35))
 
-    win.setContentProtection(true)
-    touchedProtection = true
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: { width: thumbW, height: thumbH }
@@ -606,23 +605,76 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
     // 缩略图 px / 屏幕物理 px；显示器可能被系统缩放，用实际尺寸反推最稳
     const ratio = size.width / (display.size.width * sf)
     const toPx = (dip: number): number => Math.round(dip * sf * ratio)
-    const x = Math.max(0, Math.min(toPx(bounds.x - display.bounds.x), size.width - 8))
-    const y = Math.max(0, Math.min(toPx(bounds.y - display.bounds.y), size.height - 8))
-    const w = Math.max(8, Math.min(toPx(bounds.width), size.width - x))
-    const h = Math.max(8, Math.min(toPx(bounds.height), size.height - y))
-    return img.crop({ x, y, width: w, height: h }).toDataURL()
+    // 岛自己的矩形（缩略图坐标）
+    const ix = Math.max(0, Math.min(toPx(bounds.x - display.bounds.x), size.width - 8))
+    const iy = Math.max(0, Math.min(toPx(bounds.y - display.bounds.y), size.height - 8))
+    const iw = Math.max(8, Math.min(toPx(bounds.width), size.width - ix))
+    const ih = Math.max(8, Math.min(toPx(bounds.height), size.height - iy))
+
+    // 往外多抓一圈真实桌面：既给模糊留上下文，也给插图提供干净的左右采样列。
+    // 必须四边同宽（取能放下的最大值）：岛贴着屏幕顶，若只按"能扩多少扩多少"，
+    // 上下不对称会让 crop 中心偏离岛中心，cover 之后底图整体错位。
+    const pad = Math.max(
+      0,
+      Math.min(Math.round(36 * ratio), ix, iy, size.width - (ix + iw), size.height - (iy + ih))
+    )
+    const cx = ix - pad
+    const cy = iy - pad
+    const cw = iw + pad * 2
+    const ch = ih + pad * 2
+    const crop = img.crop({ x: cx, y: cy, width: cw, height: ch })
+
+    // 把岛那块矩形填掉：每一行取左右紧贴的桌面列，按 smoothstep 横向插值。
+    // 岛的圆角外本来就是透明窗（能拍到底下的真桌面），这几列也一起被覆盖，不影响。
+    const hx = ix - cx
+    const hy = iy - cy
+    const hw = Math.min(iw, cw - hx)
+    const hh = Math.min(ih, ch - hy)
+    if (hw > 0 && hh > 0 && cw > 2) {
+      const bmp = crop.toBitmap() // BGRA，行优先
+      const lx = Math.max(0, hx - 1)
+      const rx = Math.min(cw - 1, hx + hw)
+      const hasL = lx < hx
+      const hasR = rx >= hx + hw
+      if (hasL || hasR) {
+        for (let y = hy; y < hy + hh; y++) {
+          const row = y * cw * 4
+          const l = row + lx * 4
+          const r = row + rx * 4
+          const l0 = bmp[l]
+          const l1 = bmp[l + 1]
+          const l2 = bmp[l + 2]
+          const r0 = bmp[r]
+          const r1 = bmp[r + 1]
+          const r2 = bmp[r + 2]
+          // 两侧取不到的极端情况（岛贴屏边）就用另一侧整行铺满
+          const a0 = hasL ? l0 : r0
+          const a1 = hasL ? l1 : r1
+          const a2 = hasL ? l2 : r2
+          const b0 = hasR ? r0 : l0
+          const b1 = hasR ? r1 : l1
+          const b2 = hasR ? r2 : l2
+          for (let x = hx; x < hx + hw; x++) {
+            const t0 = (x - hx + 1) / (hw + 1)
+            const t = t0 * t0 * (3 - 2 * t0) // smoothstep：与两侧桌面接缝处导数为 0
+            const o = row + x * 4
+            bmp[o] = Math.round(a0 + (b0 - a0) * t)
+            bmp[o + 1] = Math.round(a1 + (b1 - a1) * t)
+            bmp[o + 2] = Math.round(a2 + (b2 - a2) * t)
+            bmp[o + 3] = 255
+          }
+        }
+      }
+      return nativeImage.createFromBitmap(bmp, { width: cw, height: ch }).toDataURL()
+    }
+    // 连一行干净的桌面像素都取不到（岛把整屏占满这种理论上不可能的情况）：
+    // 宁可不给底图，也不能把岛自己当底图回灌，否则会一层层糊上去
+    return null
   } catch {
     // 抓屏失败（远程桌面、显卡驱动异常等）不能影响界面：渲染层拿不到就退回静态乳白玻璃
     return null
   } finally {
     backdropBusy = false
-    if (touchedProtection) {
-      try {
-        win.setContentProtection(false)
-      } catch {
-        /* 窗口可能已销毁 */
-      }
-    }
   }
 })
 
