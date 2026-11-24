@@ -1648,8 +1648,11 @@ body {
   overflow: visible;
 }
 
+/* 列表区域与图标区域同高（2026-11-24 用户：「保持大图标的大小，不要变大变小了，
+   界面老卡」）：两个视图切换时岛尺寸必须完全不变，否则每次切换都要重设窗口。
+   93 = 大图标网格的布局高度（实测屏高 70 ÷ 0.75）；行数少时留白，多了在框内滚动。 */
 .shelf-drop.list .shelf-list {
-  max-height: 130px;
+  height: 93px;
 }
 
 .shelf-drop.over {
@@ -1677,6 +1680,8 @@ body {
   flex-wrap: nowrap;
   align-items: flex-start;
   gap: 8px;
+  /* 与列表视图的 93px 对齐：两视图切换时岛高不变（见 .shelf-list 处的说明） */
+  height: 93px;
 }
 
 /* 大图标：格子宽 + 图标本体（84/40）；中/小图标已按用户要求移除（2026-11-24） */
