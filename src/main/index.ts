@@ -55,18 +55,19 @@ let collapsedWidth = 168
 //    视觉下限 285→255（每侧少约 11 视觉 px），置物架页标题与状态区仍有 8.5 布局 px 余量。
 const EXPANDED_MIN = { width: 255, height: 113 }
 const EXPANDED_MAX = { width: 540, height: 315 }
-/** 展开态当前尺寸（渲染层量出来的；初始值只用于首帧开窗，随后被 ResizeObserver 纠正） */
-let expandedSize = { width: 353, height: 240 }
+/** 展开态当前尺寸（渲染层量出来的）。初始值取组件网格的固定尺寸（340×330 布局 px ×0.75），
+ *  2026-11-25 起展开前渲染层会先报一次真实尺寸，这里只是兜底，避免退回固定尺寸时代的 353×240。 */
+let expandedSize = { width: 255, height: 248 }
 /** 距屏幕顶部的缝隙 */
 const TOP_GAP = 6
-/** 过渡动画时长（毫秒）。用户实测 220ms 太急，调到 500ms（US-038 验收反馈，用户嫌 320 仍快） */
-const TWEEN_MS = 500
+/** 开合补间时长（毫秒）。原 500 ms，2026-11-25 用户嫌开合动画卡，收到 220 ms */
+const TWEEN_MS = 220
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let expanded = false
 let tweenTimer: NodeJS.Timeout | null = null
-/** 补间的起点矩形与起始时刻（每帧从起点插值到「当前」目标） */
+/** 补间起点矩形与起始时刻 */
 let tweenFrom: Electron.Rectangle | null = null
 let tweenStart = 0
 /** US-041 手动隐藏标志（菜单文案切换用；真实状态机在 fullscreenWatch.ts） */
@@ -185,24 +186,19 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
 }
 
 /**
- * 缓动到目标矩形。Windows 不支持原生窗口动画，这里手动补间（SPEC-island-window-resize）。
+ * 展开/收起补间。2026-11-25 从 500 ms 收到 220 ms，并且改成单调（渲染层会在 set-expanded
+ * 之前先上报目标尺寸），把用户说的「震动」——窗口宽度先冲过头再缩回来——去掉。
  *
- * 只有「展开 / 收起」这种整岛形态变化走这里；页面切换引起的内容尺寸变化走
- * `applyBoundsNow()`，一次到位 —— 以前那种也补间 500 ms 的做法，一次切页要连续改
- * 9–19 次窗口尺寸，透明置顶窗口每次都要重新合成，弱 GPU 机器上就是半秒顿。
- *
- * 帧间隔 16 ms（≈60fps）：原来是 8 ms，125 fps 对任何显示器都没有意义，纯粹让
- * `setBounds` 次数翻倍。
- *
- * 目标尺寸每帧现算（`computeBounds`）：补间途中内容尺寸被上报时，剩下的帧会自然
- * 拐向新尺寸，不会先长过头、再在收尾时跳回来。
+ * 为什么还保留逐帧补间、不改成一次 setBounds：实机逐帧截图实测，透明置顶窗口在「一次
+ * 跳变尺寸 + 内容变换」后，合成器有几百毫秒不呈现新画面（屏幕上是空的/旧的）；连续
+ * 小幅 setBounds 会强制它持续出帧。220 ms × 16 ms ≈ 14 帧，比原来的 500 ms（≈30 帧）
+ * 少一半，配合渲染层的淡入缩放已经把卡顿感压下去。
  */
 function animateTo(isExpanded: boolean): void {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
 
   expanded = isExpanded
-  // 起点固定成「这次补间开始时的窗口矩形」
   tweenFrom = win.getBounds()
   tweenStart = Date.now()
   if (tweenTimer) return // 已在补间：换起点与计时即可，沿用同一个定时器
@@ -237,10 +233,8 @@ function tweenTick(): void {
 }
 
 /**
- * 直接把窗口放到目标矩形，不做补间（SPEC-island-window-resize）。
- *
- * 用在「内容尺寸变了」这条路上（切页、各页高度不同）：内容尺寸变化不需要动画，
- * 岛自己已经有 220 ms 的 CSS 过渡，窗口跟上就行。
+ * 直接把窗口放到目标矩形，不做补间。用于切页（内容尺寸变化，不需要窗口动画）。
+ * 若正好有开合补间在跑，先停掉它，避免两套尺寸互相覆盖。
  */
 function applyBoundsNow(isExpanded: boolean): void {
   const win = mainWindow
@@ -479,6 +473,9 @@ ipcMain.on('island:set-expanded', (_event, value: boolean) => {
   // US-036 诊断探针：收起发生时记录一行，便于定位「打字时岛自己收起」的真实路径。
   // 诊断稳定后可整体移除（连同 logDiag 通道）。
   if (!value) appendDiagLog(`render set-expanded=false; hasFocus(主进程视角)=${mainWindow?.isFocused() ?? 'no-win'}`)
+  // 2026-11-25 用户「打开和关闭时的震动动画容易卡」：补间从 500ms 收到 220ms，
+  // 且渲染层会先上报目标尺寸再触发，窗口单调展开、不再先冲过头再缩回来。
+  // （不能改成一次 setBounds：实测透明窗跳变后合成器几百毫秒不呈现新画面。）
   animateTo(value)
 })
 
@@ -515,8 +512,7 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   collapsedWidth = next
   // 只在收起态时立即应用（展开态下次收起时自然生效）
   if (!expanded && mainWindow && !mainWindow.isDestroyed()) {
-    // 收起补间正在跑：不能在这里抢一次 setBounds（会先瞬移到收起尺寸再被补间拉回去，
-    // 实测序列里出现过 174→163→146→76→136 这种闪一下）；从当前位置重起补间即可收敛。
+    // 收起补间途中：从当前位置重起补间，别抢一次 setBounds 造成闪一下
     if (tweenTimer) {
       animateTo(false)
       return
@@ -550,9 +546,7 @@ ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
   expandedSize = next
   // 只在展开态时立即应用（收起态下次展开时自然生效）
   if (expanded && mainWindow && !mainWindow.isDestroyed()) {
-    // 展开补间正在跑（刚展开时报上来的真实尺寸，常和记住的上次尺寸不同）：
-    // 从当前位置重新起补间，而不是每帧朝旧目标插值 —— 后者会先长过头再缩回来，
-    // 实测出现过 78→…→164→142→…→188 这种「先大后小」的抖动。重起是单调的。
+    // 展开补间途中收到新尺寸：从当前位置重起补间（单调收敛，不来回跳）
     if (tweenTimer) {
       animateTo(true)
       return { ...expandedSize }

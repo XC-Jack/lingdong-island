@@ -241,6 +241,45 @@ body {
   transition: none;
 }
 
+/* 打开/收起的一次性入场动画（2026-11-25，SPEC-island-motion）：
+   窗口由主进程 220ms 单调补间（500ms 太长，开合一次一直看着窗口在动，就是用户说的「震动 + 卡」），
+   `.island` 这边只做淡入 + 轻微缩放，两套尺寸动画不叠加。
+   只允许 ≤1 的缩放：窗口此时与岛同大，放大 1px 都会被窗口切掉。 */
+.island.island-anim-open {
+  transform-origin: 50% 0;
+  /* 宽高过渡关掉，尺寸只由窗口补间驱动；入场只做缩放/淡入 */
+  transition: none;
+  animation: island-open 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.island.island-anim-close {
+  transform-origin: 50% 0;
+  transition: none;
+  animation: island-close 180ms ease-out both;
+}
+
+@keyframes island-open {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes island-close {
+  from {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* ---------- 真透视底图（SPEC-island-themes 第二轮，2026-11-24） ----------
    主进程抓「岛背后那块屏幕」→ 渲染层当背景 → 自己模糊。三层关系：
      1) .island-backdrop：截图层，外扩 32px 再 blur，把截图的硬边甩到岛外被圆角裁掉；

@@ -3228,6 +3228,8 @@ export default function App(): React.JSX.Element {
   // ResizeObserver 的闭包拿不到最新 view：用它判断「这次量到的是不是网格尺寸」
   const viewRef = useRef<'grid' | number>(view)
   viewRef.current = view
+  // 展开/收起入场动画进行中（缩放会让 rect 偏小，ResizeObserver 这段时间不报尺寸）
+  const entranceRef = useRef<'open' | 'close' | null>(null)
   // 各页上次量到的尺寸：切页前先按它把窗口扩好，新页渲染完时窗口往往已经到位，
   // 把「变大」那条路径的空白压到 0（首次访问某页没有缓存，仍走回执等待，SPEC-switch-size-sync）。
   const pageSizeCache = useRef<Record<number, { w: number; h: number }>>({})
@@ -3266,6 +3268,9 @@ export default function App(): React.JSX.Element {
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         timer = null
+        // 入场动画期间 transform 会缩放 rect，量出来偏小；这段的上报由展开/收起
+        // 那条路径自己负责，动画结束后再补一次（见 entrance 那段）。
+        if (entranceRef.current) return
         const r = el.getBoundingClientRect()
         const w = Math.ceil(r.width)
         const h = Math.ceil(r.height)
@@ -3497,10 +3502,63 @@ export default function App(): React.JSX.Element {
   // 唯一的开关在设置窗口「常规」分区（src/renderer/src/settings/SettingsApp.tsx），
   // 主进程 IPC `autostart:get`/`autostart:set`/`autostart:changed` 全部保留不动。
 
-  // 状态变化时同步给主进程，由它调整窗口尺寸
-  useEffect(() => {
+  // 展开/收起的一次性入场动画（2026-11-25 用户「打开和关闭时的震动动画容易卡」）。
+  // 窗口由主进程 220ms 单调补间到目标尺寸，`.island` 同时淡入+轻微缩放（styles.css island-open/close）。
+  // 缩放动画会让 getBoundingClientRect 返回缩小后的尺寸，所以：
+  //   1) 展开前先把过渡临时关掉、量出目标尺寸再开窗；
+  //   2) 动画期间 ResizeObserver 不上报（entranceRef）；
+  //   3) 动画结束后补一次真实尺寸，避免按动画中的中间值把窗口定小。
+  const [entrance, setEntrance] = useState<'open' | 'close' | null>(null)
+  entranceRef.current = entrance
+  const firstExpandEffect = useRef(true)
+  const reportCurrentSize = useCallback(() => {
+    const el = islandRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    if (r.width <= 0 || r.height <= 0) return
+    if (expandedRef.current) {
+      const w = Math.ceil(r.width)
+      const h = Math.ceil(r.height)
+      if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+      intendedWinSize.current = { w, h }
+      void window.island.setExpandedSize(w, h)
+    } else {
+      window.island.setCollapsedWidth(Math.ceil(r.width))
+    }
+  }, [])
+  useLayoutEffect(() => {
+    if (firstExpandEffect.current) {
+      firstExpandEffect.current = false
+      window.island?.setExpanded(expanded)
+      return
+    }
+    if (expanded) {
+      const el = islandRef.current
+      if (el) {
+        // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
+        // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
+        const prev = el.style.transition
+        el.style.transition = 'none'
+        const r = el.getBoundingClientRect()
+        el.style.transition = prev
+        if (r.width > 0 && r.height > 0) {
+          const w = Math.ceil(r.width)
+          const h = Math.ceil(r.height)
+          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+          intendedWinSize.current = { w, h }
+          void window.island.setExpandedSize(w, h)
+        }
+      }
+    }
     window.island?.setExpanded(expanded)
-  }, [expanded])
+    setEntrance(expanded ? 'open' : 'close')
+    const id = window.setTimeout(() => {
+      setEntrance(null)
+      // 等 class 移除后的那一帧再量，此时 transform 已经归零
+      window.requestAnimationFrame(() => window.requestAnimationFrame(reportCurrentSize))
+    }, 260)
+    return () => window.clearTimeout(id)
+  }, [expanded, reportCurrentSize])
 
   // 每次收起（点桌面 / 自动超时 / Esc / 避让）后把视图退回组件网格：
   // 下次展开先看到组件，而不是上次停留的那一页（SPEC-island-widget-grid）。
@@ -3775,6 +3833,8 @@ export default function App(): React.JSX.Element {
   const beginNavSnap = useCallback(() => {
     // 展开动画本身要靠过渡同步主进程补间，收起态进来时不关；样式也只对 .expanded 生效
     if (!expandedRef.current) return
+    // 入场缩放会让切页时的 getBoundingClientRect 偏小（窗口会被报小），导航一开始就收掉它
+    setEntrance(null)
     setNavSnap(true)
     if (navSnapTimer.current !== null) window.clearTimeout(navSnapTimer.current)
     navSnapTimer.current = window.setTimeout(() => {
@@ -4095,7 +4155,7 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${navSnap ? 'nav-snap' : ''}`}
+        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''}`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
