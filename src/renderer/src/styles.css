@@ -1520,8 +1520,9 @@ body {
   transition: background 140ms ease;
 }
 
-/* 待办页的时间按钮跟着输入胶囊走圆形（日程页仍是方角，等那一页铺开时再统一） */
-.todo-add .sched-time-btn {
+/* 时间按钮跟着输入胶囊走圆形（待办页与日程页都铺开了） */
+.todo-add .sched-time-btn,
+.sched-add .sched-time-btn {
   border-radius: 50%;
 }
 
@@ -1542,6 +1543,11 @@ body {
   gap: 8px;
 }
 
+/* 工具条里的文字按钮（清空/已读）统一胶囊形状 */
+.shelf-toolbar .todo-del {
+  border-radius: 999px;
+}
+
 .shelf-toolbar-spacer {
   flex: 1;
 }
@@ -1549,7 +1555,8 @@ body {
   width: 24px;
   height: 24px;
   border: none;
-  border-radius: 7px;
+  /* 组件化：工具条按钮统一圆形（与待办页的加号/时间按钮同一套形状语言） */
+  border-radius: 50%;
   background: color-mix(in srgb, var(--ink-1) 6%, transparent);
   color: color-mix(in srgb, var(--ink-1) 65%, transparent);
   cursor: pointer;
@@ -1656,6 +1663,14 @@ body {
 .shelf-drop-hint {
   font-size: 13px;
   color: var(--ink-4);
+}
+
+/* 置物架空态：与通知空态一样做成一张居中卡片（有文件时这个节点不渲染） */
+.shelf-drop > .shelf-drop-hint {
+  padding: 16px 22px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--ink-1) 5%, transparent);
+  color: var(--ink-3);
 }
 
 /* 网格（图标视图）：横向一排滚动（对照截图），三档大小由 shelf-drop 上的 lg/md/sm 类控制 */
@@ -1775,7 +1790,7 @@ body {
   width: 100%;
   border: none;
   background: transparent;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   padding: 8px 4px 6px;
   display: flex;
   flex-direction: column;
@@ -1894,8 +1909,9 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 7px 10px;
-  border-radius: var(--r-sm);
+  padding: 9px 12px;
+  /* 组件化：列表行与待办页同一档 16px 圆角卡片 */
+  border-radius: var(--r-md);
   background: var(--surface-1);
 }
 
@@ -2090,6 +2106,11 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  /* 空态做成一张居中卡片，与网格里的组件同一套形状语言。
+     底色用 ink 5%（三主题自动翻转），不用 surface-1——深色玻璃主题下 30% 白会发亮。 */
+  padding: 18px 24px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--ink-1) 5%, transparent);
 }
 
 .notify-empty-icon {
@@ -2151,8 +2172,11 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 4px;
-  border-radius: 12px;
+  /* 组件化：月历整块是一张卡片，圆角提到 16。
+     底色仍用 ink 4% 而不是 surface-1：glass-dark 主题没单独定义 surface，
+     会落到 :root 的 30% 白，整块日历在深色岛上会亮成一块灰板。 */
+  padding: 8px;
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--ink-1) 4%, transparent);
 }
 
@@ -2210,7 +2234,8 @@ body {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   padding: 4px 0 6px;
-  border-radius: 8px;
+  /* 日历格子改圆形：iOS 日历的「今天/选中」就是一整颗圆 */
+  border-radius: 50%;
   cursor: pointer;
   line-height: 1;
   /* 美化-04 回退（2026-11-11 用户实机反馈）：格子里只放日期数字，保持每行等高对称。
@@ -2296,9 +2321,9 @@ body {
   min-width: 0;
   height: 32px;
   padding: 0 12px;
-  /* 与 .todo-input 统一：填充式，默认无描边 */
+  /* 与待办页统一：填充式胶囊，默认无描边 */
   border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  border-radius: 999px;
   background: var(--surface-1);
   color: var(--ink-1);
   font-size: 13px;
@@ -2468,8 +2493,10 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 7px;
+  /* 行高与内边距保持 31px / 4px 8px 不动：e2e-notify-compact 的 C1 对这两个值做精确断言。
+     组件化只把圆角从 10 提到 16，形状语言和待办/置物架一致，不动布局。 */
   padding: 4px 8px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: var(--surface-1);
 }
 
@@ -3081,7 +3108,8 @@ div.pm-row[draggable='true'] {
   /* 参考图（用户 m03174）里封面是整页最醒目的一块，按截图比例放大到 60（视觉 45） */
   width: 60px;
   height: 60px;
-  border-radius: 16px;
+  /* 组件化：封面圆角提到 20，比卡片一档更圆（同心阶梯的外层） */
+  border-radius: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
