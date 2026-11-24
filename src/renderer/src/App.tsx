@@ -4089,10 +4089,15 @@ export default function App(): React.JSX.Element {
             <div className="widget-grid" ref={gridRef}>
               <div className="wg-head">
                 <span className="wg-brand">灵动岛</span>
-                <span className="wg-date">{formatClock(now, 'date')}</span>
+                {/* 不改放日期：右侧状态区里的时钟可能已经是「日期+时间」档，再放一遍就重复了 */}
                 <span className="wg-spacer" />
                 <span className="head-info wg-status">
-                  {pagesCustom.order.filter((k) => k !== 'pet').map((k) => renderStatusItem(k))}
+                  {/* 网格头部只留「系统状态」四项：电量/时钟/网络/铃铛。
+                      网格头部不放岛仔；待办剩余数字也不放——下面的待办组件卡已经有完成度，
+                      再放一个就是重复（2026-11-24 用户截图反馈）。 */}
+                  {pagesCustom.order
+                    .filter((k) => k !== 'pet' && k !== 'todo')
+                    .map((k) => renderStatusItem(k))}
                 </span>
               </div>
               <div className="wg-body">

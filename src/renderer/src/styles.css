@@ -563,6 +563,8 @@ body {
   font-weight: 800;
   color: var(--ink-1);
   font-variant-numeric: tabular-nums;
+  /* 日期+时间档在窄容器里会被折成两行（2026-11-24 组件网格头实测），锁成单行 */
+  white-space: nowrap;
 }
 
 /* 待办剩余（收起态，电量环右侧）：只显示未完成条数一个数字。
@@ -1053,27 +1055,30 @@ body {
   padding: 0 2px;
 }
 .wg-brand {
+  flex: none;
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--ink-1);
-}
-.wg-date {
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--ink-3);
+  /* 品牌名不许折行（2026-11-24 用户截图：被右侧状态区挤成「灵动 / 岛」两行） */
   white-space: nowrap;
 }
 .wg-spacer {
   flex: 1;
 }
 .wg-status {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 7px;
-  /* 状态项（电量环/时钟/网络/待办/铃铛）的文字与环按收起态尺寸，这里整体压小一档 */
+  white-space: nowrap;
+  /* 状态项（电量环/时钟/网络/待办/铃铛）的文字与环按收起态尺寸，这里整体压小一档。
+     用 flex-shrink:0 + nowrap 锁住宽度：空间不够时宁可整体往左顶，也不把时钟压成两行 */
   transform: scale(0.82);
   transform-origin: right center;
+}
+.wg-status > * {
+  flex: none;
 }
 
 .wg-body {
