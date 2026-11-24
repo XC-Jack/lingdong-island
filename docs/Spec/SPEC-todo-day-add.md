@@ -74,4 +74,6 @@
 1. 视图只剩 `lg`（大图标）与 `list`（列表）：删除中图标/小图标两个选项、`IcoGridMd` / `IcoGridSm` 组件、`.shelf-drop.md/.sm` 样式与 `.shelf-view-pop/.shelf-view-item` 菜单样式。
 2. `.shelf-view-btn` 从「打开菜单」改为「直接切换」：点击在两种视图之间切换并写入 prefs.json；按钮图标显示当前视图，`title` / `aria-label` 写「切换为列表」/「切换为大图标」。
 3. 旧偏好 `md`/`sm` 在 `normalizeShelfView` 里不再合法，回落默认「大图标」；preload 的 `PrefsShape.shelfView` 类型同步收窄为 `'lg' | 'list'`。
-4. 验证 [实测]：`typecheck` / `build` 通过；探针（`.tmp/shelf-toggle-probe.mjs`）点击两次依次得到 lg → list → lg，按钮 title 随状态变化，岛尺寸随内容为 188.7 / 216.2 / 188.7 屏幕 px（3 个文件）；`e2e-shelf-view-pref`（含新增 A5b：旧值 sm 回落 lg）、`e2e-exit-and-shelf-view`、`e2e-shelf-missing` 全过。
+4. 两视图同高（用户同轮追加：「保持大图标的大小，不要变大变小了，界面老卡」）：`.shelf-grid` 与 `.shelf-drop.list .shelf-list` 都固定 `height: 93px`（大图标网格布局高度，实测屏高 70 ÷ 0.75）；列表超出的行在框内滚动。切换视图不再触发窗口改高。
+5. 验证 [实测]：`typecheck` / `build` 通过；探针（`.tmp/shelf-toggle-probe.mjs`）在 1/3/4/5/8 个文件和空态下切换视图，岛高全部一致（有文件 188.4、空态约 157），按钮 title 随状态变化；`e2e-shelf-view-pref`（含新增 A5b：旧值 sm 回落 lg）、`e2e-exit-and-shelf-view`、`e2e-shelf-missing` 全过。
+6. 已知限制：文件达到 4 个以上时大图标视图会因横向「正好放下 4 格」的既有规则把岛加宽（4 个 310.6、5 个起 340.6 屏幕 px），列表视图仍是 255；用户当前置物架只有 1 个文件，未改这条既有宽度规则。若用户在文件多时也要求宽度不变，再单独处理。
