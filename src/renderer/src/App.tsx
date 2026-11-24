@@ -395,6 +395,11 @@ function TodoPanel({
   const [time, setTime] = useState('')
   const [timePop, setTimePop] = useState(false)
   const timePopRef = useRef<HTMLDivElement>(null)
+  // 新增时可选日期（2026-11-24 用户：给待办加一个选天添加的入口）。
+  // 默认今天；日历页只管看，不再提供添加。
+  const [addDay, setAddDay] = useState<string>(() => localDayKey())
+  const [dayPop, setDayPop] = useState(false)
+  const dayPopRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     let alive = true
@@ -419,12 +424,33 @@ function TodoPanel({
     return () => document.removeEventListener('mousedown', onDown)
   }, [timePop])
 
-  // 时间面板是绝对定位浮层，不参与岛的内容高度：不补偿的话，越过岛底的那几行会被
-  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  // 选日期浮层：点外面或按 Esc 收起
   useEffect(() => {
-    if (!timePop) return
-    return fitIslandToPopover(timePopRef.current)
-  }, [timePop])
+    if (!dayPop) return
+    const onDown = (e: MouseEvent): void => {
+      if (!dayPopRef.current?.contains(e.target as Node)) {
+        const btn = (e.target as Element).closest?.('.todo-day-btn')
+        if (!btn) setDayPop(false)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setDayPop(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [dayPop])
+
+  // 时间/日期浮层是绝对定位，不参与岛的内容高度：不补偿的话，越过岛底的部分会被
+  // overflow:hidden 裁掉、且落在窗口外点不到（2026-11-22 用户实测，SPEC-island-popover-clip）。
+  // 两个浮层合并成一次测量，否则各写各的 --pop-extra 会互相覆盖。
+  useEffect(() => {
+    if (!timePop && !dayPop) return
+    return fitIslandToPopover(timePop ? timePopRef.current : null, dayPop ? dayPopRef.current : null)
+  }, [timePop, dayPop])
 
   // 只取今天（本地日期）的日程：明天的、昨天的一律不进来
   const today = localDayKey()
@@ -446,21 +472,26 @@ function TodoPanel({
   }, [done, total, onStats])
 
   const hm = formatClock(new Date())
+  // 日期按钮的文案 / 选日期浮层里的小蓝点（有安排的日期）
+  const addDayLabel = addDay === today ? '今天' : `${Number(addDay.slice(5, 7))}月${Number(addDay.slice(8, 10))}日`
+  const addDayMarked = useMemo(() => new Set(items.map((it) => it.day)), [items])
 
   const add = useCallback(async () => {
     const text = draft.trim()
     if (!text) return
     setDraft('')
     const t = time
+    const day = addDay
     setTime('')
     setTimePop(false)
-    // 存为「今天的日程」：今天在待办页与日程页都能看到，明天从待办页消失
-    setItems(await window.island.scheduleAdd(text, t || null, today))
+    // 存为所选日期的日程（默认今天）：今天在待办页与日程页都能看到，
+    // 选明天就只进日历，待办页列表仍只列今天（2026-11-24 用户要求）
+    setItems(await window.island.scheduleAdd(text, t || null, day))
     // 加完保持输入框焦点，方便连着录几条
     draftInputRef.current?.focus()
     // 新条目在列表尾部，列表超长时会滚出可视区——滚到底让用户看见它加上了（US-037）
     requestAnimationFrame(() => todoListRef.current?.scrollTo({ top: todoListRef.current.scrollHeight }))
-  }, [draft, time, today])
+  }, [draft, time, addDay])
 
   const toggle = useCallback(
     async (t: Todo) => {
@@ -524,7 +555,9 @@ function TodoPanel({
           ref={draftInputRef}
           className="todo-input"
           value={draft}
-          placeholder="加一条今天要做的事，回车连记…"
+          placeholder={
+            addDay === today ? '加一条今天要做的事，回车连记…' : `加到 ${addDayLabel}，回车连记…`
+          }
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             // 拦住冒泡：岛根 onKeyDown 见到 Enter/空格会 toggle() 收起岛（US-036 踩坑）。
@@ -533,6 +566,31 @@ function TodoPanel({
             if (e.key === 'Enter') void add()
           }}
         />
+        {/* 日期按钮：选这条任务加到哪一天（默认今天）。日历页只负责看，添加入口在这里。 */}
+        <div className="todo-day-wrap">
+          <button
+            type="button"
+            className={`todo-day-btn ${addDay !== today ? 'picked' : ''} ${dayPop ? 'open' : ''}`}
+            title={addDay === today ? '加到今天，点击换一天' : `将加到 ${addDayLabel}，点击换一天`}
+            aria-label={`选择日期：${addDayLabel}`}
+            aria-expanded={dayPop}
+            onClick={() => setDayPop((v) => !v)}
+          >
+            {addDayLabel}
+          </button>
+          {dayPop && (
+            <div className="todo-day-pop" ref={dayPopRef}>
+              <MonthCalendar
+                selected={addDay}
+                markedDays={addDayMarked}
+                onSelect={(d) => {
+                  setAddDay(d)
+                  setDayPop(false)
+                }}
+              />
+            </div>
+          )}
+        </div>
         {/* 时钟按钮：可选时间，选过之后高亮显示，再点可收起 */}
         <button
           type="button"
@@ -598,6 +656,12 @@ function TodoPanel({
           </div>
         )}
       </div>
+      {/* 选了非今天的日期时，列表仍只列今天，明确告诉用户新任务加到哪、去哪看 */}
+      {addDay !== today && (
+        <div className="todo-day-hint">
+          将任务加到 <b>{addDayLabel}</b> · 在「日程」日历里查看
+        </div>
+      )}
       <ul className="todo-list" ref={todoListRef}>
         {schedSorted.length === 0 && todoSorted.length === 0 && (
           <li className="todo-empty">今天还没有安排，加一条吧</li>
@@ -1774,7 +1838,10 @@ function SchedulePanel(): React.JSX.Element {
             收起
           </button>
         </div>
-        <div className="sched-add">
+        {/* 添加任务的功能已按 2026-11-24 用户要求挪到待办页（可选日期），这里不再显示输入行。
+            但保留 DOM（display:none）给旧 e2e：5 个日程脚本靠 .sched-input / .todo-add-btn 造数据。
+            用户点不到、看不到，键盘也聚焦不到。 */}
+        <div className="sched-add sched-add-compat">
           <input
             className="sched-input"
             placeholder="加个安排…"
