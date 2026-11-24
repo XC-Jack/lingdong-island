@@ -2182,7 +2182,11 @@ body {
   position: absolute;
   left: 10px;
   right: 10px;
-  top: 108px;
+  /* 用户 2026-11-24：「任务显示在上面更好，老是往下挤」——浮层贴月历顶部展开，
+     并且高度不超过月历，任务多时自己在浮层里滚，岛不再被越撑越高。 */
+  top: 38px;
+  max-height: calc(100% - 44px);
+  overflow-y: auto;
   z-index: 6;
   display: flex;
   flex-direction: column;
@@ -2225,11 +2229,7 @@ body {
   height: 104px;
 }
 
-/* 浮层里的列表自己滚，不把浮层撑出月历 */
-.sched-day .sched-list {
-  max-height: 104px;
-  overflow-y: auto;
-}
+/* 列表不再单独限高：滚动交给浮层本身（上限不超过月历） */
 
 /* 浮层里的空态收小：整页空态卡片在 300 宽的浮层里太占地方 */
 .sched-day .notify-empty {
@@ -2348,14 +2348,13 @@ body {
   color: color-mix(in srgb, var(--ink-1) 78%, transparent);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  /* 固定 24×24 正方形再画 50% 圆角：月历加宽到 308 后，网格列宽约 31，
-     若让格子随列宽拉伸，圆角 50% 会变成横椭圆（2026-11-24 用户截图反馈）。
-     尺寸锁死、在列内居中，形状与加宽前一致。 */
+  /* 固定 24×24 正方形、8 圆角：用户 2026-11-24 明确「不要圆的，要正方形圆四圆角的」。
+     尺寸锁死不随列宽拉伸，避免再次被拉成椭圆/长条。 */
   width: 24px;
   height: 24px;
   margin: 0 auto;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 8px;
   cursor: pointer;
   line-height: 1;
   /* 美化-04 回退（2026-11-11 用户实机反馈）：格子里只放日期数字，保持每行等高对称。

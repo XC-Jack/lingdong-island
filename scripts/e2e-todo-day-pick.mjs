@@ -165,7 +165,7 @@ try {
     )
   )
   ok('D5 日历格子是正方形（不是椭圆）', Math.abs(d5.w - d5.h) <= 1, `${d5.w}×${d5.h}`)
-  ok('D5b 选中态仍为 50% 圆角', d5.radius === '50%', d5.radius)
+  ok('D5b 选中态是圆角方块（不是圆）', d5.radius === '8px', d5.radius)
 
   const addVisible = await cdp(
     wsUrl,

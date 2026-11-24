@@ -1917,7 +1917,8 @@ function SchedulePanel(): React.JSX.Element {
                 <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
               <span className="shelf-drop-hint">这一天还没有安排</span>
-              <span className="notify-empty-sub">加一条试试，可带时间到点提醒</span>
+              {/* 日程页已不再提供添加（2026-11-24），这里不能再引导用户「加一条」 */}
+              <span className="notify-empty-sub">在「待办」里选日期添加</span>
             </div>
           </div>
         ) : (
