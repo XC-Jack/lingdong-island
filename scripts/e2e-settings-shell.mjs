@@ -3,7 +3,7 @@
  * e2e SPEC-settings-shell：带左导航的独立设置窗口
  *
  * S1 设置窗口能打开：调 window.island.openSettings('pages') 后 CDP 里出现 url 含 settings.html 的 target
- * S2 左导航三项齐全（常规/页面管理/专注·喝水），openSettings('pages') 落在「页面管理」
+ * S2 左导航七项齐全（常规/外观/页面管理/空间/桌宠/专注/关于），openSettings('pages') 落在「页面管理」
  * S3 常规页：版本号非空、数据目录路径是 userData、自启开关在场
  * S4 页面管理页：页面区 5 行（含音乐）+ 收起态组件区 6 行
  * S5 设置窗口改偏好 → 岛立刻同步（取消铃铛勾选后收起态不再渲染，勾回恢复）
@@ -15,6 +15,7 @@
  * S11 导出数据入口在设置窗口「常规」分区，IPC 通道存活
  * S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）；
  *     提示线在 dragover→drop 之间采样、行数用 rAF 帧序列取峰值（复验指出单点采样恒真）
+ * S13 外观：三张主题卡、点选写 prefs、岛当场换肤、重开窗口选中态持久（SPEC-settings-theme）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
  */
@@ -167,9 +168,9 @@ try {
   // ========== S2 左导航 ==========
   {
     const nav = await settingsEval(`Array.from(document.querySelectorAll('.set-nav-item')).map(e => e.textContent.trim())`)
-    // 2026-11-20：导航已增至六项（空间、关于是后加的），断言跟着更新
-    ok('S2a 左导航六项齐全', Array.isArray(nav) && nav.length === 6 &&
-      ['常规', '页面管理', '空间', '桌宠', '专注', '关于'].every((name) => nav.some((s) => s.includes(name))),
+    // 2026-11-24：导航增至七项（外观是这一天加的，SPEC-settings-theme），断言跟着更新
+    ok('S2a 左导航七项齐全', Array.isArray(nav) && nav.length === 7 &&
+      ['常规', '外观', '页面管理', '空间', '桌宠', '专注', '关于'].every((name) => nav.some((s) => s.includes(name))),
       JSON.stringify(nav))
 
     // openSettings('pages') 落点：页面管理分区可见（5 行页面 + 6 行组件）
@@ -535,6 +536,59 @@ try {
     ok('S8a 连续打开两次只有一个设置窗口', settingsCount === 1, `实际 ${settingsCount}`)
     const rows = await settingsEval(`document.querySelectorAll('.pm-row[data-comp]').length`)
     ok('S8b 第二次打开把分区切到页面管理', rows === 6, `实际组件行 ${rows}`)
+  }
+
+  // ========== S13 外观：换主题（SPEC-settings-theme） ==========
+  {
+    await openSettings('appearance')
+    const cards = await settingsEval(
+      `Array.from(document.querySelectorAll('.theme-card')).map(e => e.getAttribute('data-theme-id'))`
+    )
+    ok('S13a 外观分区三张主题卡，顺序为 亮色玻璃 → 纯黑玻璃 → 纯黑极简',
+      Array.isArray(cards) && cards.join(',') === 'glass-light,glass-dark,mono', JSON.stringify(cards))
+
+    // prefs 基线里没有 islandTheme：应回落到默认主题
+    const onBefore = await settingsEval(
+      `document.querySelector('.theme-card.on')?.getAttribute('data-theme-id') ?? null`
+    )
+    ok('S13b 无 islandTheme 时选中「亮色玻璃」', onBefore === 'glass-light', `实际 ${onBefore}`)
+
+    const pickTheme = async (id) => {
+      const r = await settingsEval(
+        `(() => { const b = document.querySelector('.theme-card[data-theme-id="${id}"]'); if (!b) return 'no-card'; b.click(); return 'ok' })()`
+      )
+      await sleep(800)
+      return r
+    }
+    const islandTheme = () => islandEval(`document.documentElement.dataset.theme ?? null`)
+    const cardOn = () =>
+      settingsEval(`document.querySelector('.theme-card.on')?.getAttribute('data-theme-id') ?? null`)
+
+    const r1 = await pickTheme('mono')
+    const [pref1, isl1, on1] = [readPrefs().islandTheme, await islandTheme(), await cardOn()]
+    ok('S13c 点「纯黑极简」：prefs 落盘、岛当场换肤、卡片选中',
+      r1 === 'ok' && pref1 === 'mono' && isl1 === 'mono' && on1 === 'mono',
+      `prefs ${pref1} / 岛 ${isl1} / 卡 ${on1}`)
+
+    const r2 = await pickTheme('glass-dark')
+    const [pref2, isl2, on2] = [readPrefs().islandTheme, await islandTheme(), await cardOn()]
+    ok('S13d 点「纯黑玻璃」：三处同步为 glass-dark',
+      r2 === 'ok' && pref2 === 'glass-dark' && isl2 === 'glass-dark' && on2 === 'glass-dark',
+      `prefs ${pref2} / 岛 ${isl2} / 卡 ${on2}`)
+
+    // 持久化：留在 mono，关窗重开，选中态必须从 prefs 读回来
+    await pickTheme('mono')
+    await closeSettings()
+    await openSettings('appearance')
+    const onReopen = await cardOn()
+    ok('S13e 重开设置窗口后选中态与 prefs 一致（mono）',
+      onReopen === 'mono' && readPrefs().islandTheme === 'mono',
+      `卡 ${onReopen} / prefs ${readPrefs().islandTheme}`)
+
+    // 收尾：切回默认，后面的用例与 finally 恢复都不受主题影响
+    await pickTheme('glass-light')
+    ok('S13f 切回「亮色玻璃」恢复默认', readPrefs().islandTheme === 'glass-light' && (await islandTheme()) === 'glass-light',
+      `prefs ${readPrefs().islandTheme} / 岛 ${await islandTheme()}`)
   }
 } catch (e) {
   failed++

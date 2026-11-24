@@ -9,6 +9,7 @@ import PageManagerSection, {
 } from './PageManagerSection'
 import DeskPetSection from './DeskPetSection'
 import SpaceSection from './SpaceSection'
+import ThemeSection from './ThemeSection'
 
 /**
  * 设置窗口的根组件（SPEC-settings-shell）。
@@ -32,6 +33,17 @@ const NAV: { key: SettingsSection; label: string; icon: () => ReactElement }[] =
         <path d="M2 5h7M11.5 5H14M2 11h2.5M7 11h7" strokeLinecap="round" />
         <circle cx="10" cy="5" r="1.8" />
         <circle cx="5.5" cy="11" r="1.8" />
+      </svg>
+    )
+  },
+  {
+    key: 'appearance',
+    // 2026-11-24：换肤入口（SPEC-settings-theme）。图标用「半明半暗」的圆，表示材质/明暗
+    label: '外观',
+    icon: () => (
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.3">
+        <circle cx="8" cy="8" r="6.2" />
+        <path d="M8 1.8a6.2 6.2 0 0 0 0 12.4Z" fill="currentColor" stroke="none" />
       </svg>
     )
   },
@@ -720,6 +732,14 @@ export default function SettingsApp(): ReactElement {
                 </Row>
               </div>
               {exportNote ? <div className="set-note">{exportNote}</div> : null}
+            </section>
+          ) : section === 'appearance' ? (
+            <section className="set-page">
+              <h2 className="set-page-title">外观</h2>
+              <div className="set-card">
+                <div className="pet-set-head">岛的主题</div>
+                <ThemeSection />
+              </div>
             </section>
           ) : section === 'pages' ? (
             <section className="set-page">

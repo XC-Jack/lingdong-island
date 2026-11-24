@@ -43,11 +43,17 @@ export interface ShelfRevealResult {
 
 /**
  * 设置窗口的左导航分区（SPEC-settings-shell）。
- * general=常规（自启/版本/数据目录）、pages=页面管理（US-032 能力搬过来）、
+ * general=常规（自启/版本/数据目录）、appearance=外观（SPEC-settings-theme，换岛的主题）、
+ * pages=页面管理（US-032 能力搬过来）、
  * space=空间（SPEC-space-cleanup，清理本应用自己的缓存）、focus=专注·喝水（占位）、
  * pet=桌宠（SPEC-deskpet-skin）、about=关于（SPEC-settings-about）
  */
-export type SettingsSection = 'general' | 'pages' | 'space' | 'focus' | 'pet' | 'about'
+/**
+ * 分区清单必须与类型同一处维护：主进程 openSettings 用它校验菜单/外部传入的分区名，
+ * 漏加一次就会出现「菜单点了却落在常规」（2026-11-24 加「外观」时踩过）。
+ */
+export const SETTINGS_SECTIONS = ['general', 'appearance', 'pages', 'space', 'focus', 'pet', 'about'] as const
+export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 /**
  * 「空间」页的清理项目（SPEC-space-cleanup）。

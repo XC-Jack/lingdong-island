@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'node:path'
 import type { AppInfo, SettingsSection } from '../shared/types'
+import { SETTINGS_SECTIONS } from '../shared/types'
 
 /**
  * 独立设置窗口（SPEC-settings-shell）。
@@ -23,14 +24,8 @@ let settingsWindow: BrowserWindow | null = null
 let pendingSection: SettingsSection | null = null
 
 function isValidSection(v: unknown): v is SettingsSection {
-  return (
-    v === 'general' ||
-    v === 'pages' ||
-    v === 'space' ||
-    v === 'focus' ||
-    v === 'pet' ||
-    v === 'about'
-  )
+  // 用 shared 里的清单判断，避免每加一个分区就要在两处各补一次
+  return typeof v === 'string' && (SETTINGS_SECTIONS as readonly string[]).includes(v)
 }
 
 /** 「关于」页的仓库地址：固定在主进程，渲染层只能请求打开这一个地址 */
