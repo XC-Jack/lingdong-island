@@ -886,12 +886,10 @@ function ShelfPanel(): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
   /** 视图选择菜单容器：开着时点外面自动收起 */
   const viewPopRef = useRef<HTMLSpanElement>(null)
-  /** 菜单本体（绝对定位浮层）：打开时让岛为它让出高度，否则后两项落在窗口外点不到 */
+  /** 菜单本体（绝对定位浮层）。2026-11-24 用户「点切换查看方式就变大了」：
+      改成横向一排塞在工具条下方，高度不超过置物架页的固定高度，不再让岛变高，
+      所以这里不再调用 fitIslandToPopover。 */
   const viewPopEl = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (!viewPop) return
-    return fitIslandToPopover(viewPopEl.current)
-  }, [viewPop])
   useEffect(() => {
     if (!viewPop) return
     const onDown = (e: MouseEvent): void => {
