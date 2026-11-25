@@ -24,24 +24,24 @@
   /* 玻璃本体只有 0.62 不透明度：桌面会从底下透上来，这是「液态玻璃」与「白色卡片」的分界。
      数值是对着参考图（mockup-b-640.png）逐点采样定的：同一块黄昏壁纸下，岛中心
      R/G/B 落在 220/190/174，参考图 220/187/170（详见 SPEC-island-themes 第八节）。
-     三块低饱和色斑（左上受光 / 右上冷光 / 右下暖光）补上参考图里由壁纸带出来的虹彩：
-     顶部偏冷、底部偏暖，冷暖不靠壁纸自己给，否则换张纯灰壁纸就死白一片。 */
+     两块低饱和色斑（右上冷光 / 右下暖光）补上参考图里由壁纸带出来的虹彩：
+     顶部偏冷、底部偏暖，冷暖不靠壁纸自己给，否则换张纯灰壁纸就死白一片。
+     左上受光斑已去掉（2026-11-25 用户要求「把顶部的打光都不要了」）。 */
   --island-top: rgba(247, 243, 244, 0.62);
   --island-bottom: rgba(233, 218, 211, 0.62);
-  --island-hi: rgba(255, 255, 255, 0.4);
+  --island-hi: transparent;
   --island-cool: rgba(180, 202, 255, 0.28);
   --island-warm: rgba(255, 178, 140, 0.44);
-  /* 岛体底色的完整图层栈：顶部受光 + 三块低饱和色斑 + 上下渐变的乳白本体。
+  /* 岛体底色的完整图层栈：两块低饱和色斑 + 上下渐变的乳白本体。
      抽成变量是为了「真透视」模式复用一份：模糊底图之上要盖同一份 veil，
      否则抓来的桌面会直接从文字底下顶上来，对比度崩掉。 */
   --island-veil:
-    radial-gradient(130% 110% at 8% -10%, var(--island-hi) 0%, transparent 58%),
     radial-gradient(95% 85% at 104% 4%, var(--island-cool) 0%, transparent 62%),
     radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
     linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
   --border-island: rgba(255, 255, 255, 0.85);
-  /* 只有内高光，没有外投影（2026-11-25 用户要求：玻璃只要材质，不要岛下方的投影） */
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  /* 无阴影、无顶光（2026-11-25 用户要求：先去掉岛下方投影，再去掉顶部打光） */
+  --shadow-island: none;
   --bg-pop: rgba(251, 251, 254, 0.97);
   --shadow-pop: 0 10px 28px rgba(12, 22, 44, 0.18);
   --shadow-pop-sm: 0 6px 18px rgba(12, 22, 44, 0.15);
@@ -96,12 +96,12 @@
   --ink-1: #ffffff;
   --island-top: rgba(10, 10, 12, 0.97);
   --island-bottom: rgba(5, 5, 7, 0.97);
-  --island-hi: rgba(255, 255, 255, 0.085);
+  --island-hi: transparent;
   --island-cool: transparent;
   --island-warm: transparent;
   --border-island: rgba(255, 255, 255, 0.11);
-  /* 同上：去掉外投影，只留顶沿受光 */
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  /* 无阴影、无顶光 */
+  --shadow-island: none;
   --bg-pop: rgba(18, 18, 21, 0.985);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.45);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
@@ -192,16 +192,15 @@
 
   --island-top: rgba(255, 255, 255, 0.055);
   --island-bottom: rgba(255, 255, 255, 0.045);
-  --island-hi: rgba(255, 255, 255, 0.16);
+  --island-hi: transparent;
   --island-cool: transparent;
   --island-warm: transparent;
-  /* 顶部一条 14%→0 的受光带（只占上三分之一），其余就是那层 5.5% 的中性白 */
+  /* 只有那层 5.5% 的中性白，没有顶部受光带（2026-11-25 用户要求去掉顶部打光） */
   --island-veil:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 12%, rgba(255, 255, 255, 0) 34%),
     linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
   --border-island: rgba(255, 255, 255, 0.16);
-  /* 只留内阴影：顶沿受光 + 极淡内描边。没有任何外投影。 */
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  /* 只留极淡内描边：无顶沿受光、无外投影。 */
+  --shadow-island: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
   --bg-pop: rgba(22, 24, 30, 0.94);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.4);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.32);
@@ -247,7 +246,6 @@
   --island-top: rgba(16, 18, 23, 0.72);
   --island-bottom: rgba(8, 9, 13, 0.78);
   --island-veil:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 26%),
     linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
 }
 
