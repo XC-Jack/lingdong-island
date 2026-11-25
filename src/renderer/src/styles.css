@@ -1602,9 +1602,11 @@ body {
 
 /* 待办页固定高度后（.island.expanded.page-0 = 310 布局 px，页面区约 188），
    日期/时间浮层不能再把岛撑高，改成在页面内部展开：
-   · 日期浮层从页面底部向上盖住输入行和列表，月历压紧到 20px 格、1px 间距；
+   · 日期浮层从输入行下方往下展开、盖住列表，月历压紧到 18px 格、1px 间距
+     （2026-11-25 用户：「这个日历出现位置挡住上面 ui 了」——原来贴页面底部向上盖，
+     会盖住页头和「加一条」输入行；改成下拉式，页头与输入行始终可见）；
    · 时间浮层留在输入行下方，两列高度压到 112，正好落在页面底部之上。
-   定位锚从 .todo-add 提到 .todo-panel，才能用 bottom:0 贴页面底。 */
+   定位锚从 .todo-add 提到 .todo-panel，才能按输入行高度算浮层顶边。 */
 .island.page-0 .todo-panel {
   position: relative;
 }
@@ -1617,18 +1619,31 @@ body {
   position: static;
 }
 
+/* 顶部对齐输入行下方：输入行高 32 + 6 间距 = 38（相对 .todo-panel）。
+   底部不设限，允许下沿伸到岛的内边距区，但不超过岛底。 */
 .island.page-0 .todo-day-pop {
-  top: auto;
-  bottom: 0;
+  top: 38px;
+  bottom: auto;
   right: auto;
   left: 50%;
   transform: translateX(-50%);
-  padding: 4px;
+  padding: 2px;
 }
 
+/* 浮层内月历压紧到能放进「输入行底 → 岛底」这段高度（约 128 视觉 px）：
+   实测布局约 155 px = 视觉 116 px，下沿与岛底留约 7 视觉 px。 */
 .island.page-0 .todo-day-pop .cal {
-  gap: 1px;
-  padding: 4px;
+  gap: 2px;
+  padding: 3px;
+}
+
+.island.page-0 .todo-day-pop .cal-nav {
+  padding: 1px 5px;
+}
+
+.island.page-0 .todo-day-pop .cal-weekday {
+  padding: 0;
+  font-size: 10.5px;
 }
 
 .island.page-0 .todo-day-pop .cal-grid {
@@ -1636,10 +1651,12 @@ body {
 }
 
 .island.page-0 .todo-day-pop .cal-day {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   /* 全局 .cal-day 有 min-height:24，不覆盖的话行高不变、浮层还是放不下 */
-  min-height: 20px;
+  min-height: 18px;
+  border-radius: 6px;
+  font-size: 11.5px;
 }
 
 .island.page-0 .sched-time-pop {
