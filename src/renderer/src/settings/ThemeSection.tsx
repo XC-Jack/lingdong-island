@@ -15,7 +15,7 @@ import { ISLAND_THEMES } from '../../../shared/types'
  * 抓一张岛的实际样子贴在这里反而会误导；示意图只表达「材质与明暗」。
  */
 
-/** 三套主题的展示文案，顺序即卡片顺序（默认主题在最上面） */
+/** 四套主题的展示文案，顺序即卡片顺序（默认主题在最上面） */
 const THEME_META: Record<IslandTheme, { name: string; desc: string }> = {
   'glass-light': {
     name: '亮色玻璃',
@@ -28,6 +28,10 @@ const THEME_META: Record<IslandTheme, { name: string; desc: string }> = {
   mono: {
     name: '纯黑极简',
     desc: '实心纯黑、无描边、无投影，只靠留白和字号分层次。'
+  },
+  'glass-clear': {
+    name: '透明玻璃',
+    desc: '玻璃本身几乎不染色，颜色全来自桌面，白色文字。对应苹果 Liquid Glass 的透明档。'
   }
 }
 
@@ -113,7 +117,7 @@ export default function ThemeSection(): ReactElement {
       {failed ? <div className="set-note">保存失败，请重试。</div> : null}
       <div className="pet-set-tip">
         只改桌面上的岛；这个设置窗口始终是深色，方便看清控件。切换立刻生效，不用重启。
-        「亮色玻璃」会实时读取岛背后的桌面来调色，另外两套是纯黑，不抓屏。
+        「亮色玻璃」「透明玻璃」会实时读取岛背后的桌面来上色，另外两套是纯黑，不抓屏。
       </div>
     </div>
   )

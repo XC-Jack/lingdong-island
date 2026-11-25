@@ -15,7 +15,7 @@
  * S11 导出数据入口在设置窗口「常规」分区，IPC 通道存活
  * S12 跨区拖拽护栏：页面行拖到组件行不能弄坏 order（独立验收 5.1 回归）；
  *     提示线在 dragover→drop 之间采样、行数用 rAF 帧序列取峰值（复验指出单点采样恒真）
- * S13 外观：三张主题卡、点选写 prefs、岛当场换肤、重开窗口选中态持久（SPEC-settings-theme）
+ * S13 外观：四张主题卡、点选写 prefs、岛当场换肤、重开窗口选中态持久（SPEC-settings-theme / SPEC-glass-clear）
  *
  * 跑前：npm run build（e2e 加载 out/ 产物）。脚本自己启停 electron，结束恢复 prefs/notif-read。
  */
@@ -544,8 +544,8 @@ try {
     const cards = await settingsEval(
       `Array.from(document.querySelectorAll('.theme-card')).map(e => e.getAttribute('data-theme-id'))`
     )
-    ok('S13a 外观分区三张主题卡，顺序为 亮色玻璃 → 纯黑玻璃 → 纯黑极简',
-      Array.isArray(cards) && cards.join(',') === 'glass-light,glass-dark,mono', JSON.stringify(cards))
+    ok('S13a 外观分区四张主题卡，顺序为 亮色玻璃 → 纯黑玻璃 → 纯黑极简 → 透明玻璃',
+      Array.isArray(cards) && cards.join(',') === 'glass-light,glass-dark,mono,glass-clear', JSON.stringify(cards))
 
     // prefs 基线里没有 islandTheme：应回落到默认主题
     const onBefore = await settingsEval(
@@ -575,6 +575,13 @@ try {
     ok('S13d 点「纯黑玻璃」：三处同步为 glass-dark',
       r2 === 'ok' && pref2 === 'glass-dark' && isl2 === 'glass-dark' && on2 === 'glass-dark',
       `prefs ${pref2} / 岛 ${isl2} / 卡 ${on2}`)
+
+    // 第四套主题（SPEC-glass-clear）：卡片存在、点选后三处同步
+    const r4 = await pickTheme('glass-clear')
+    const [pref4, isl4, on4] = [readPrefs().islandTheme, await islandTheme(), await cardOn()]
+    ok('S13d2 点「透明玻璃」：三处同步为 glass-clear',
+      r4 === 'ok' && pref4 === 'glass-clear' && isl4 === 'glass-clear' && on4 === 'glass-clear',
+      `prefs ${pref4} / 岛 ${isl4} / 卡 ${on4}`)
 
     // 持久化：留在 mono，关窗重开，选中态必须从 prefs 读回来
     await pickTheme('mono')

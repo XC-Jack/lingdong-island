@@ -733,6 +733,13 @@ div.pm-row[draggable='true'] {
 .theme-prev[data-t='mono']::before {
   background: linear-gradient(180deg, #34373d 0%, #1b1d21 100%);
 }
+/* 透明玻璃：彩色桌面 + 几乎无色的胶囊（SPEC-glass-clear）。示意图只表达材质，不模拟抓屏 */
+.theme-prev[data-t='glass-clear']::before {
+  background:
+    radial-gradient(60% 50% at 20% 10%, #7ba7e8 0%, transparent 62%),
+    radial-gradient(55% 45% at 84% 30%, #e0a06a 0%, transparent 64%),
+    linear-gradient(160deg, #2a3442 0%, #161c25 55%, #0b0f14 100%);
+}
 
 /* 胶囊：高度按岛收起态的比例缩到 18px */
 .theme-prev-island {
@@ -766,6 +773,11 @@ div.pm-row[draggable='true'] {
   border: none;
   box-shadow: none;
 }
+.theme-prev[data-t='glass-clear'] .theme-prev-island {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
 
 /* 胶囊里的示意内容：一枚小圆点 + 一条短横，代表「图标 + 文字」 */
 .theme-prev-dot {
@@ -796,6 +808,12 @@ div.pm-row[draggable='true'] {
 }
 .theme-prev[data-t='mono'] .theme-prev-bar {
   background: rgba(245, 245, 247, 0.45);
+}
+.theme-prev[data-t='glass-clear'] .theme-prev-dot {
+  background: rgba(255, 255, 255, 0.9);
+}
+.theme-prev[data-t='glass-clear'] .theme-prev-bar {
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .theme-card-text {

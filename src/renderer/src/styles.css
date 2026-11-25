@@ -1,10 +1,21 @@
+/* Inter 可变字体（SPEC-glass-clear）：只给第四套「透明玻璃」用，latin 子集 48KB，
+   以 @font-face 内嵌，不依赖系统是否安装。中文仍走本机 Noto Sans SC。 */
+@font-face {
+  font-family: 'Inter';
+  src: url('./assets/fonts/Inter-var-latin.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ---------- 主题 token（SPEC-island-themes，2026-11-24） ----------
-   同一份组件样式支持三套主题，靠 <html data-theme> 切换：
+   同一份组件样式支持四套主题，靠 <html data-theme> 切换：
      缺省（:root）            → B 亮色乳白玻璃，也是默认主题
      [data-theme='glass-dark'] → A 纯黑玻璃
      [data-theme='mono']       → C 纯黑极简
+     [data-theme='glass-clear'] → D 透明玻璃（SPEC-glass-clear）
    中性层（文字/表面/描边）全部由 --ink-1 按透明度派生，所以「明暗翻转」只改一个变量。
-   语义色（ok/warn/danger）三套各自给值：亮底上要加深，否则对比度不够。
+   语义色（ok/warn/danger）四套各自给值：亮底上要加深，否则对比度不够。
    为什么默认写在 :root 而不是给 B 挂 data-theme：React 挂数据属性前有一帧空窗，
    写 :root 才能保证首帧就是最终配色，不会闪一下黑。 */
 :root {
@@ -29,7 +40,8 @@
     radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
     linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
   --border-island: rgba(255, 255, 255, 0.85);
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 18px 40px rgba(8, 16, 32, 0.26);
+  /* 只有内高光，没有外投影（2026-11-25 用户要求：玻璃只要材质，不要岛下方的投影） */
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95);
   --bg-pop: rgba(251, 251, 254, 0.97);
   --shadow-pop: 0 10px 28px rgba(12, 22, 44, 0.18);
   --shadow-pop-sm: 0 6px 18px rgba(12, 22, 44, 0.15);
@@ -88,7 +100,8 @@
   --island-cool: transparent;
   --island-warm: transparent;
   --border-island: rgba(255, 255, 255, 0.11);
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 18px 44px rgba(0, 0, 0, 0.55);
+  /* 同上：去掉外投影，只留顶沿受光 */
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14);
   --bg-pop: rgba(18, 18, 21, 0.985);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.45);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
@@ -161,6 +174,81 @@
   --music-play: #f27e96;
   --music-play-hover: #ffa0b0;
   --music-play-ink: #1f1519;
+}
+
+/* ===== D：透明玻璃（SPEC-glass-clear，2026-11-25） =====
+   与 A/B 的区别只有一点：玻璃本体不做任何染色。底色是 5.5% 的中性白，
+   颜色全部来自 `.island-backdrop`（抓屏后模糊的桌面）。所以：
+     · 不压深色、不压乳白、不加任何色斑；
+     · 不用外投影（用户明确「要玻璃只是要那个质感」）；
+     · 文字走白色系，次要档用白透明，深底上对比度够。
+   没有底图时（抓屏被拒/避让中）回落到深色半透明，见下方 :not(:has(...)) 规则。 */
+[data-theme='glass-clear'] {
+  --ink-1: #ffffff;
+  --ink-2: color-mix(in srgb, var(--ink-1) 76%, transparent);
+  --ink-3: color-mix(in srgb, var(--ink-1) 54%, transparent);
+  --ink-4: color-mix(in srgb, var(--ink-1) 42%, transparent);
+  --ink-5: color-mix(in srgb, var(--ink-1) 22%, transparent);
+
+  --island-top: rgba(255, 255, 255, 0.055);
+  --island-bottom: rgba(255, 255, 255, 0.045);
+  --island-hi: rgba(255, 255, 255, 0.16);
+  --island-cool: transparent;
+  --island-warm: transparent;
+  /* 顶部一条 14%→0 的受光带（只占上三分之一），其余就是那层 5.5% 的中性白 */
+  --island-veil:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 12%, rgba(255, 255, 255, 0) 34%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
+  --border-island: rgba(255, 255, 255, 0.16);
+  /* 只留内阴影：顶沿受光 + 极淡内描边。没有任何外投影。 */
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --bg-pop: rgba(22, 24, 30, 0.94);
+  --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.4);
+  --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.32);
+  --bg-chip: rgba(26, 28, 34, 0.92);
+  --bg-chip-hover: rgba(40, 43, 51, 0.94);
+  --accent: #5b9dff;
+  --accent-hover: #7db1ff;
+  --accent-ink: #06111f;
+  --accent-soft: #9cc0ff;
+  --ok: #6fdc9b;
+  --ok-soft: #8ee7b3;
+  --on-ok: #0d1a12;
+  --warn: #ecc36b;
+  --warn-soft: #f0cf85;
+  --danger: #ff8fa3;
+  --danger-soft: #ffb1c0;
+  --danger-pale: color-mix(in srgb, var(--danger) 45%, var(--ink-1));
+  --on-danger: #ffffff;
+  --music-play: #ff9aae;
+  --music-play-hover: #ffb4c3;
+  --music-play-ink: #24131a;
+
+  /* 控件面往「加白」叠，与玻璃同向 */
+  --surface-1: rgba(255, 255, 255, 0.045);
+  --surface-2: rgba(255, 255, 255, 0.085);
+  --surface-3: rgba(255, 255, 255, 0.13);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-2: rgba(255, 255, 255, 0.16);
+  --line-3: rgba(255, 255, 255, 0.24);
+
+  /* 拉丁/数字用内嵌 Inter（更接近参考图里的 SF），中文回退到本机 Noto Sans SC */
+  --font-ui: 'Inter', 'Noto Sans SC', 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* 抓屏底图要更「化开」一点：透明档没有乳白在中间兜底，桌面细节太清楚会压字 */
+[data-theme='glass-clear'] .island-backdrop {
+  filter: blur(26px) saturate(1.7);
+}
+
+/* 没有底图时（抓屏被拒、避让中、首帧未到）不能只剩 5.5% 的白：
+   那样白字直接压在桌面上读不了。回落成深色半透明块。 */
+[data-theme='glass-clear'] .island:not(:has(.island-backdrop)) {
+  --island-top: rgba(16, 18, 23, 0.72);
+  --island-bottom: rgba(8, 9, 13, 0.78);
+  --island-veil:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 26%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
 }
 
 *,
@@ -1297,6 +1385,103 @@ body {
   stroke: var(--accent);
   stroke-width: 3.4;
   stroke-linecap: round;
+}
+
+/* ---------- D 透明玻璃：组件网格重排（SPEC-glass-clear） ----------
+   改成参考图的层级：3D 物件在左上、大数字在右上、标题与说明沉到底部。
+   新节点 .widget-sticker / .widget-num 在另外三套主题下 display:none，
+   所以旧主题的 DOM 表现与视觉完全不变。 */
+.widget-sticker,
+.widget-num,
+.widget-sub {
+  display: none;
+}
+
+[data-theme='glass-clear'] .widget {
+  min-height: 96px;
+  padding: 10px 12px 12px;
+  gap: 0;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+[data-theme='glass-clear'] .widget:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-theme='glass-clear'] .widget-icon,
+[data-theme='glass-clear'] .widget-ring {
+  display: none;
+}
+[data-theme='glass-clear'] .widget-sticker {
+  display: block;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+}
+/* 每格给一点倾角，做出贴纸的松驰感（角度按页面固定，不随内容变化） */
+[data-theme='glass-clear'] .widget[data-page='0'] .widget-sticker { transform: rotate(-11deg); }
+[data-theme='glass-clear'] .widget[data-page='1'] .widget-sticker { transform: rotate(6deg); }
+[data-theme='glass-clear'] .widget[data-page='2'] .widget-sticker { transform: rotate(-4deg); }
+[data-theme='glass-clear'] .widget[data-page='3'] .widget-sticker { transform: rotate(6deg); }
+[data-theme='glass-clear'] .widget[data-page='4'] .widget-sticker { transform: rotate(-11deg); }
+
+[data-theme='glass-clear'] .widget-num {
+  display: block;
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+[data-theme='glass-clear'] .widget-num i {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.55;
+  letter-spacing: 0;
+  margin-left: 1px;
+}
+[data-theme='glass-clear'] .widget-label {
+  margin-top: auto;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+}
+/* 数字已经单独放到右上，原来的 meta 会重复（如「0/11」+「0/11 已完成」），
+   换成只写单位/范围的 .widget-sub */
+[data-theme='glass-clear'] .widget-meta {
+  display: none;
+}
+[data-theme='glass-clear'] .widget-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--ink-4);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* 音乐宽卡：贴纸占左侧两行，文字在右 */
+[data-theme='glass-clear'] .widget.wide {
+  min-height: 56px;
+  padding: 9px 12px;
+}
+[data-theme='glass-clear'] .widget.wide .widget-sticker {
+  grid-row: span 2;
+  width: 30px;
+  height: 30px;
+}
+[data-theme='glass-clear'] .widget.wide .widget-label {
+  margin-top: 0;
 }
 
 /* 功能页左上角的返回键（回组件首页）。尺寸与徽章一致（30），圆形底 */
