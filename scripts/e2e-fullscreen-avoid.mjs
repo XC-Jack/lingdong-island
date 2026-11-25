@@ -264,6 +264,15 @@ try {
   const v2 = await islandVisible('A2')
   ok('A2 全屏→岛隐藏', v2 === false, String(v2))
 
+  // A2b 真全屏（F）下摸顶边**不**唤回（SPEC-no-reveal-in-fullscreen）。
+  // 2026-11-25 用户再次确认「F11 和全屏不用唤醒」，旧脚本只有最大化场景的 A4、没有这条，补上。
+  await moveCursor('[int]($sw/2)', 0)
+  await sleep(2500)
+  const v2b = await islandVisible('A2b')
+  ok('A2b 真全屏下摸顶边不唤回', v2b === false, String(v2b))
+  await moveCursor('400', 500)
+  await sleep(600)
+
   // A4 摸边唤回。⚠ 2026-11-18 起**真全屏（F）下摸边自动唤回被禁用**（SPEC-no-reveal-in-fullscreen：
   // 游戏里视角上移会把光标顶到屏幕边，一唤回就把独占全屏游戏最小化，用户实测「玩几分钟突然切到桌面」）。
   // 所以这里换成「最大化窗口（Z）」来测摸边——那是它现在仍然生效的场景。
