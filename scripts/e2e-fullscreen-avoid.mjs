@@ -54,6 +54,9 @@ function withTimeout(promise, ms, tag) {
 
 // 造受控窗口。kind：
 //  'full'  —— 无边框铺满主屏（真全屏应用）
+//  'flmax' —— 无边框 + WindowState=Maximized（VS Code F11 那种形状：rect 盖满整屏、
+//             IsZoomed=True、任务栏被盖住。只按 IsZoomed 判会被当成「最大化」）
+//  'max'   —— 普通最大化（任务栏仍显示）
 //  'small' —— 500×400 普通窗（用来把前台从「用户自己的最大化窗口」换成普通窗口）
 //
 // 两点实测教训（2026-11-17）：
@@ -85,6 +88,9 @@ function makeWin(tag, kind) {
     lines.push("$f.FormBorderStyle = 'None'")
     lines.push('$f.Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds')
   } else if (kind === 'max') {
+    lines.push("$f.WindowState = 'Maximized'")
+  } else if (kind === 'flmax') {
+    lines.push("$f.FormBorderStyle = 'None'")
     lines.push("$f.WindowState = 'Maximized'")
   } else {
     lines.push("$f.StartPosition = 'Manual'")
@@ -264,10 +270,36 @@ try {
   const v2 = await islandVisible('A2')
   ok('A2 全屏→岛隐藏', v2 === false, String(v2))
 
+  // A2b 真全屏（F）下摸顶边**不**唤回（SPEC-no-reveal-in-fullscreen）。
+  // 2026-11-25 用户再次确认「F11 和全屏不用唤醒」，旧脚本只有最大化场景的 A4、没有这条，补上。
+  await moveCursor('[int]($sw/2)', 0)
+  await sleep(2500)
+  const v2b = await islandVisible('A2b')
+  ok('A2b 真全屏下摸顶边不唤回', v2b === false, String(v2b))
+  await moveCursor('400', 500)
+  await sleep(600)
+
+  // A2c 无边框最大化（VS Code F11 形状：盖满整屏但 IsZoomed=True）→ 必须按真全屏处理。
+  // 2026-11-25 用户实测「VS Code 按 F11 全屏了还能唤出来」；实机取证：前台 rect=0,0,1920,1200、
+  // IsZoomed=True、Shell_TrayWnd 仍 Visible 但被它盖住。新判据「盖住任务栏也算 F」（SPEC-fullscreen-taskbar-cover）。
+  fullWin.kill()
+  await moveCursor('400', 500)
+  await sleep(800)
+  const flWin = makeWin('a2c', 'flmax')
+  await sleep(3500)
+  const v2cPre = await islandVisible('A2cpre')
+  ok('A2c 前置：无边框最大化→岛隐藏', v2cPre === false, String(v2cPre))
+  await moveCursor('[int]($sw/2)', 0)
+  await sleep(2500)
+  const v2c = await islandVisible('A2c')
+  ok('A2c 无边框最大化（盖住任务栏）下摸顶边不唤回', v2c === false, String(v2c))
+  await moveCursor('400', 500)
+  await sleep(600)
+  flWin.kill()
+
   // A4 摸边唤回。⚠ 2026-11-18 起**真全屏（F）下摸边自动唤回被禁用**（SPEC-no-reveal-in-fullscreen：
   // 游戏里视角上移会把光标顶到屏幕边，一唤回就把独占全屏游戏最小化，用户实测「玩几分钟突然切到桌面」）。
   // 所以这里换成「最大化窗口（Z）」来测摸边——那是它现在仍然生效的场景。
-  fullWin.kill()
   await moveCursor('400', 500)
   await sleep(800)
   const maxWin = makeWin('a4max', 'max')

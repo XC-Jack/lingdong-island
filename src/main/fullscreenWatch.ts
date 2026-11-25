@@ -17,9 +17,10 @@ import type { AvoidMode } from '../shared/types'
  *  - maximized（默认）  前台窗口盖住工作区就避让 ⇒ 最大化与真全屏都避让
  *  - fullscreen        只有真全屏避让，最大化窗口保留岛
  *  - off               一律不避让
- * 判断顺序：先看「盖住工作区」，再看「盖住整屏且不是 Windows 最大化（IsZoomed）」。
- * 这样任务栏显示/自动隐藏两种情况下都能区分「最大化」和「真全屏」（[实测] 本机任务栏
- * 显示时 bounds 比 workarea 高 48px；自动隐藏时两者相等，只能靠 IsZoomed 区分）。
+ * 判断顺序：先看「盖住工作区」，再看是否真全屏。真全屏 = 盖住整屏 **且**（不是 Windows 最大化
+ * 或 把任务栏盖住了）。这样任务栏显示/自动隐藏两种情况下都能区分「最大化」和「真全屏」；
+ * 「盖住任务栏」这条是 2026-11-25 补的——VS Code F11 是带 WS_MAXIMIZE 的无边框窗口，
+ * `IsZoomed` 为 true，只按旧判据会被当成最大化，摸边唤回仍然生效（用户实测报障）。
  *
  * 判定精度（判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来，
  * 2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
@@ -29,6 +30,14 @@ import type { AvoidMode } from '../shared/types'
  *   2. 桌面本身 `Progman` / `WorkerW`（点桌面时它们会成为前台）。
  * 故判据 = 前台窗口 可见 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧ 不属于本进程 ∧
  * 矩形覆盖整个**工作区**（四边 8px 容差，吃最大化时外扩的不可见边框）。
+ *
+ * 前台是本进程窗口时沿 Z 序取判据（2026-11-25 修，SPEC-avoid-self-foreground）：
+ * 用户点一下岛，岛自己就成了前台窗口。以前这里直接返回 `N`（「别把自己的窗口当全屏」），
+ * 等于点一下岛就告诉状态机「全屏应用没了」——避让被撤销、岛留在最大化窗口上不再自动隐藏
+ * （用户实拍视频 + 本机 `.tmp/probe-avoid-self-focus.mjs` 复现：判定 `Z` → 点岛 → `N` →
+ * 光标移开仍可见）。现在改为沿 `GetWindow(GW_HWNDNEXT)` 往下找第一个**其它应用**的可见窗口
+ * 继续判定，找不到才算 `N`。这样「点岛」不再改变避让结论，鼠标离开岛仍按摸边规则回隐。
+ * 注意必须在读前台之后、任何 `N` 返回之前做替换，否则「前台是岛」会先被别的前置条件挡掉。
  * 基准用工作区而不是整屏：2026-11-17 用户报「最大化窗口时岛不缩」，真因是旧判据要求
  * 盖住整屏（Bounds 1536×960），而最大化窗口只铺到工作区（1536×912，任务栏 48px），
  * `r.B>=960` 永不成立；旧代码能用只是因为当时本机任务栏恰好「自动隐藏」。
@@ -147,6 +156,35 @@ let stopped = false
 /** 策略读取（由 index.ts 注入；每 150ms 读一次内存变量，prefs 变更由主进程刷新） */
 let getMode: () => AvoidMode = () => 'maximized'
 
+/** 手动隐藏的真正落地函数（init 里赋值）。菜单点击在主进程直接调，
+ * 不再绕「主进程发消息 → 渲染层再转发」那条链——2026-11-25 用户实测
+ * 「暂时隐藏没有任何反应」：渲染层从来没有监听那个频道，菜单只置了一个标志。 */
+let manualHideImpl: (() => void) | null = null
+
+/** 供 index.ts 的菜单项调用：进入 manual 态并隐藏岛。 */
+export function hideIslandManually(): void {
+  manualHideImpl?.()
+}
+
+/** 手动隐藏的恢复落地函数（init 里赋值）。
+ * ⚠ 必须直接调，不能像 2026-11-25 之前那样由 index.ts 发
+ * `webContents.send('island:manual-restore')`——那个频道只有主进程 `ipcMain.on` 在听、
+ * 渲染层没有监听者，消息发出去等于扔掉：窗口被 showInactive 亮出来了，状态机却还停在
+ * manual，避让判定整个失效，岛会一直压在最上层（[实测] 2026-11-25 探针 E/F 步）。 */
+let manualRestoreImpl: (() => void) | null = null
+
+/** 供 index.ts 的托盘恢复调用：退出 manual 态并按当前判定重算一次。 */
+export function restoreIslandFromManual(): void {
+  manualRestoreImpl?.()
+}
+
+/** 当前是否处于「手动隐藏」。**唯一真源**——index.ts 的菜单文案与恢复路径都用它，
+ * 不要再在主进程存一份布尔值：2026-11-25 实测横幅把岛叫亮时主进程那份会被清成 false，
+ * 状态机却还停在 manual，托盘恢复于是漏发 island:manual-restore，岛卡在最上层不再避让。 */
+export function isIslandManuallyHidden(): boolean {
+  return state === 'manual'
+}
+
 /**
  * 判定用的 C# 探针（内嵌，不落盘）。
  * 单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（[实测]）：
@@ -165,10 +203,12 @@ function probeCs(): string {
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsWindowVisible(IntPtr h);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsZoomed(IntPtr h);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern IntPtr GetWindow(IntPtr h, uint cmd);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
     '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern int GetSystemMetrics(int i);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string w);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool SystemParametersInfo(uint a, uint p, out RECT r, uint w);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetCursorPos(out POINT p);',
     'public struct RECT { public int L, T, R, B; }',
@@ -194,6 +234,23 @@ function probeCs(): string {
     '  RECT r; if (!GetWindowRect(h, out r)) return false;',
     '  return r.L <= wl + TOL && r.T <= wt + TOL && r.R >= wr - TOL && r.B >= wb - TOL;',
     '}',
+    // 窗口是否把任务栏盖住了（面积过半）。用来区分「用户说的全屏」和「窗口最大化」：
+    // VS Code F11、部分游戏的全屏窗口是**带 WS_MAXIMIZE 的无边框窗口**（[实测] 2026-11-25：
+    // 前台 rect=0,0,1920,1200、IsZoomed=True、任务栏窗口 Shell_TrayWnd 仍 Visible 但被盖住），
+    // 只靠 IsZoomed 会把它当成「最大化」，于是摸边唤回仍然生效（用户报「F11 了还能唤出来」）。
+    // 任务栏自动隐藏时它滑出屏幕，与本窗口交集接近 0，不会误判。
+    'public static bool TrayCovered(IntPtr h) {',
+    '  IntPtr t = FindWindowW(' + TICK + 'Shell_TrayWnd' + TICK + ', null);',
+    '  if (t == IntPtr.Zero || !IsWindowVisible(t)) return false;',
+    '  RECT r; RECT tr;',
+    '  if (!GetWindowRect(h, out r)) return false;',
+    '  if (!GetWindowRect(t, out tr)) return false;',
+    '  long tw = (long)tr.R - tr.L; long th = (long)tr.B - tr.T;',
+    '  if (tw <= 0 || th <= 0) return false;',
+    '  long ox = Math.Min(r.R, tr.R) - Math.Max(r.L, tr.L); if (ox < 0) ox = 0;',
+    '  long oy = Math.Min(r.B, tr.B) - Math.Max(r.T, tr.T); if (oy < 0) oy = 0;',
+    '  return ox * oy * 2 >= tw * th;',
+    '}',
     // 返回单字符判定码：F=真全屏 / Z=最大化（盖住工作区但不算真全屏） / N=都不算
     // ⚠ 不要用 System.Windows.Forms 的 Screen 拿工作区尺寸：那要 Add-Type -AssemblyName
     // System.Windows.Forms，会在常驻辅助进程里初始化整个 WinForms（含隐藏的 parking window），
@@ -211,14 +268,35 @@ function probeCs(): string {
     'public static string Probe(int wl, int wt, int wr, int wb, int bl, int bt, int br, int bb) {',
     '  IntPtr h = GetForegroundWindow();',
     '  if (h == IntPtr.Zero) return ' + TICK + 'N' + TICK + ';', // 没有前台窗口（桌面上什么都没选）
+    '  uint p; GetWindowThreadProcessId(h, out p);',
+    // 前台是本进程窗口（点了岛/设置窗/岛仔）：换成 Z 序上第一个其它应用的窗口再判，
+    // 不能直接判 N —— 否则「点一下岛」等于告诉状态机「全屏应用没了」（SPEC-avoid-self-foreground）。
+    '  if (p == ' + ownPid + ') {',
+    '    IntPtr q = h;',
+    '    bool found = false;',
+    '    for (int i = 0; i < 24; i++) {',
+    '      q = GetWindow(q, 2);', // GW_HWNDNEXT = 2
+    '      if (q == IntPtr.Zero) break;',
+    '      uint p2; GetWindowThreadProcessId(q, out p2);',
+    '      if (p2 == ' + ownPid + ') continue;',
+    '      if (!IsWindowVisible(q)) continue;',
+    '      if (Cloak(q) != 0) continue;',
+    '      if (ShellClass(Cls(q))) continue;',
+    '      h = q; p = p2; found = true; break;',
+    '    }',
+    '    if (!found) return ' + TICK + 'N' + TICK + ';',
+    '  }',
     '  if (!IsWindowVisible(h)) return ' + TICK + 'N' + TICK + ';',
     '  if (Cloak(h) != 0) return ' + TICK + 'N' + TICK + ';', // DWM 已隐藏：用户根本看不到它
     '  if (ShellClass(Cls(h))) return ' + TICK + 'N' + TICK + ';',
-    '  uint p; GetWindowThreadProcessId(h, out p);',
-    '  if (p == ' + ownPid + ') return ' + TICK + 'N' + TICK + ';', // 别把自己的窗口当全屏
     '  if (!Covers(h, wl, wt, wr, wb)) return ' + TICK + 'N' + TICK + ';',
-    // 盖住整屏且不是 Windows 意义上的最大化 ⇒ 真全屏（F11 / 独占全屏 / 无边框铺屏）
-    '  if (Covers(h, bl, bt, br, bb) && !IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',
+    // 盖住整屏且（不是 Windows 意义上的最大化 或 把任务栏盖住了）⇒ 真全屏。
+    // 后一条给「无边框最大化」这类窗口兜底：VS Code F11 实测 rect 盖满整屏、IsZoomed=True，
+    // 但任务栏被它盖住——按用户口径（有任务栏=最大化，没任务栏=全屏）这就是全屏，不能唤回。
+    '  if (Covers(h, bl, bt, br, bb)) {',
+    '    if (!IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',
+    '    if (TrayCovered(h)) return ' + TICK + 'F' + TICK + ';',
+    '  }',
     '  return ' + TICK + 'Z' + TICK + ';',
     '}',
     '}'
@@ -337,6 +415,10 @@ export function initFullscreenWatch(
         if (state === 'normal') {
           state = 'avoided'
           lastAvoidJudge = judge
+          // 手动恢复刚把岛亮出来（tempVisible），这时别立刻收掉：交给光标回隐那条路，
+          // 否则用户点「显示灵动岛」只会看到闪一下。判定码在菜单弹出瞬间常是 N，
+          // 菜单关掉才变 Z，所以在恢复那一刻判不出来，只能在这里兜一次。
+          if (tempVisible) return
           apply(true, 'judge:' + judge)
         }
       } else if (state === 'avoided' && !tempVisible && !bannerHold) {
@@ -656,21 +738,33 @@ export function initFullscreenWatch(
     }, 400)
   })
 
-  // 手动隐藏（右键/托盘菜单）
-  ipcMain.on('island:manual-hide', () => {
+  // 手动隐藏（右键/托盘菜单，以及渲染层的 island:manual-hide IPC）
+  manualHideImpl = () => {
     state = 'manual'
     apply(true, 'manual-hide')
+  }
+  ipcMain.on('island:manual-hide', () => {
+    manualHideImpl?.()
   })
-  // 托盘左键唤回（清手动标志）
-  ipcMain.on('island:manual-restore', () => {
+  const doRestore = (): void => {
     if (state !== 'manual') return
     state = 'normal'
     apply(false, 'manual-restore')
+    // 别让岛只闪 150ms：按「摸边唤回」同一套口径给它一次临时现身，光标离开岛后回隐。
+    // 用户点托盘/菜单本来就是为了看一眼或点一下。这里不按 judge 分支——菜单还开着时
+    // 前台常被判成 N，真正的 Z 要等菜单关掉才到（commit 里对 tempVisible 兜了一次）。
+    tempVisible = true
+    startCursorWatch()
     // 手动隐藏期间期望值可能已经翻成 true 但没落地（commit 里 manual 直接 return），
     // 这里清掉缓存让它按当前判定重新算一次，否则岛会「恢复了却再也不自动避让」
     // （[实测] 2026-11-17：A7 横幅结束不回隐就是这么挂的）。
     wantHidden = null
     evaluate()
+  }
+  manualRestoreImpl = doRestore
+  // 渲染层自己发起的恢复（历史频道，保留）
+  ipcMain.on('island:manual-restore', () => {
+    doRestore()
   })
 
   // 横幅临时现身（渲染层横幅/验证码弹出时调用，结束回传 false）
@@ -741,4 +835,6 @@ export function stopFullscreenWatch(): void {
   judge = 'N'
   tempVisible = false
   bannerHold = false
+  manualHideImpl = null
+  manualRestoreImpl = null
 }

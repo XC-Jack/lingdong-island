@@ -3216,6 +3216,10 @@ export default function App(): React.JSX.Element {
   const bannerTimer = useRef<number | null>(null)
   const bannerCountRef = useRef<number>(0)
   const hoverRef = useRef(false)
+  // 岛内右键的原生菜单是否打开（SPEC-app-menu-collapse）。菜单是独立窗口：打开瞬间岛会失焦，
+  // 光标移向菜单时也会触发 mouseleave。这两条平时都会收岛，菜单开着时必须暂缓，
+  // 否则用户还没来得及点「暂时隐藏灵动岛」，岛就缩回去了（2026-11-25 用户报障）。
+  const appMenuOpenRef = useRef(false)
   // 歌词面板开着（SPEC-music-lyric-pin）：定时收起到点时读它，开着就放弃这次收起。
   // 用 ref 而不是 state 是刻意的——收起定时器回调不该因为面板开合而重建。
   const lyricOpenRef = useRef(false)
@@ -3596,6 +3600,12 @@ export default function App(): React.JSX.Element {
   // 要等一会才开始缩」）。输入法的保护由收起定时器路径的 typing 判据负责（US-036 已修）。
   useEffect(() => {
     window.island.onWindowBlur(() => {
+      // 原生右键菜单打开也会让窗口失焦（菜单是独立窗口）。菜单开着时绝不能收岛：
+      // 用户刚右键、鼠标还没移到「暂时隐藏灵动岛」，岛缩回去菜单也跟着跳（2026-11-25 报障）。
+      if (appMenuOpenRef.current) {
+        window.island.logDiag('render blur ignored; app menu open')
+        return
+      }
       // 「点进度条」这一下不算「用户想收起」：桥接为了点击把播放器顶到前台，岛必然失焦。
       // 窗口给到 2.5 秒（点击动作本身含 120ms 置前台 + 160ms + 100ms + 480ms 收尾，
       // 再加 IPC 往返余量），只在按下过进度条时生效，过完这段时间点桌面仍然正常收起。
@@ -3606,6 +3616,18 @@ export default function App(): React.JSX.Element {
       hoverRef.current = false
       window.island.logDiag('render blur -> collapse now')
       setExpanded(false)
+    })
+  }, [])
+
+  // 右键菜单关闭（SPEC-app-menu-collapse）：打开期间的失焦、鼠标移开都已被压住，这里补一次判定——
+  // 光标不在岛上（用户点了菜单项）就按「鼠标移开」同一口径收起；还在岛上就继续留着。
+  useEffect(() => {
+    window.island.onAppMenuClosed(() => {
+      appMenuOpenRef.current = false
+      if (!hoverRef.current) {
+        setExpanded(false)
+        window.island.logDiag('collapse after app menu closed; cursor off island')
+      }
     })
   }, [])
 
@@ -3628,6 +3650,8 @@ export default function App(): React.JSX.Element {
       // 歌词面板开着就别按「鼠标离开」收：用户要求「除非点桌面或再点歌词 ui，否则一直展开」
       // （SPEC-music-lyric-pin）。点桌面走的是失焦路径，不经过这里。
       if (lyricOpenRef.current) return
+      // 右键菜单开着（光标移到菜单上必然触发过 mouseleave）：这次不收，等菜单关闭再判断。
+      if (appMenuOpenRef.current) return
       const el = document.activeElement
       if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
       setExpanded(false)
@@ -4186,6 +4210,9 @@ export default function App(): React.JSX.Element {
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
+          // 菜单打开期间不许自动收起（SPEC-app-menu-collapse）：置标记并清掉可能已排队的收起
+          appMenuOpenRef.current = true
+          clearCollapseTimer()
           window.island.showAppMenu()
         }}
         role="button"
@@ -4211,10 +4238,7 @@ export default function App(): React.JSX.Element {
             <div className="island-veil" aria-hidden="true" />
           </>
         )}
-        {avoidHidden && !expanded && (
-          /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
-          <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
-        )}        {expanded ? (
+        {expanded ? (
           <>
           {view === 'grid' ? (
             /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。

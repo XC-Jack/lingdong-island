@@ -77,6 +77,13 @@ const api = {
   onWindowBlur(cb: () => void): void {
     ipcRenderer.on('island:window-blur', cb)
   },
+  /**
+   * 岛内右键弹出的原生菜单已关闭（SPEC-app-menu-collapse）。
+   * 菜单打开期间窗口会失焦、光标也会离开岛，渲染层据此暂缓收起；关闭后再按光标位置决定。
+   */
+  onAppMenuClosed(cb: () => void): void {
+    ipcRenderer.on('island:app-menu-closed', cb)
+  },
   /** 打开设置窗口并落在指定分区（'general' | 'pages' | 'focus'） */
   openSettings(section: SettingsSection = 'general'): void {
     void ipcRenderer.invoke('settings:open', section)
