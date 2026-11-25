@@ -2,12 +2,22 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ISLAND_THEMES } from '../../shared/types'
 import type { Todo, ShelfItem, MusicState, MusicCommand, LyricResult, ClockFormat, UpdateState, IslandTheme } from '../../shared/types'
 import Pet from './pet/Pet'
+/* 第四套主题「透明玻璃」的 3D 贴纸（SPEC-glass-clear）。
+   Fluent Emoji 3D 四张（MIT，见 assets/stickers/LICENSE.md）+ 自绘的矢量文件夹。 */
+import stickerTodo from './assets/stickers/check.png'
+import stickerShelf from './assets/stickers/folder.svg'
+import stickerBell from './assets/stickers/bell.png'
+import stickerCal from './assets/stickers/cal.png'
+import stickerMusic from './assets/stickers/hp.png'
+
+/** 按页面序号取贴纸：待办/置物架/通知/日程/音乐 */
+const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, stickerMusic]
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
 
 /**
- * 主题落到 `<html data-theme>`（SPEC-island-themes）。
- * CSS 里只有 glass-dark / mono 两块覆盖，glass-light 直接用 :root 的默认值，
+ * 主题落到 `<html data-theme>`（SPEC-island-themes / SPEC-glass-clear）。
+ * CSS 里 glass-dark / mono / glass-clear 三块覆盖，glass-light 直接用 :root 的默认值，
  * 所以「非法或缺失」和「显式 glass-light」是同一个结果，不需要额外分支。
  */
 function applyIslandTheme(v: unknown): IslandTheme {
@@ -15,7 +25,7 @@ function applyIslandTheme(v: unknown): IslandTheme {
     ? v
     : 'glass-light') as IslandTheme
   if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t
-  // 返回值给调用方同步一份 state：抓屏底图只有亮色玻璃主题要（另外两套是不透明的）
+  // 返回值给调用方同步一份 state：抓屏底图只有亮色玻璃与透明玻璃要（另外两套是不透明的）
   return t
 }
 
@@ -3715,6 +3725,22 @@ export default function App(): React.JSX.Element {
     void window.island.notifyList().then((r: NotifyListResult) => setNotifyUnread(r.unread)).catch(() => {})
   }, [])
 
+  // 组件首页置物架/日程两张卡要显示条目数（SPEC-glass-clear）。
+  // 这两份状态在各自的面板组件内部，App 拿不到，所以走一次 IPC 拉；
+  // 每次展开时刷新一次，够用且不新增常驻订阅。
+  const [shelfCount, setShelfCount] = useState(0)
+  const [scheduleCount, setScheduleCount] = useState(0)
+  useEffect(() => {
+    void window.island
+      .shelfList()
+      .then((l) => setShelfCount(l.length))
+      .catch(() => {})
+    void window.island
+      .scheduleList()
+      .then((l) => setScheduleCount(l.length))
+      .catch(() => {})
+  }, [expanded])
+
   useEffect(() => clearCollapseTimer, [clearCollapseTimer])
 
   const onEnter = (): void => {
@@ -3807,7 +3833,9 @@ export default function App(): React.JSX.Element {
    * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
    */
   useEffect(() => {
-    if (islandTheme !== 'glass-light' || avoidHidden) {
+    // 亮色乳白玻璃与透明玻璃都靠真透视底图（后者本体不染色，全靠它出颜色）；
+    // 纯黑玻璃 / 纯黑极简是不透明块面，不抓屏。
+    if ((islandTheme !== 'glass-light' && islandTheme !== 'glass-clear') || avoidHidden) {
       setBackdrop(null)
       return
     }
@@ -4275,6 +4303,9 @@ export default function App(): React.JSX.Element {
                           : i === 3
                             ? '今天与以后'
                             : '播放控制'
+                  // 「透明玻璃」主题的说明行：数字已经单独放在右上，这里只留单位/范围，避免重复
+                  const sub =
+                    i === 0 ? '已完成' : i === 1 ? '文件收纳' : i === 2 ? '条未读' : i === 3 ? '今天与以后' : '播放控制'
                   return (
                     <button
                       key={i}
@@ -4287,11 +4318,24 @@ export default function App(): React.JSX.Element {
                         openPageFromGrid(i, e.currentTarget)
                       }}
                     >
+                      {/* 3D 贴纸：只在「透明玻璃」主题下显示，另外三套 display:none（见 styles.css） */}
+                      <img className="widget-sticker" src={WIDGET_STICKERS[i]} alt="" aria-hidden="true" />
                       <span className={`widget-icon ${i === 0 ? 'blue' : i === 1 ? 'amber' : i === 2 ? 'red' : i === 3 ? 'green' : 'violet'}`}>
                         {PAGE_META[i].icon()}
                       </span>
+                      {/* 右上大数字：同样只在「透明玻璃」下显示；没有数的卡不渲染，避免出现空位 */}
+                      {i === 0 && todoStats.total > 0 && (
+                        <span className="widget-num">
+                          {todoStats.done}
+                          <i>/{todoStats.total}</i>
+                        </span>
+                      )}
+                      {i === 1 && shelfCount > 0 && <span className="widget-num">{shelfCount}</span>}
+                      {i === 2 && notifyUnread > 0 && <span className="widget-num">{notifyUnread}</span>}
+                      {i === 3 && scheduleCount > 0 && <span className="widget-num">{scheduleCount}</span>}
                       <span className="widget-label">{PAGE_META[i].label}</span>
                       <span className="widget-meta">{meta}</span>
+                      <span className="widget-sub">{sub}</span>
                       {i === 0 && todoStats.total > 0 && (
                         /* 待办卡右下角的小进度环：与头部 n/m 同一份统计，只是换成图形 */
                         <svg className="widget-ring" viewBox="0 0 36 36" aria-hidden="true">
