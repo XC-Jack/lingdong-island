@@ -1,5 +1,11 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
-import { hideIslandManually, initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
+import {
+  hideIslandManually,
+  initFullscreenWatch,
+  isIslandManuallyHidden,
+  restoreIslandFromManual,
+  stopFullscreenWatch
+} from './fullscreenWatch'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
@@ -70,8 +76,10 @@ let tweenTimer: NodeJS.Timeout | null = null
 /** 补间起点矩形与起始时刻 */
 let tweenFrom: Electron.Rectangle | null = null
 let tweenStart = 0
-/** US-041 手动隐藏标志（菜单文案切换用；真实状态机在 fullscreenWatch.ts） */
-let manualHide = false
+// US-041 手动隐藏的唯一真源在 fullscreenWatch 的状态机（state === 'manual'）。
+// 这里不再另存布尔值：2026-11-25 实测两份标志会分叉——横幅把岛叫亮时把主进程那份清成
+// false，状态机却还停在 manual，托盘恢复因此漏发 island:manual-restore，岛卡在最上层、
+// 最大化/真全屏都不再躲。
 
 /**
  * 真正退出应用（US-034）。
@@ -103,7 +111,7 @@ function quitApp(): void {
  */
 function buildAppMenu(): Menu {
   // US-041：手动隐藏后岛不可见，菜单只在托盘右键可达——此时显示「显示灵动岛」
-  const hiddenByUser = manualHide
+  const hiddenByUser = isIslandManuallyHidden()
   // 只有 window / free 才算「出去了」。不能写成 !== 'island'：
   // 老用户 prefs 里没有 petMode（undefined）时那会误判成已出岛，显示「收回」。
   const pm = getPrefs().petMode
@@ -139,7 +147,6 @@ function buildAppMenu(): Menu {
       : {
           label: '暂时隐藏灵动岛',
           click: () => {
-            manualHide = true
             hideIslandManually()
             refreshTrayMenu()
           }
@@ -150,7 +157,7 @@ function buildAppMenu(): Menu {
 }
 
 /**
- * 托盘菜单是一份构建时的快照：`manualHide` 决定那一项是「暂时隐藏」还是「显示」，
+ * 托盘菜单是一份构建时的快照：状态机是不是「手动隐藏」决定那一项是「暂时隐藏」还是「显示」，
  * 状态变了不重建，托盘里就一直是旧文案。
  * 2026-11-25 实测踩到：隐藏后托盘右键仍是「暂时隐藏灵动岛」，点下去又隐藏一次，岛回不来。
  */
@@ -160,12 +167,12 @@ function refreshTrayMenu(): void {
 }
 
 /** 找回岛（托盘左键 / 菜单「显示灵动岛」共用）。
- * 手动隐藏过就先清标志并让状态机回到 normal，再 showInactive 顶回最上层。 */
+ * 无条件通知状态机（它自己判断在不在 manual，不在就直接忽略），再 showInactive 顶回最上层。
+ * 两条纪律：① 不能先看主进程自己的标志——那个标志会被横幅叫亮时的 show 清掉，漏发通知后
+ * 状态机永远卡在 manual；② 不能用 `webContents.send`——那个频道没有渲染层监听者，等于没发
+ * （2026-11-25 探针复现：窗口亮着、判定却停摆）。直接调状态机导出的函数。 */
 function restoreIsland(): void {
-  if (manualHide) {
-    manualHide = false
-    mainWindow?.webContents.send('island:manual-restore')
-  }
+  restoreIslandFromManual()
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow()
     refreshTrayMenu()
@@ -468,18 +475,15 @@ app.whenReady().then(() => {
   initFullscreenWatch(
     () => mainWindow,
     (hidden) => {
-      // 状态落地时同步菜单用的标志（自动避让不改 manualHide；仅渲染层菜单发起的手动隐藏改）
-      if (!hidden && manualHide) {
-        manualHide = false
-        refreshTrayMenu()
-      }
+      // 状态落地后重建托盘菜单：手动隐藏 / 恢复 / 横幅叫亮都会改「暂时隐藏 ↔ 显示」文案
+      refreshTrayMenu()
       mainWindow?.webContents.send('island:avoid-changed', hidden)
     },
     () => getPrefs().avoidMode ?? 'maximized'
   )
-  // 渲染层菜单发起的手动隐藏：置标志再走状态机（真正 hide 在 fullscreenWatch）
+  // 渲染层菜单发起的手动隐藏由 fullscreenWatch 自己接（island:manual-hide 同一个频道）；
+  // 这里只跟着刷托盘文案，避免「状态已变、菜单还写暂时隐藏」。
   ipcMain.on('island:manual-hide', () => {
-    manualHide = true
     refreshTrayMenu()
   })
 

@@ -165,6 +165,25 @@ export function hideIslandManually(): void {
   manualHideImpl?.()
 }
 
+/** 手动隐藏的恢复落地函数（init 里赋值）。
+ * ⚠ 必须直接调，不能像 2026-11-25 之前那样由 index.ts 发
+ * `webContents.send('island:manual-restore')`——那个频道只有主进程 `ipcMain.on` 在听、
+ * 渲染层没有监听者，消息发出去等于扔掉：窗口被 showInactive 亮出来了，状态机却还停在
+ * manual，避让判定整个失效，岛会一直压在最上层（[实测] 2026-11-25 探针 E/F 步）。 */
+let manualRestoreImpl: (() => void) | null = null
+
+/** 供 index.ts 的托盘恢复调用：退出 manual 态并按当前判定重算一次。 */
+export function restoreIslandFromManual(): void {
+  manualRestoreImpl?.()
+}
+
+/** 当前是否处于「手动隐藏」。**唯一真源**——index.ts 的菜单文案与恢复路径都用它，
+ * 不要再在主进程存一份布尔值：2026-11-25 实测横幅把岛叫亮时主进程那份会被清成 false，
+ * 状态机却还停在 manual，托盘恢复于是漏发 island:manual-restore，岛卡在最上层不再避让。 */
+export function isIslandManuallyHidden(): boolean {
+  return state === 'manual'
+}
+
 /**
  * 判定用的 C# 探针（内嵌，不落盘）。
  * 单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（[实测]）：
@@ -372,6 +391,10 @@ export function initFullscreenWatch(
         if (state === 'normal') {
           state = 'avoided'
           lastAvoidJudge = judge
+          // 手动恢复刚把岛亮出来（tempVisible），这时别立刻收掉：交给光标回隐那条路，
+          // 否则用户点「显示灵动岛」只会看到闪一下。判定码在菜单弹出瞬间常是 N，
+          // 菜单关掉才变 Z，所以在恢复那一刻判不出来，只能在这里兜一次。
+          if (tempVisible) return
           apply(true, 'judge:' + judge)
         }
       } else if (state === 'avoided' && !tempVisible && !bannerHold) {
@@ -699,16 +722,25 @@ export function initFullscreenWatch(
   ipcMain.on('island:manual-hide', () => {
     manualHideImpl?.()
   })
-  // 托盘左键唤回（清手动标志）
-  ipcMain.on('island:manual-restore', () => {
+  const doRestore = (): void => {
     if (state !== 'manual') return
     state = 'normal'
     apply(false, 'manual-restore')
+    // 别让岛只闪 150ms：按「摸边唤回」同一套口径给它一次临时现身，光标离开岛后回隐。
+    // 用户点托盘/菜单本来就是为了看一眼或点一下。这里不按 judge 分支——菜单还开着时
+    // 前台常被判成 N，真正的 Z 要等菜单关掉才到（commit 里对 tempVisible 兜了一次）。
+    tempVisible = true
+    startCursorWatch()
     // 手动隐藏期间期望值可能已经翻成 true 但没落地（commit 里 manual 直接 return），
     // 这里清掉缓存让它按当前判定重新算一次，否则岛会「恢复了却再也不自动避让」
     // （[实测] 2026-11-17：A7 横幅结束不回隐就是这么挂的）。
     wantHidden = null
     evaluate()
+  }
+  manualRestoreImpl = doRestore
+  // 渲染层自己发起的恢复（历史频道，保留）
+  ipcMain.on('island:manual-restore', () => {
+    doRestore()
   })
 
   // 横幅临时现身（渲染层横幅/验证码弹出时调用，结束回传 false）
@@ -780,4 +812,5 @@ export function stopFullscreenWatch(): void {
   tempVisible = false
   bannerHold = false
   manualHideImpl = null
+  manualRestoreImpl = null
 }
