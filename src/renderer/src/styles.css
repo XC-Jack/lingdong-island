@@ -79,21 +79,56 @@
     'Microsoft YaHei UI', system-ui, sans-serif;
 }
 
-/* ===== A：纯黑玻璃（用户否决的是「调浅的黑」，这里回到真黑） ===== */
+/* ===== A：纯黑玻璃（2026-11-25 重做为真透明玻璃） =====
+   用户原话「太丑了，完全看不出来是玻璃质感……做一个透明玻璃质感的主题」，参考 Apple 液态玻璃
+   与深色界面里的玻璃卡片。三个要点：
+     1) 本体只挡一半左右，模糊后的桌面从底下透上来；有底图时 .island 与 .island-veil 两层叠加，
+        实际不透明度约 0.66/0.77，白字在亮桌面上仍够读；
+     2) 顶部一条受光带 + 极淡冷/暖折射，让「玻璃」有厚度和折射，而不是一块半透明黑；
+     3) 边缘 1px 亮描边 + 内高光 + 底部暗边，模拟玻璃切面。
+   抓不到底图时走「.island:not(.has-backdrop)」兜底，接近原来的实心深色，保证可读。 */
 [data-theme='glass-dark'] {
   --ink-1: #ffffff;
-  --island-top: rgba(10, 10, 12, 0.97);
-  --island-bottom: rgba(5, 5, 7, 0.97);
-  --island-hi: rgba(255, 255, 255, 0.085);
-  --island-cool: transparent;
-  --island-warm: transparent;
-  --border-island: rgba(255, 255, 255, 0.11);
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 18px 44px rgba(0, 0, 0, 0.55);
-  --bg-pop: rgba(18, 18, 21, 0.985);
+  /* 双层 veil 叠加后的实际不透明度：顶部约 0.80、底部约 0.88。
+     桌面亮色时仍能看出颜色在底下来回变，但不会亮到吃掉白字（第一版 0.42/0.52 太白）。 */
+  --island-top: rgba(15, 17, 23, 0.55);
+  --island-bottom: rgba(7, 8, 12, 0.66);
+  --island-hi: rgba(255, 255, 255, 0.16);
+  --island-cool: rgba(126, 170, 255, 0.1);
+  --island-warm: rgba(255, 154, 122, 0.08);
+  /* 深色玻璃自己的图层栈：顶部受光带 → 左上受光 → 右上冷光 → 右下暖光 → 本体渐变。
+     受光带是「像玻璃」的关键：锐利的亮边在 30% 处收敛，不是整块泛白。 */
+  --island-veil:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0.035) 10%,
+      rgba(255, 255, 255, 0) 30%
+    ),
+    radial-gradient(130% 110% at 8% -10%, var(--island-hi) 0%, transparent 58%),
+    radial-gradient(95% 85% at 104% 4%, var(--island-cool) 0%, transparent 62%),
+    radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
+  --border-island: rgba(255, 255, 255, 0.26);
+  --shadow-island:
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.045),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.07),
+    0 18px 44px rgba(0, 0, 0, 0.42);
+  --bg-pop: rgba(20, 21, 26, 0.94);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.45);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
-  --bg-chip: rgba(24, 25, 29, 0.94);
-  --bg-chip-hover: rgba(38, 39, 45, 0.96);
+  --bg-chip: rgba(24, 25, 29, 0.9);
+  --bg-chip-hover: rgba(38, 39, 45, 0.94);
+  /* 深色玻璃上的控件表面：从 :root 继承的 0.3/0.44/0.62 白是给乳白玻璃用的，
+     压在深色玻璃上会把卡片和按钮整片冲白（第一版实测卡片上的白字读不清）。
+     这里改成薄薄一层加亮，保持「玻璃上再放一块更亮的玻璃」的层次。 */
+  --surface-1: rgba(255, 255, 255, 0.07);
+  --surface-2: rgba(255, 255, 255, 0.12);
+  --surface-3: rgba(255, 255, 255, 0.18);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-2: rgba(255, 255, 255, 0.16);
+  --line-3: rgba(255, 255, 255, 0.24);
   --accent: #ffffff;
   --accent-hover: #e6e6ea;
   --accent-ink: #0a0a0b;
@@ -116,6 +151,21 @@
   --ink-3: color-mix(in srgb, var(--ink-1) 50%, transparent);
   --ink-4: color-mix(in srgb, var(--ink-1) 42%, transparent);
   --ink-5: color-mix(in srgb, var(--ink-1) 22%, transparent);
+}
+
+/* 抓不到桌面底图时（远程桌面、抓屏失败、权限异常）的兜底：
+   退回接近实心的深色玻璃，保证白字可读；有底图时用上面那套半透明材质。
+   `.has-backdrop` 由 App 在拿到底图时挂到 .island 上，两套玻璃主题共用。 */
+[data-theme='glass-dark'] .island:not(.has-backdrop) {
+  --island-top: rgba(12, 13, 17, 0.92);
+  --island-bottom: rgba(6, 6, 9, 0.95);
+  --island-hi: rgba(255, 255, 255, 0.1);
+  --island-cool: transparent;
+  --island-warm: transparent;
+  /* 实心底上不要那三条折射色斑，只留一道顶部受光 */
+  --island-veil:
+    linear-gradient(180deg, var(--island-hi) 0%, transparent 26%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
 }
 
 /* ===== C：纯黑极简（靠留白和字号，不靠颜色） ===== */

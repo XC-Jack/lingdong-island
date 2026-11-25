@@ -496,7 +496,8 @@ export const CLOCK_FORMATS: ClockFormat[] = ['time', 'date', 'dateWeek']
 
 /**
  * 岛的主题（SPEC-island-themes）。
- * glass-light=亮色乳白玻璃（默认，用户 2026-11-24 选定）／glass-dark=纯黑玻璃／
+ * glass-light=亮色乳白玻璃（默认，用户 2026-11-24 选定）／glass-dark=暗色玻璃
+ * （2026-11-25 由「纯黑玻璃」重做为真透视半透明玻璃）／
  * mono=纯黑极简。值直接作为 `<html data-theme>` 的取值，渲染层的 CSS 按它取变量。
  * ⚠️ 已落盘的值不能改名，否则用户的选择会静默丢失。
  */

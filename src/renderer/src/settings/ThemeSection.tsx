@@ -22,8 +22,8 @@ const THEME_META: Record<IslandTheme, { name: string; desc: string }> = {
     desc: '半透明乳白玻璃，桌面颜色从底下透上来，深色文字。默认。'
   },
   'glass-dark': {
-    name: '纯黑玻璃',
-    desc: '近黑的玻璃底 + 一道极淡的白边，白色文字，适合深色桌面。'
+    name: '暗色玻璃',
+    desc: '半透明黑玻璃，背后桌面被模糊后透上来，带受光边和高光，白色文字。'
   },
   mono: {
     name: '纯黑极简',
@@ -113,7 +113,7 @@ export default function ThemeSection(): ReactElement {
       {failed ? <div className="set-note">保存失败，请重试。</div> : null}
       <div className="pet-set-tip">
         只改桌面上的岛；这个设置窗口始终是深色，方便看清控件。切换立刻生效，不用重启。
-        「亮色玻璃」会实时读取岛背后的桌面来调色，另外两套是纯黑，不抓屏。
+        两套玻璃都会实时读取岛背后的桌面（模糊后垫在岛下），纯黑极简是实心块面，不抓屏。
       </div>
     </div>
   )

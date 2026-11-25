@@ -3148,7 +3148,7 @@ export default function App(): React.JSX.Element {
   // 岛主题（SPEC-island-themes）：默认亮色玻璃，mount 后从 prefs 回填。
   // 除了写 <html data-theme>，还留一份 state 给「真透视」抓屏循环判条件。
   const [islandTheme, setIslandTheme] = useState<IslandTheme>('glass-light')
-  // 岛背后的桌面底图（data URL，只在内存里）。只有亮色玻璃主题需要，换主题立刻清空。
+  // 岛背后的桌面底图（data URL，只在内存里）。两套玻璃主题都需要，换到纯黑极简立刻清空。
   const [backdrop, setBackdrop] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
@@ -3803,11 +3803,14 @@ export default function App(): React.JSX.Element {
    * 真透视（SPEC-island-themes 第二轮）：定期向主进程要「岛背后那块桌面」当底图。
    * 主进程抓屏 60~150ms 且异步，这里只管起定时器；收起 5s、展开 1.5s 一次——
    * 展开时用户更可能换页/挪窗口，色块变化更明显，抓得勤一点。
-   * 换主题（另两套是不透明玻璃）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
+   * 换主题（纯黑极简是实心块面）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
    * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
+   *
+   * 2026-11-25：两套玻璃都抓。深色玻璃（glass-dark）从实心黑改成透明玻璃后，
+   * 同样需要桌面模糊底图才有质感；纯黑极简（mono）保持不抓、不依赖底图。
    */
   useEffect(() => {
-    if (islandTheme !== 'glass-light' || avoidHidden) {
+    if (islandTheme === 'mono' || avoidHidden) {
       setBackdrop(null)
       return
     }
@@ -4179,7 +4182,9 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''}`}
+        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''} ${
+          backdrop ? 'has-backdrop' : ''
+        }`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。
