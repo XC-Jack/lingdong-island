@@ -17,9 +17,10 @@ import type { AvoidMode } from '../shared/types'
  *  - maximized（默认）  前台窗口盖住工作区就避让 ⇒ 最大化与真全屏都避让
  *  - fullscreen        只有真全屏避让，最大化窗口保留岛
  *  - off               一律不避让
- * 判断顺序：先看「盖住工作区」，再看「盖住整屏且不是 Windows 最大化（IsZoomed）」。
- * 这样任务栏显示/自动隐藏两种情况下都能区分「最大化」和「真全屏」（[实测] 本机任务栏
- * 显示时 bounds 比 workarea 高 48px；自动隐藏时两者相等，只能靠 IsZoomed 区分）。
+ * 判断顺序：先看「盖住工作区」，再看是否真全屏。真全屏 = 盖住整屏 **且**（不是 Windows 最大化
+ * 或 把任务栏盖住了）。这样任务栏显示/自动隐藏两种情况下都能区分「最大化」和「真全屏」；
+ * 「盖住任务栏」这条是 2026-11-25 补的——VS Code F11 是带 WS_MAXIMIZE 的无边框窗口，
+ * `IsZoomed` 为 true，只按旧判据会被当成最大化，摸边唤回仍然生效（用户实测报障）。
  *
  * 判定精度（判据不是「矩形覆盖整屏」就够了——那会把两类**不是全屏应用**的窗口也算进来，
  * 2026-11-08 用户报「没全屏岛却自己消失了」，[实测] 复现）：
@@ -207,6 +208,7 @@ function probeCs(): string {
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
     '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern int GetSystemMetrics(int i);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string w);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool SystemParametersInfo(uint a, uint p, out RECT r, uint w);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetCursorPos(out POINT p);',
     'public struct RECT { public int L, T, R, B; }',
@@ -231,6 +233,23 @@ function probeCs(): string {
     'public static bool Covers(IntPtr h, int wl, int wt, int wr, int wb) {',
     '  RECT r; if (!GetWindowRect(h, out r)) return false;',
     '  return r.L <= wl + TOL && r.T <= wt + TOL && r.R >= wr - TOL && r.B >= wb - TOL;',
+    '}',
+    // 窗口是否把任务栏盖住了（面积过半）。用来区分「用户说的全屏」和「窗口最大化」：
+    // VS Code F11、部分游戏的全屏窗口是**带 WS_MAXIMIZE 的无边框窗口**（[实测] 2026-11-25：
+    // 前台 rect=0,0,1920,1200、IsZoomed=True、任务栏窗口 Shell_TrayWnd 仍 Visible 但被盖住），
+    // 只靠 IsZoomed 会把它当成「最大化」，于是摸边唤回仍然生效（用户报「F11 了还能唤出来」）。
+    // 任务栏自动隐藏时它滑出屏幕，与本窗口交集接近 0，不会误判。
+    'public static bool TrayCovered(IntPtr h) {',
+    '  IntPtr t = FindWindowW(' + TICK + 'Shell_TrayWnd' + TICK + ', null);',
+    '  if (t == IntPtr.Zero || !IsWindowVisible(t)) return false;',
+    '  RECT r; RECT tr;',
+    '  if (!GetWindowRect(h, out r)) return false;',
+    '  if (!GetWindowRect(t, out tr)) return false;',
+    '  long tw = (long)tr.R - tr.L; long th = (long)tr.B - tr.T;',
+    '  if (tw <= 0 || th <= 0) return false;',
+    '  long ox = Math.Min(r.R, tr.R) - Math.Max(r.L, tr.L); if (ox < 0) ox = 0;',
+    '  long oy = Math.Min(r.B, tr.B) - Math.Max(r.T, tr.T); if (oy < 0) oy = 0;',
+    '  return ox * oy * 2 >= tw * th;',
     '}',
     // 返回单字符判定码：F=真全屏 / Z=最大化（盖住工作区但不算真全屏） / N=都不算
     // ⚠ 不要用 System.Windows.Forms 的 Screen 拿工作区尺寸：那要 Add-Type -AssemblyName
@@ -271,8 +290,13 @@ function probeCs(): string {
     '  if (Cloak(h) != 0) return ' + TICK + 'N' + TICK + ';', // DWM 已隐藏：用户根本看不到它
     '  if (ShellClass(Cls(h))) return ' + TICK + 'N' + TICK + ';',
     '  if (!Covers(h, wl, wt, wr, wb)) return ' + TICK + 'N' + TICK + ';',
-    // 盖住整屏且不是 Windows 意义上的最大化 ⇒ 真全屏（F11 / 独占全屏 / 无边框铺屏）
-    '  if (Covers(h, bl, bt, br, bb) && !IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',
+    // 盖住整屏且（不是 Windows 意义上的最大化 或 把任务栏盖住了）⇒ 真全屏。
+    // 后一条给「无边框最大化」这类窗口兜底：VS Code F11 实测 rect 盖满整屏、IsZoomed=True，
+    // 但任务栏被它盖住——按用户口径（有任务栏=最大化，没任务栏=全屏）这就是全屏，不能唤回。
+    '  if (Covers(h, bl, bt, br, bb)) {',
+    '    if (!IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',
+    '    if (TrayCovered(h)) return ' + TICK + 'F' + TICK + ';',
+    '  }',
     '  return ' + TICK + 'Z' + TICK + ';',
     '}',
     '}'
