@@ -29,7 +29,8 @@
     radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
     linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
   --border-island: rgba(255, 255, 255, 0.85);
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 18px 40px rgba(8, 16, 32, 0.26);
+  /* 只有内高光，没有外投影（2026-11-25 用户要求：玻璃只要材质，不要岛下方的投影） */
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.95);
   --bg-pop: rgba(251, 251, 254, 0.97);
   --shadow-pop: 0 10px 28px rgba(12, 22, 44, 0.18);
   --shadow-pop-sm: 0 6px 18px rgba(12, 22, 44, 0.15);
@@ -88,7 +89,8 @@
   --island-cool: transparent;
   --island-warm: transparent;
   --border-island: rgba(255, 255, 255, 0.11);
-  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 18px 44px rgba(0, 0, 0, 0.55);
+  /* 同上：去掉外投影，只留顶沿受光 */
+  --shadow-island: inset 0 1px 0 rgba(255, 255, 255, 0.14);
   --bg-pop: rgba(18, 18, 21, 0.985);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.45);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
