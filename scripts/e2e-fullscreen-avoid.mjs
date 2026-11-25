@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * US-041 全屏自动避让 e2e。
- * A1 常态可见 / A2 造全屏窗口 → 岛 2s 内隐藏 / A2b 真全屏下摸顶边不唤回 / A3 关全屏 → 恢复
- * A4 最大化下摸顶边**不**唤回（2026-11-25 起摸边唤回整体删除）/ A5 光标移开仍隐藏 / A6 手动隐藏摸边无效+托盘恢复（托盘点击难模拟，改为 IPC 等价路径）
+ * A1 常态可见 / A2 造全屏窗口 → 岛 2s 内隐藏 / A3 关全屏 → 恢复
+ * A4 摸边唤回（光标移 y=0，**最大化场景**；真全屏下摸边已被禁用）/ A5 移开回隐 / A6 手动隐藏摸边无效+托盘恢复（托盘点击难模拟，改为 IPC 等价路径）
  * A7 全屏时发通知 → 横幅期临时可见。
  * 前置：dev electron（--remote-debugging-port=9321）；Cleared ELECTRON_RUN_AS_NODE。
  * 踩坑：①ps() 只收 stdout——stderr 的 CLIXML 进度流会污染输出；②Add-Type 单行双引号版最稳
@@ -273,8 +273,9 @@ try {
   await moveCursor('400', 500)
   await sleep(600)
 
-  // A4 摸边**不**唤回。2026-11-25 用户明确「F11 和全屏不用唤醒」，摸边唤回整体删除；
-  // 最大化（Z）场景与真全屏（F）一样：光标顶到 y=0，岛必须保持隐藏。
+  // A4 摸边唤回。⚠ 2026-11-18 起**真全屏（F）下摸边自动唤回被禁用**（SPEC-no-reveal-in-fullscreen：
+  // 游戏里视角上移会把光标顶到屏幕边，一唤回就把独占全屏游戏最小化，用户实测「玩几分钟突然切到桌面」）。
+  // 所以这里换成「最大化窗口（Z）」来测摸边——那是它现在仍然生效的场景。
   fullWin.kill()
   await moveCursor('400', 500)
   await sleep(800)
@@ -285,13 +286,13 @@ try {
   await moveCursor('[int]($sw/2)', 0)
   await sleep(2500)
   const v4 = await islandVisible('A4')
-  ok('A4 最大化下摸顶边不唤回', v4 === false, String(v4))
+  ok('A4 摸边唤回（最大化场景）', v4 === true, String(v4))
 
-  // A5 光标移开后仍保持隐藏（确认没有残留的临时现身）
+  // A5 移开回隐
   await moveCursor('400', 500)
-  await sleep(1500)
+  await sleep(2500)
   const v5 = await islandVisible('A5')
-  ok('A5 光标移开仍保持隐藏', v5 === false, String(v5))
+  ok('A5 移开回隐', v5 === false, String(v5))
 
   // A3 关掉那个最大化窗口 → 恢复。同样要先把前台交给一个普通窗口：只关窗口的话，前台可能回到
   // 用户自己那个最大化窗口，按修正后的判据岛就该继续藏着（那不是 bug）。

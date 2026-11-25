@@ -10,7 +10,7 @@ import type { AvoidMode } from '../shared/types'
  *
  * 三种状态：
  *  - normal    岛照常常驻（默认）
- *  - avoided   前台窗口按当前策略该避让 → 岛 hide()，只能从托盘找回
+ *  - avoided   前台窗口按当前策略该避让 → 岛 hide()，摸顶边临时唤回
  *  - manual    用户从菜单选了「暂时隐藏」→ 岛 hide()，摸边无效；托盘点击恢复
  *
  * 三档策略（SPEC-avoid-mode-and-latency，2026-11-17 用户要求，存 prefs.json 的 `avoidMode`）：
@@ -50,10 +50,10 @@ import type { AvoidMode } from '../shared/types'
  *  这里改成 stdio 全 ignore、零管道、只走一个文件，并且带心跳超时回退：辅助进程 3 秒没有
  *  心跳就自动切回「单发短命 PowerShell」的旧路径（1 秒一次），绝不因为辅助进程挂了而失效。
  *
- * 避让期间**没有摸边唤回**（2026-11-25 起，用户明确「F11 和全屏不用唤醒」）：
- * 历史上有过「光标到屏幕最顶边 y≤2 就临时叫出岛」，2026-11-18 先对真全屏禁用
- * （游戏里视角上移会把光标顶到屏幕边，一唤回就把独占全屏最小化），2026-11-25 再整体删除。
- * 现在避让期间看岛只有两条显式路径：托盘图标/菜单「显示灵动岛」、以及通知横幅。
+ * 摸边唤回（2026-11-18 改）：不再创建感应窗，改看常驻辅助进程报上来的光标坐标——
+ * 光标到屏幕最顶边（y ≤ 2）就临时显示岛，光标离开岛区域（且仍全屏）再隐藏。
+ * **但真全屏（judge=F）时这条自动唤回被禁用**：游戏里视角上移会把光标顶到屏幕边，
+ * 一唤回就把独占全屏的游戏最小化（用户实测的「玩几分钟突然切到桌面」）。
  * 为什么改：用户实测三角洲在**独占全屏**下切到会隐藏岛的档位就闪退，差别正是隐藏时
  * 多创建了一个置顶透明感应窗（独占全屏交换链上叠/摘 topmost 窗口极易踢出独占模式）。
  * 现在这条路径上零窗口创建、零额外进程。
@@ -62,9 +62,17 @@ import type { AvoidMode } from '../shared/types'
  * （即使正在避让），横幅结束后渲染层调 requestTempShow(false) 回隐。
  */
 
-/** 岛顶边以上多少像素仍算「光标在岛上」（岛现身时判定鼠标是否离开它用）。
- * 2026-11-25 起不再用于摸边唤回——唤回已删除，只保留给「临时现身中移开回隐」。 */
+/** 光标到这个 y 就临时唤回（原来是靠一个 4px 高的透明感应窗接 mouseenter，
+ * 2026-11-18 改成直接读光标坐标 —— 见下面 REVEAL 的说明） */
 const REVEAL_Y = 2
+/** 光标必须回到这个 y 以下才重新「上膛」，允许下一次摸边唤回。
+ *
+ * 为什么需要闩锁：唤回的条件是「光标在顶部（y≤2）」，而收起的条件是「光标离开岛的矩形」。
+ * 光标停在顶部但**横向在岛之外**（比如最右边）时，两个条件会互相触发，形成
+ * show→hide→show 的闪烁循环（[实测] 2026-11-18 日志里 200ms 一轮的 cursor-left/cursor-top 循环）。
+ * 在独占全屏游戏里这种循环等于反复把游戏踢出全屏。加上闩锁后：摸边唤回一次 → 收起 →
+ * 必须先把光标移开顶部再回来，才会再次唤回。 */
+const REVEAL_REARM_Y = 8
 /** 「隐藏」方向的去抖：判定翻转后等这么久才动作，防全屏切换瞬间的闪烁。
  * SPEC-avoid-mode-and-latency：300→150ms（用户要求 0.75 秒内隐藏，去抖不能吃掉太多预算） */
 const DEBOUNCE_MS = 150
@@ -117,6 +125,8 @@ let bannerHoldAt = 0
 let wantHidden: boolean | null = null
 /** 最近一次判定码 */
 let judge: JudgeCode = 'N'
+/** 摸边唤回的闩锁：true=可以唤回；false=已经唤回过且还没把光标移离顶部 */
+let revealArmed = true
 /** 上一次「因为什么被判成全屏」而隐藏 —— F=真全屏（F11/独占全屏游戏）、Z=最大化。
  * 现身方向用它选去抖：从**真全屏**回来时要求的稳定期长得多（见 SHOW_STABLE_MS），
  * 从普通最大化回来还是原来的 150ms，日常用不会变迟钝。 */
@@ -350,6 +360,7 @@ export function initFullscreenWatch(
       }
       tempVisible = false
       stopCursorWatch()
+      revealArmed = true
     }
   }
 
@@ -461,10 +472,9 @@ export function initFullscreenWatch(
       bannerHold = false
       bannerHoldAt = 0
     }
-    // 移开回隐：只在临时现身中（托盘「显示灵动岛」/横幅）读光标坐标，不创建窗口、不额外起进程。
-    // 2026-11-25 起**不再有摸边唤回**：用户明确「F11 和全屏不用唤醒」，
-    // 避免光标顺路划过屏幕顶边就把岛叫出来（最大化场景也是）。
+    // 摸边唤回 / 移开回隐：都只看心跳文件里的光标坐标，不创建窗口、不额外起进程
     if (tempVisible) checkCursor()
+    else maybeRevealByCursor()
     // 每轮都评估一次：策略（avoidMode）改了不会产生新的心跳，靠这里在 150ms 内跟上
     evaluate()
     if (fresh) {
@@ -648,14 +658,40 @@ export function initFullscreenWatch(
     // 连续 2 次在岛外 → 真移开，回隐
     stopCursorWatch()
     tempVisible = false
+    revealArmed = false // 见 REVEAL_REARM_Y：要么把光标移离顶部，要么等岛因别的原因再次现身
     if (decision(judge)) apply(true, 'cursor-left')
   }
 
-  // 2026-11-25 删除「摸边唤回」（光标到屏幕最顶边自动叫出岛）。
-  // 用户连续两次反馈：最大化/全屏时岛「依旧可以唤醒」，光标顺路划过顶边就冒出来挡住画面。
-  // 现在避让期间要把岛叫出来只有显式动作：托盘图标左键 / 托盘菜单「显示灵动岛」，
-  // 以及通知横幅（bannerHold）。历史：2026-11-18 已先禁掉真全屏（F）下的唤回
-  // （SPEC-no-reveal-in-fullscreen），本次按用户要求把最大化（Z）也一并去掉。
+  /** 摸边唤回（2026-11-18 改）：不再创建任何窗口，直接看光标坐标。
+   *
+   * 历史做法是隐藏期间在屏幕顶部放一条 4px 高的透明感应窗接 mouseenter。但用户实测：
+   * 三角洲在**独占全屏**下，前两档（会隐藏岛的档）一切换就闪退 —— 而「不隐藏」档不闪退。
+   * 差别正是「隐藏时多创建了一个置顶透明窗口」：在独占全屏交换链上叠/摘一个 topmost 窗口，
+   * 很容易把游戏踢出独占模式（叠加反作弊后通常直接崩）。
+   * 现在光标坐标已经由常驻辅助进程 120ms 报一次（心跳文件第三段），判定「光标是否到顶」
+   * 完全不需要窗口，于是这条路径上**零窗口创建**。
+   */
+  const maybeRevealByCursor = (): void => {
+    if (state !== 'avoided' || tempVisible || bannerHold) return
+    // ⚠ 真全屏（F）时**不**做「光标到顶自动唤回」（SPEC-no-reveal-in-fullscreen，2026-11-18）。
+    // 用户实测根因：在《三角洲》里视角往上一抬，光标就顶到屏幕最上边 → 触发摸边唤回 →
+    // 岛出现 → 独占全屏的游戏立刻最小化/切到桌面。这就是「玩几分钟突然被切到桌面」的来源。
+    // 真全屏期间要岛：退出全屏（游戏窗口化）后用托盘/摸边，或直接看游戏。
+    // 最大化（Z）/普通窗口（N）不受影响，摸边照旧。
+    if (judge === 'F') return
+    // 坐标太旧（辅助进程刚重启/走了回退路径）就先不判，免得拿旧坐标误唤回
+    if (Date.now() - lastCursor.at > 800) return
+    // 闩锁：上一次就是因为「光标还在顶部但已离开岛」而收起的话，先把光标移离顶部再重新上膛，
+    // 否则会 show→hide→show 无限闪烁（在独占全屏游戏里等于反复踢游戏）
+    if (!revealArmed) {
+      if (lastCursor.y > REVEAL_REARM_Y) revealArmed = true
+      return
+    }
+    if (lastCursor.y > REVEAL_Y) return
+    apply(false, 'cursor-top')
+    tempVisible = true
+    startCursorWatch()
+  }
 
   // 鼠标离开岛：渲染层 mouseleave 岛根元素时上报，仍全屏则回隐。
   // 实测竞态兜底：岛现身瞬间会遮挡感应窗触发其迟到 mouseleave（IPC 排队后到达），
