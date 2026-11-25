@@ -737,11 +737,25 @@ ipcMain.handle('shelf:show-in-folder', (_e, path: unknown): ShelfRevealResult =>
 //   2）通知区域托盘图标右键 → 同一个菜单
 // 两者最终都调 quitApp()，是真正的进程退出，不是隐藏窗口。
 
-// 岛内右键：在光标处弹出菜单（菜单是系统原生的，不受岛的半透明样式影响）
+// 岛内右键：在光标处弹出菜单（菜单是系统原生的，不受岛的半透明样式影响）。
+// 菜单打开期间窗口会失焦、光标也会离开岛，渲染层若照旧收起，用户还没把鼠标移到
+// 「暂时隐藏灵动岛」，岛就缩回去了（2026-11-25 用户报障，SPEC-app-menu-collapse）。
+// 所以菜单关闭时给渲染层发一条结束通知，渲染层再决定要不要收起。
 ipcMain.on('app:show-menu', () => {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
-  buildAppMenu().popup({ window: win })
+  const notifyClosed = (): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('island:app-menu-closed')
+    }
+  }
+  try {
+    buildAppMenu().popup({ window: win, callback: notifyClosed })
+  } catch (err) {
+    // 弹不出来时也要把「菜单结束」告诉渲染层，否则它一直以为菜单开着、永远不自动收起
+    notifyClosed()
+    startupLog('WARN app menu popup failed: ' + String(err))
+  }
 })
 
 // （2026-11-25 删除）旧的 `island:avoid-do-hide` 频道：菜单只给渲染层发消息、渲染层没有
