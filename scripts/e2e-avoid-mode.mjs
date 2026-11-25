@@ -115,7 +115,8 @@ async function waitVisible(want, timeoutMs, stepMs = 60) {
   return { value: last, elapsed: timeoutMs }
 }
 
-/** 造受控窗口。kind：max（最大化普通窗）/ full（无边框铺满整屏）。
+/** 造受控窗口。kind：max（最大化普通窗）/ full（无边框铺满整屏）/
+ * flmax（无边框 + 最大化 = VS Code F11 形状：盖满整屏、IsZoomed=true、任务栏被盖住）。
  * 自带 Steal()（attach + SetForegroundWindow + SwitchToThisWindow）+ 400ms 重试。 */
 function makeWindow(kind) {
   const cls = 'AM' + kind
@@ -152,6 +153,9 @@ function makeWindow(kind) {
   if (kind === 'full') {
     lines.push('$f.FormBorderStyle = "None"')
     lines.push('$f.Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds')
+  } else if (kind === 'flmax') {
+    lines.push('$f.FormBorderStyle = "None"')
+    lines.push('$f.WindowState = "Maximized"')
   } else {
     lines.push('$f.WindowState = "Maximized"')
   }
@@ -349,6 +353,16 @@ try {
   fullWin.kill()
   await sleep(1500)
 
+  // M3c fullscreen + 无边框最大化（VS Code F11：盖满整屏但 IsZoomed=true）→ 同样算真全屏，必须隐藏。
+  // 2026-11-25 用户报「VS Code F11 还能唤回」，档位二同样受这个判据影响，补回归（SPEC-fullscreen-taskbar-cover）。
+  const flWinA = makeWindow('flmax')
+  wins.push(flWinA)
+  await sleep(2500)
+  const m3c = await waitVisible(false, 3000)
+  ok('M3c fullscreen：F11 形状（任务栏被盖住）→ 岛隐藏', m3c.value === false, `hide=${m3c.elapsed}ms`)
+  flWinA.kill()
+  await sleep(1500)
+
   // M4 off：真全屏也不隐藏
   await setMode('off')
   await parkCursor()
@@ -358,6 +372,15 @@ try {
   const m4 = await waitVisible(true, 3000)
   ok('M4 off：真全屏也不隐藏', m4.value === true, `island=${m4.value}`)
   fullWin2.kill()
+  await sleep(1200)
+
+  // M4b off：F11 形状（无边框最大化）也不隐藏
+  const flWinB = makeWindow('flmax')
+  wins.push(flWinB)
+  await sleep(2500)
+  const m4b = await waitVisible(true, 3000)
+  ok('M4b off：F11 形状也不隐藏', m4b.value === true, `island=${m4b.value}`)
+  flWinB.kill()
   await sleep(1200)
 
   // M5 延迟实测：用「切策略」来驱动隐藏/现身，避免把造窗口 + 抢前台的 1~2 秒算进延迟里。
@@ -439,6 +462,23 @@ try {
     `先隐藏=${fsHidden.value} 之后仍隐藏=${fsStillHidden} 新增avoid事件=${avoidDeltaF}`)
   await parkCursor()
   fsWin.kill()
+  await sleep(1200)
+
+  // M10b F11 形状（无边框最大化、任务栏被盖住）同样不得唤回（SPEC-fullscreen-taskbar-cover）
+  const flWinC = makeWindow('flmax')
+  wins.push(flWinC)
+  await sleep(2500)
+  const flHidden = await waitVisible(false, 3000)
+  const avoidBeforeFl = await countAvoidLines()
+  await moveCursorTo(768, 0)
+  await sleep(4000)
+  const flStillHidden = await islandVisible()
+  const avoidDeltaFl = (await countAvoidLines()) - avoidBeforeFl
+  ok('M10b F11 形状下光标到顶不会唤回岛',
+    flHidden.value === false && flStillHidden === false && avoidDeltaFl === 0,
+    `先隐藏=${flHidden.value} 之后仍隐藏=${flStillHidden} 新增avoid事件=${avoidDeltaFl}`)
+  await parkCursor()
+  flWinC.kill()
   await sleep(1200)
 
   // M7 辅助进程运行期间 DevTools 必须仍然秒回（旧事故：长驻子进程 + 管道把 HTTP 拖死）

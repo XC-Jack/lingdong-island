@@ -144,7 +144,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
 const AVOID_META: Record<AvoidMode, { label: string; desc: string }> = {
   fullscreen: {
     label: '只在真全屏时隐藏',
-    desc: 'F11、全屏视频、全屏游戏这类才把岛收起来；平时把窗口最大化，岛照常待着。'
+    desc: '只在「不显示任务栏」的全屏场景收岛：F11、全屏视频、全屏游戏；收起后摸顶边不唤回。窗口最大化（底部还有任务栏）时岛照常待着。'
   },
   maximized: {
     label: '窗口最大化时也隐藏',
