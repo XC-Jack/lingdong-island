@@ -29,6 +29,14 @@ import type { AvoidMode } from '../shared/types'
  *   2. 桌面本身 `Progman` / `WorkerW`（点桌面时它们会成为前台）。
  * 故判据 = 前台窗口 可见 ∧ 未被 DWM cloak ∧ 类名不属于已知壳层 ∧ 不属于本进程 ∧
  * 矩形覆盖整个**工作区**（四边 8px 容差，吃最大化时外扩的不可见边框）。
+ *
+ * 前台是本进程窗口时沿 Z 序取判据（2026-11-25 修，SPEC-avoid-self-foreground）：
+ * 用户点一下岛，岛自己就成了前台窗口。以前这里直接返回 `N`（「别把自己的窗口当全屏」），
+ * 等于点一下岛就告诉状态机「全屏应用没了」——避让被撤销、岛留在最大化窗口上不再自动隐藏
+ * （用户实拍视频 + 本机 `.tmp/probe-avoid-self-focus.mjs` 复现：判定 `Z` → 点岛 → `N` →
+ * 光标移开仍可见）。现在改为沿 `GetWindow(GW_HWNDNEXT)` 往下找第一个**其它应用**的可见窗口
+ * 继续判定，找不到才算 `N`。这样「点岛」不再改变避让结论，鼠标离开岛仍按摸边规则回隐。
+ * 注意必须在读前台之后、任何 `N` 返回之前做替换，否则「前台是岛」会先被别的前置条件挡掉。
  * 基准用工作区而不是整屏：2026-11-17 用户报「最大化窗口时岛不缩」，真因是旧判据要求
  * 盖住整屏（Bounds 1536×960），而最大化窗口只铺到工作区（1536×912，任务栏 48px），
  * `r.B>=960` 永不成立；旧代码能用只是因为当时本机任务栏恰好「自动隐藏」。
@@ -165,6 +173,7 @@ function probeCs(): string {
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool GetWindowRect(IntPtr h, out RECT r);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsWindowVisible(IntPtr h);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern bool IsZoomed(IntPtr h);',
+    '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern IntPtr GetWindow(IntPtr h, uint cmd);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ', CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, StringBuilder s, int n);',
     '[DllImport(' + TICK + 'user32.dll' + TICK + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);',
     '[DllImport(' + TICK + 'dwmapi.dll' + TICK + ')] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);',
@@ -211,11 +220,27 @@ function probeCs(): string {
     'public static string Probe(int wl, int wt, int wr, int wb, int bl, int bt, int br, int bb) {',
     '  IntPtr h = GetForegroundWindow();',
     '  if (h == IntPtr.Zero) return ' + TICK + 'N' + TICK + ';', // 没有前台窗口（桌面上什么都没选）
+    '  uint p; GetWindowThreadProcessId(h, out p);',
+    // 前台是本进程窗口（点了岛/设置窗/岛仔）：换成 Z 序上第一个其它应用的窗口再判，
+    // 不能直接判 N —— 否则「点一下岛」等于告诉状态机「全屏应用没了」（SPEC-avoid-self-foreground）。
+    '  if (p == ' + ownPid + ') {',
+    '    IntPtr q = h;',
+    '    bool found = false;',
+    '    for (int i = 0; i < 24; i++) {',
+    '      q = GetWindow(q, 2);', // GW_HWNDNEXT = 2
+    '      if (q == IntPtr.Zero) break;',
+    '      uint p2; GetWindowThreadProcessId(q, out p2);',
+    '      if (p2 == ' + ownPid + ') continue;',
+    '      if (!IsWindowVisible(q)) continue;',
+    '      if (Cloak(q) != 0) continue;',
+    '      if (ShellClass(Cls(q))) continue;',
+    '      h = q; p = p2; found = true; break;',
+    '    }',
+    '    if (!found) return ' + TICK + 'N' + TICK + ';',
+    '  }',
     '  if (!IsWindowVisible(h)) return ' + TICK + 'N' + TICK + ';',
     '  if (Cloak(h) != 0) return ' + TICK + 'N' + TICK + ';', // DWM 已隐藏：用户根本看不到它
     '  if (ShellClass(Cls(h))) return ' + TICK + 'N' + TICK + ';',
-    '  uint p; GetWindowThreadProcessId(h, out p);',
-    '  if (p == ' + ownPid + ') return ' + TICK + 'N' + TICK + ';', // 别把自己的窗口当全屏
     '  if (!Covers(h, wl, wt, wr, wb)) return ' + TICK + 'N' + TICK + ';',
     // 盖住整屏且不是 Windows 意义上的最大化 ⇒ 真全屏（F11 / 独占全屏 / 无边框铺屏）
     '  if (Covers(h, bl, bt, br, bb) && !IsZoomed(h)) return ' + TICK + 'F' + TICK + ';',

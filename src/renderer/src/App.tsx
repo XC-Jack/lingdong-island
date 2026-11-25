@@ -4211,10 +4211,7 @@ export default function App(): React.JSX.Element {
             <div className="island-veil" aria-hidden="true" />
           </>
         )}
-        {avoidHidden && !expanded && (
-          /* US-041 避让临时现身时的视觉提示条：告诉用户「摸到边了，岛回来了」，鼠标移开即回隐 */
-          <div className="avoid-tip" role="status">已让路 · 移开鼠标自动隐藏</div>
-        )}        {expanded ? (
+        {expanded ? (
           <>
           {view === 'grid' ? (
             /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。
