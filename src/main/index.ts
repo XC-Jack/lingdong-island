@@ -1,5 +1,5 @@
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, screen, shell, Tray } from 'electron'
-import { initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
+import { hideIslandManually, initFullscreenWatch, stopFullscreenWatch } from './fullscreenWatch'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { setupTodoStore } from './todoStore'
@@ -129,12 +129,50 @@ function buildAppMenu(): Menu {
           }
         },
     { type: 'separator' },
+    // 2026-11-25 修（用户实测「暂时隐藏没有任何反应」）：旧实现是主进程给渲染层发
+    // `island:avoid-do-hide` 让渲染层再转发回来，但渲染层从来没有监听这个频道，
+    // 主进程收到同一个频道也只置标志不隐藏 —— 点了等于什么都没做，菜单还会变成占位的
+    // 「显示灵动岛」。现在两个方向都直接落地：隐藏调状态机的 hideIslandManually()，
+    // 显示复用托盘左键同一条恢复路径。
     hiddenByUser
-      ? { label: '显示灵动岛', click: () => mainWindow?.webContents.send('noop') /* 占位 */ }
-      : { label: '暂时隐藏灵动岛', click: () => mainWindow?.webContents.send('island:avoid-do-hide') },
+      ? { label: '显示灵动岛', click: () => restoreIsland() }
+      : {
+          label: '暂时隐藏灵动岛',
+          click: () => {
+            manualHide = true
+            hideIslandManually()
+            refreshTrayMenu()
+          }
+        },
     { type: 'separator' },
     { label: '退出灵动岛', click: () => quitApp() }
   ])
+}
+
+/**
+ * 托盘菜单是一份构建时的快照：`manualHide` 决定那一项是「暂时隐藏」还是「显示」，
+ * 状态变了不重建，托盘里就一直是旧文案。
+ * 2026-11-25 实测踩到：隐藏后托盘右键仍是「暂时隐藏灵动岛」，点下去又隐藏一次，岛回不来。
+ */
+function refreshTrayMenu(): void {
+  if (!tray) return
+  tray.setContextMenu(buildAppMenu())
+}
+
+/** 找回岛（托盘左键 / 菜单「显示灵动岛」共用）。
+ * 手动隐藏过就先清标志并让状态机回到 normal，再 showInactive 顶回最上层。 */
+function restoreIsland(): void {
+  if (manualHide) {
+    manualHide = false
+    mainWindow?.webContents.send('island:manual-restore')
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    refreshTrayMenu()
+    return
+  }
+  mainWindow.showInactive()
+  refreshTrayMenu()
 }
 
 /**
@@ -158,17 +196,7 @@ function createTray(): void {
   tray.setContextMenu(buildAppMenu())
   // 左键单击：把岛显示出来（切屏/被别的窗口挡住时的找回路径；
   // US-041 手动隐藏时也是找回入口，清手动标志）
-  tray.on('click', () => {
-    if (manualHide) {
-      manualHide = false
-      mainWindow?.webContents.send('island:manual-restore')
-    }
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      createWindow()
-      return
-    }
-    mainWindow.showInactive()
-  })
+  tray.on('click', () => restoreIsland())
 }
 
 /** 按主显示器工作区算出窗口矩形，水平居中、贴顶 */
@@ -441,7 +469,10 @@ app.whenReady().then(() => {
     () => mainWindow,
     (hidden) => {
       // 状态落地时同步菜单用的标志（自动避让不改 manualHide；仅渲染层菜单发起的手动隐藏改）
-      if (!hidden) manualHide = false
+      if (!hidden && manualHide) {
+        manualHide = false
+        refreshTrayMenu()
+      }
       mainWindow?.webContents.send('island:avoid-changed', hidden)
     },
     () => getPrefs().avoidMode ?? 'maximized'
@@ -449,6 +480,7 @@ app.whenReady().then(() => {
   // 渲染层菜单发起的手动隐藏：置标志再走状态机（真正 hide 在 fullscreenWatch）
   ipcMain.on('island:manual-hide', () => {
     manualHide = true
+    refreshTrayMenu()
   })
 
   app.on('activate', () => {
@@ -708,12 +740,8 @@ ipcMain.on('app:show-menu', () => {
   buildAppMenu().popup({ window: win })
 })
 
-// US-041 手动隐藏的第二段：菜单点击 → 渲染层转发 → 主进程状态机真正 hide。
-// 拆两段是因为 buildAppMenu 在渲染层右键时也要弹（岛可见，走 island:manual-hide→fullscreenWatch），
-// 托盘右键时岛可能已隐藏（走 island:avoid-do-hide → 同一状态机）。
-ipcMain.on('island:avoid-do-hide', () => {
-  manualHide = true
-})
+// （2026-11-25 删除）旧的 `island:avoid-do-hide` 频道：菜单只给渲染层发消息、渲染层没有
+// 监听，主进程也只置标志不隐藏，是彻底的死链路；现在菜单直接调 hideIslandManually()。
 
 // 渲染层直接请求退出（目前菜单点击走主进程自己的 quitApp，这里留给以后做「确认后退出」）
 ipcMain.on('app:quit', () => {

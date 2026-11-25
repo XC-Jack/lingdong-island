@@ -155,6 +155,16 @@ let stopped = false
 /** 策略读取（由 index.ts 注入；每 150ms 读一次内存变量，prefs 变更由主进程刷新） */
 let getMode: () => AvoidMode = () => 'maximized'
 
+/** 手动隐藏的真正落地函数（init 里赋值）。菜单点击在主进程直接调，
+ * 不再绕「主进程发消息 → 渲染层再转发」那条链——2026-11-25 用户实测
+ * 「暂时隐藏没有任何反应」：渲染层从来没有监听那个频道，菜单只置了一个标志。 */
+let manualHideImpl: (() => void) | null = null
+
+/** 供 index.ts 的菜单项调用：进入 manual 态并隐藏岛。 */
+export function hideIslandManually(): void {
+  manualHideImpl?.()
+}
+
 /**
  * 判定用的 C# 探针（内嵌，不落盘）。
  * 单行分号连接：多行 here-string 嵌套经 -Command 传参必炸（[实测]）：
@@ -681,10 +691,13 @@ export function initFullscreenWatch(
     }, 400)
   })
 
-  // 手动隐藏（右键/托盘菜单）
-  ipcMain.on('island:manual-hide', () => {
+  // 手动隐藏（右键/托盘菜单，以及渲染层的 island:manual-hide IPC）
+  manualHideImpl = () => {
     state = 'manual'
     apply(true, 'manual-hide')
+  }
+  ipcMain.on('island:manual-hide', () => {
+    manualHideImpl?.()
   })
   // 托盘左键唤回（清手动标志）
   ipcMain.on('island:manual-restore', () => {
@@ -766,4 +779,5 @@ export function stopFullscreenWatch(): void {
   judge = 'N'
   tempVisible = false
   bannerHold = false
+  manualHideImpl = null
 }
