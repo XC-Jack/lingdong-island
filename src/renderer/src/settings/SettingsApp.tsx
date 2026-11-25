@@ -148,7 +148,7 @@ const AVOID_META: Record<AvoidMode, { label: string; desc: string }> = {
   },
   maximized: {
     label: '窗口最大化时也隐藏',
-    desc: '只要前台窗口铺满屏幕（含最大化）就把岛收起来，默认。鼠标移到屏幕最顶边 4px 可以临时叫出来。'
+    desc: '只要前台窗口铺满屏幕（含最大化）就把岛收起来，默认。隐藏期间要看岛，点托盘图标（或托盘右键「显示灵动岛」）。'
   },
   off: {
     label: '不隐藏',
