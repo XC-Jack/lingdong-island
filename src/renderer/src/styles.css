@@ -330,10 +330,15 @@ body {
 /* 打开/收起的一次性入场动画（2026-11-25，SPEC-island-motion）：
    窗口由主进程 220ms 单调补间（500ms 太长，开合一次一直看着窗口在动，就是用户说的「震动 + 卡」），
    `.island` 这边只做淡入 + 轻微缩放，两套尺寸动画不叠加。
-   只允许 ≤1 的缩放：窗口此时与岛同大，放大 1px 都会被窗口切掉。 */
+   只允许 ≤1 的缩放：窗口此时与岛同大，放大 1px 都会被窗口切掉。
+
+   2026-11-26 改（SPEC-expand-clip）：原来这里靠 `island-open` 关键帧做 0.9→1 的缩放，
+   而岛的宽高在展开那一帧就直接跳到面板尺寸、窗口却要 220ms 才补间到位 —— 这 220ms 里
+   岛比窗口大，被 `.island { overflow: hidden }` 裁成页头一条（用户视频里的宽扁带）。
+   现在宽高改由 App 逐帧按窗口实际尺寸写入（见 `.island.expanded.island-entrance`），
+   入场只剩淡入与 0.9→1 的轻微缩放。 */
 .island.island-anim-open {
   transform-origin: 50% 0;
-  /* 宽高过渡关掉，尺寸只由窗口补间驱动；入场只做缩放/淡入 */
   transition: none;
   animation: island-open 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -540,6 +545,22 @@ body {
 
 .island.expanded.page-4 {
   height: 292px;
+}
+
+/* 展开入场期间，岛的宽高由 App 按窗口实际进度逐帧写入（SPEC-expand-clip，2026-11-26）。
+   为什么不用 CSS 过渡按固定时长跑：窗口由主进程 setInterval 补间，主进程一旦被卡住
+   （desktopCapturer 实测阻塞 135~192ms 就是实例），窗口会停在原地而过渡照走，
+   岛又比窗口大、又被裁。这里让岛跟着窗口的实际尺寸长，窗口停岛就停，任何一帧都不超出。
+   必须排在上面几条 `.island.expanded.page-*` 之后：同为 3 个类、优先级相等，靠顺序取胜。
+   min/max 一并放开——`.island.expanded` 的 min-width: 340 会把宽度钉死，入场时压不下去。 */
+.island.expanded.island-entrance {
+  width: var(--entrance-w, auto);
+  height: var(--entrance-h, auto);
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  transition: none;
 }
 
 /* 音乐页歌词模式例外：并排的「左栏 212 + 竖线 + 歌词 260」需要约 535 布局 px 宽、
