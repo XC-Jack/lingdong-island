@@ -1,5 +1,11 @@
 # SPEC：灵动岛三套视觉主题（A/B/C），默认亮色玻璃 B
 
+> **2026-11-27 订正**：本文写的是最初的三套主题。之后 `SPEC-glass-clear` 加了第四套 `glass-clear`（透明玻璃），
+> 现在共**四套**：`glass-light`（默认，亮色乳白玻璃）/ `glass-dark`（暗色玻璃，2026-11-25 起为真透视）/
+> `mono`（纯黑极简）/ `glass-clear`（透明玻璃）。下文凡「三套」均应按「当时的三套」理解；
+> 现行主题清单以 `docs/facts/视觉设计规范.md` 与 `src/renderer/src/styles.css:14-16` 为准。[实测]
+> 另：默认主题的强调色现已不是本文提到的早期取值，当前 `--accent` 在 `glass-light` 下为 `#0a6cf0`。[实测]
+
 - 建立日期：2026-11-24
 - 前置：`visual-refresh` 分支（0.4.4 换皮第一步，用户已否决其「调浅黑」方向）
 - 任务分支：`island-themes`
