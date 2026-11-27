@@ -1,5 +1,15 @@
-import { app, ipcMain } from 'electron'
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, mkdirSync as mkDir } from 'node:fs'
+import { app, ipcMain, nativeImage } from 'electron'
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  existsSync,
+  readdirSync,
+  unlinkSync,
+  mkdirSync as mkDir
+} from 'node:fs'
+import { createHash } from 'node:crypto'
 import { basename, join, extname } from 'node:path'
 import { runPowerShellArgs } from './runPs'
 import type { ShelfItem } from '../shared/types'
@@ -13,8 +23,18 @@ interface StoreShape {
 const EMPTY: StoreShape = { items: [] }
 
 let file: string
-/** 系统图标 PNG 缓存目录（按扩展名缓存，一份图标全系统复用） */
+/**
+ * 系统图标 PNG 缓存目录。
+ * 真实文件按「扩展名 + 路径哈希」缓存（一个文件一份图标）；失效条目按扩展名共用占位图。
+ * 2026-11-27 修：旧实现只按扩展名，全系统所有 `.lnk` 共用第一张图标
+ * （用户截图里置物架显示的是别人家快捷方式的图标）。
+ */
 let iconDir: string
+
+/** 路径 → 8 位十六进制指纹。Windows 路径不区分大小写，先归一化再算，避免大小写不同生成两份缓存 */
+function pathHash(p: string): string {
+  return createHash('sha1').update(p.toLowerCase()).digest('hex').slice(0, 8)
+}
 
 function load(): StoreShape {
   try {
@@ -91,6 +111,15 @@ const EXTRACT_ICON_PS1 = [
 const iconPending = new Map<string, Promise<string | null>>()
 
 /**
+ * 拖拽光标图的兜底 PNG（32×32 圆角方块）。
+ * `startDrag` 的 `icon` 传空 NativeImage 时，Windows 上整个拖拽会**静默失败**
+ * （探针实测：`iconEmpty=true` 时目标端连 dragenter 都收不到；换成真实图标后
+ * `types=[Files]` 正常到达）。所以图标取不到时必须有一张兜底图，不能传空。
+ */
+const FALLBACK_DRAG_ICON_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAATElEQVR4nO3XoQ0AIAwF0Q7MKAzLBuAQJcHRQ1yT6nv2R6RrfcyXn3tl4SukOn4gUAAV3wgBAgQIECBAgAABAgTgAHyYfAHAxyk5zxc6Ij/GppmdbgAAAABJRU5ErkJggg=='
+
+/**
  * 提图标串行化：一页可能有 10 种不同扩展名，并行就是 10 个 PowerShell 同时在跑
  * （每个约 40–60 MB 的 CLR）。串行只是让后面的图标晚几百毫秒出现，界面先有 SVG 占位。
  */
@@ -109,7 +138,12 @@ function runSerial<T>(job: () => Promise<T>): Promise<T> {
  * 每种新扩展名第一次都要卡一下，且会让同期的窗口尺寸动画停住。
  * 现在改成异步：界面先显示 SVG 折角纸片，PNG 就绪后自然替换（FileIcon 本来就按状态渲染）。
  */
-function systemIconPng(ext: string, realPath: string | null): Promise<string | null> {
+/**
+ * 算某个条目的图标缓存信息（**同步、不生成**）。
+ * 抽出来是为了让「拖出」路径能在 `dragstart` 里同步拿到图标 PNG 路径——
+ * 那时来不及等 PowerShell 跑完，只能用已经缓存好的。
+ */
+function iconCacheInfo(ext: string, realPath: string | null): { key: string; png: string; target: string | null } {
   // 目标真实存在（文件或文件夹）就直接用它的路径取图标；否则造样本文件
   let target: string | null = null
   if (realPath) {
@@ -127,8 +161,16 @@ function systemIconPng(ext: string, realPath: string | null): Promise<string | n
       isFolder = false
     }
   }
-  const key = isFolder ? '_folder' : ext ? ext.toLowerCase() : '._none'
-  const png = join(iconDir, `${key.replace(/[^a-z0-9._-]/gi, '_')}.png`)
+  // 缓存 key：真实文件存在 → 「扩展名 + 路径哈希」（一个文件一份，`.lnk` 不再互相串）；
+  // 文件已不在 → 只按扩展名（失效条目共用一张占位图，不必为每个失效路径生成一份）。
+  const base = isFolder ? '_folder' : ext ? ext.toLowerCase() : '._none'
+  const safe = base.replace(/[^a-z0-9._-]/gi, '_')
+  const key = target ? `${safe}.${pathHash(target)}` : safe
+  return { key, png: join(iconDir, `${key}.png`), target }
+}
+
+function systemIconPng(ext: string, realPath: string | null): Promise<string | null> {
+  const { key, png, target } = iconCacheInfo(ext, realPath)
   if (existsSync(png)) return Promise.resolve(png)
   const running = iconPending.get(key)
   if (running) return running
@@ -192,11 +234,44 @@ function addPaths(paths: string[]): ShelfItem[] {
   return data.items
 }
 
+/**
+ * 清掉 2026-11-27 之前按「仅扩展名」生成的旧图标缓存（`<ext>.png` / `_folder.png`）。
+ *
+ * 那些文件是**错误**的：旧实现让全系统所有 `.lnk` 共用第一张图标，用户截图里
+ * 置物架显示的就是别人家快捷方式的图标（实测 `%APPDATA%\lingdong-island\icon-cache\.lnk.png`，
+ * 1179 B，生成于 2025-11-07）。新 key 是「扩展名 + 路径哈希」，不会命中旧文件，
+ * 但旧文件留着没有意义、还会占地方，顺手清掉。
+ *
+ * 只删本目录下「扩展名形态」的 PNG（`.<ext>.png` / `_folder.png` / `._none.png`），
+ * 不动带哈希的新缓存，也不递归、不碰用户文件。
+ */
+function purgeLegacyIconCache(dir: string): void {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return // 目录还不存在，没什么可清的
+  }
+  for (const n of names) {
+    // 新格式一定以「.<8 位十六进制>.png」结尾（`pathHash` 的输出），旧格式只有「<base>.png」
+    if (!n.endsWith('.png') || /\.[0-9a-f]{8}\.png$/i.test(n)) continue
+    // 图标缓存名都以 `.`（`.lnk` / `._none`）或 `_`（`_folder`）开头；
+    // 不是这个形态的一律不动，避免误删以后加进来的其它文件
+    if (!n.startsWith('.') && !n.startsWith('_')) continue
+    try {
+      unlinkSync(join(dir, n))
+    } catch {
+      // 删不掉（被占用/权限）就算了：下次启动再试，不影响正确性——新 key 不会命中它
+    }
+  }
+}
+
 /** 置物架数据存储：JSON 持久化在 userData，IPC 供渲染层增/删/列 */
 export function setupShelfStore(): void {
   file = join(app.getPath('userData'), 'shelf.json')
   iconDir = join(app.getPath('userData'), 'icon-cache')
   mkdirSync(app.getPath('userData'), { recursive: true })
+  purgeLegacyIconCache(iconDir)
 
   // 返回给渲染层的列表一律带 missing 运行时状态（不落盘）
   ipcMain.handle('shelf:list', (): ShelfItem[] => withMissing(load().items))
@@ -242,5 +317,33 @@ export function setupShelfStore(): void {
     const n = String(name ?? '')
     const p = typeof path === 'string' && path ? path : null
     return systemIconPng(extname(n), p)
+  })
+
+  // 拖出到别的应用（2026-11-27 新增）：HTML5 拖放只在同一渲染进程内传数据，
+  // 拖到剪映/资源管理器时对端收到的是空拖拽（光标变禁止）。要让系统级拖拽接管，
+  // 唯一途径是 webContents.startDrag——由主进程向操作系统发起一次真实文件拖拽。
+  //
+  // 三个实测约束（`.tmp/dragtest` 探针，Electron 45.2.1 / Windows 11）：
+  // 1. 渲染层 `dragstart` 里必须先 `e.preventDefault()` 掐掉 HTML5 拖拽，否则 startDrag 不接管；
+  // 2. `icon` 不能是空 NativeImage，否则拖拽静默失败（目标端连 dragenter 都收不到）；
+  // 3. `startDrag` 会**阻塞到拖拽结束**才返回（实测 1288–1559ms），所以不能用 invoke 等它。
+  ipcMain.on('shelf:start-drag', (event, path: unknown) => {
+    const p = typeof path === 'string' ? path : ''
+    if (!p || !existsSync(p)) return
+    // 图标只用**已缓存**的那张（dragstart 里没时间等 PowerShell）。
+    // 没缓存过（用户还没看到过这张图标就拖）就用兜底图，不影响拖拽本身。
+    let img = nativeImage.createEmpty()
+    const cached = iconCacheInfo(extname(p), p).png
+    if (existsSync(cached)) img = nativeImage.createFromPath(cached)
+    if (img.isEmpty()) img = nativeImage.createFromBuffer(Buffer.from(FALLBACK_DRAG_ICON_B64, 'base64'))
+    try {
+      event.sender.startDrag({ file: p, icon: img })
+    } catch {
+      // 拖拽发起失败（极少数：拖拽会话已被占用）不影响架内换位，静默即可
+    }
+    // startDrag 是同步的：它在**拖拽结束时**才返回（实测 1.3–1.6 秒）。
+    // 渲染层靠这个事件复位「正在拖置物架条目」标记，否则拖到岛外松手后
+    // 这个标记会一直挂着，下一次拖外部文件进来会被格子误当成架内拖动吞掉。
+    if (!event.sender.isDestroyed()) event.sender.send('shelf:drag-ended')
   })
 }

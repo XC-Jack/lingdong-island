@@ -70,6 +70,12 @@ let expandedSize = { width: 255, height: 272 }
 const TOP_GAP = 6
 /** 开合补间时长（毫秒）。原 500 ms，2026-11-25 用户嫌开合动画卡，收到 220 ms */
 const TWEEN_MS = 220
+/**
+ * 尺寸上报的死区（视觉 px）。渲染层量出来的宽高会因缩放取整来回抖 ±1px，
+ * 抖动一次就让窗口跟着改一次，肉眼就是「窗口边缘一直微微跳动」。
+ * 1 视觉 px 在 0.75 缩放下 ≈ 1.33 布局 px，肉眼不可辨，直接忽略。
+ */
+const SIZE_DEADZONE_PX = 1
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -230,15 +236,27 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
  * 跳变尺寸 + 内容变换」后，合成器有几百毫秒不呈现新画面（屏幕上是空的/旧的）；连续
  * 小幅 setBounds 会强制它持续出帧。220 ms × 16 ms ≈ 14 帧，比原来的 500 ms（≈30 帧）
  * 少一半，配合渲染层的淡入缩放已经把卡顿感压下去。
+ *
+ * 2026-11-27 修「有应用盖在岛下面时展开卡顿、显示不完整」：
+ * 旧实现只要补间在跑，任何一次 `animateTo` 都会把 `tweenStart` 重置成 now——而渲染层在
+ * 入场期间会反复上报尺寸（ResizeObserver 去抖 + 结束补报 + 切页路径），用户机器上量到的
+ * 尺寸有 ±1px 抖动，于是每 40ms 就把 220ms 的补间从头再来一次，窗口永远到不了终点。
+ * 用户视频逐帧实测：岛高每帧 +1px、爬了约 1.7 秒（本机探针同条件复现：终值时刻
+ * 244ms → 448ms，之后还在 274/275 之间来回跳）。
+ * 现在：**方向不变就不重置计时**——补间每帧本来就用 `computeBounds(expanded)` 现算终点，
+ * 中途换目标会自动收敛，不需要重来。只有方向翻转（展开↔收起）才起一段新补间。
  */
 function animateTo(isExpanded: boolean): void {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
 
+  const sameDirection = isExpanded === expanded
   expanded = isExpanded
+  // 已在补间且方向没变：让现有补间继续走，终点下一帧自然按新目标算
+  if (tweenTimer && sameDirection) return
   tweenFrom = win.getBounds()
   tweenStart = Date.now()
-  if (tweenTimer) return // 已在补间：换起点与计时即可，沿用同一个定时器
+  if (tweenTimer) return // 方向翻转：沿用同一个定时器，但从当前位置重新计时
   tweenTimer = setInterval(tweenTick, 16)
   tweenTick()
 }
@@ -547,7 +565,8 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
   const w = Number(value)
   if (!Number.isFinite(w)) return
   const next = Math.round(Math.min(COLLAPSED_MAX_W, Math.max(COLLAPSED_MIN_W, w)))
-  if (next === collapsedWidth) return
+  // 1px 死区，理由同 SIZE_DEADZONE_PX（收起态同样会被取整抖动带着来回改窗口宽度）
+  if (Math.abs(next - collapsedWidth) <= SIZE_DEADZONE_PX) return
   collapsedWidth = next
   // 只在收起态时立即应用（展开态下次收起时自然生效）
   if (!expanded && mainWindow && !mainWindow.isDestroyed()) {
@@ -579,7 +598,14 @@ ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
     width: Math.round(Math.min(EXPANDED_MAX.width, Math.max(EXPANDED_MIN.width, nw))),
     height: Math.round(Math.min(EXPANDED_MAX.height, Math.max(EXPANDED_MIN.height, nh)))
   }
-  if (next.width === expandedSize.width && next.height === expandedSize.height) {
+  // 1px 死区（2026-11-27）：渲染层量出来的尺寸会因缩放取整来回抖 ±1px，
+  // 每次抖动都会走到下面的 applyBoundsNow / animateTo，窗口跟着来回跳 1px。
+  // 用户视频逐帧实测：展开结束后窗口还在 274/275 之间反复跳（探针同条件复现 6 帧回退）。
+  // 1 视觉 px 在 0.75 缩放下不到 1.4 布局 px，肉眼不可辨，直接忽略。
+  if (
+    Math.abs(next.width - expandedSize.width) <= SIZE_DEADZONE_PX &&
+    Math.abs(next.height - expandedSize.height) <= SIZE_DEADZONE_PX
+  ) {
     return { ...expandedSize }
   }
   expandedSize = next

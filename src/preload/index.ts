@@ -470,9 +470,30 @@ const api = {
   shelfReorder(ids: string[]): Promise<ShelfItem[]> {
     return ipcRenderer.invoke('shelf:reorder', ids)
   },
-  /** 取某文件名的系统图标 PNG 绝对路径（按扩展名缓存，文件夹用真实图标），失败返回 null */
+  /** 取某文件名的系统图标 PNG 绝对路径（真实文件按路径缓存，失效条目按扩展名），失败返回 null */
   shelfIcon(name: string, path: string): Promise<string | null> {
     return ipcRenderer.invoke('shelf:icon', name, path)
+  },
+  /**
+   * 把置物架条目拖出岛（2026-11-27）。
+   * HTML5 拖放只在同一渲染进程内传数据，拖到剪映/资源管理器时对端收不到文件；
+   * 必须由主进程调 `webContents.startDrag` 发起一次**系统级**文件拖拽。
+   *
+   * 调用约束（`.tmp/dragtest` 探针实测）：
+   * - 只能在 `dragstart` 里同步调用，且调用前必须 `e.preventDefault()`，
+   *   否则 Chromium 自带的 HTML5 拖拽会接管，startDrag 不生效；
+   * - 是 `send` 不是 `invoke`：startDrag 会阻塞到拖拽结束（实测 1.3–1.6 秒），
+   *   用 invoke 会让渲染层白等一个永远用不上的 Promise。
+   */
+  shelfStartDrag(path: string): void {
+    ipcRenderer.send('shelf:start-drag', path)
+  },
+  /**
+   * 系统拖拽结束（主进程在 `startDrag` 返回后发出）。
+   * 渲染层用它复位「正在拖置物架条目」的标记——没有这个信号，拖到岛外松手后标记会一直挂着。
+   */
+  onShelfDragEnded(cb: () => void): void {
+    ipcRenderer.on('shelf:drag-ended', () => cb())
   },
   shelfOpen(path: string): Promise<ShelfOpenResult> {
     return ipcRenderer.invoke('shelf:open', path)

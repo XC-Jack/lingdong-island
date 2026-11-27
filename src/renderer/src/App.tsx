@@ -837,7 +837,7 @@ function extColor(name: string): string {
   return '#a8b2b9'
 }
 
-/** 通用文件图标：优先用系统真实图标（文件夹/文件用真实路径取，其余按扩展名缓存），拿不到退回折角纸片 */
+/** 通用文件图标：优先用系统真实图标（真实文件按路径缓存，失效条目按扩展名），拿不到退回折角纸片 */
 function FileIcon({ name, path }: { name: string; path: string }): React.JSX.Element {
   const [src, setSrc] = useState<string | null>(null)
   useEffect(() => {
@@ -868,7 +868,12 @@ function FileIcon({ name, path }: { name: string; path: string }): React.JSX.Ele
 }
 
 /** 置物架面板：拖文件进来暂存，点击打开，可删除/清空 */
-function ShelfPanel(): React.JSX.Element {
+function ShelfPanel({
+  onDragStateChange
+}: {
+  /** 告诉岛根「现在是在拖置物架里的条目」，别把它当成拖文件进岛（2026-11-27） */
+  onDragStateChange?: (dragging: boolean) => void
+}): React.JSX.Element {
   const [items, setItems] = useState<ShelfItem[]>([])
   const [dragOver, setDragOver] = useState(false)
   /**
@@ -906,9 +911,16 @@ function ShelfPanel(): React.JSX.Element {
   const [confirmClear, setConfirmClear] = useState(false)
   // 图标视图横向滚动：是否还有更多内容（决定两侧箭头显隐）
   const [canScroll, setCanScroll] = useState(false)
-  /** 正在拖动换位的条目 id（网格内排序用） */
-  const reorderFrom = useRef<string | null>(null)
+  /**
+   * 正在被拖的条目（null = 没有架内拖动）。
+   * 2026-11-27 起拖动改走**系统级拖拽**（`webContents.startDrag`），因为 HTML5 拖拽
+   * 拖不出岛、拖到剪映/资源管理器对端收不到文件。这个 ref 只用来区分
+   * 「架内拖动（可以落到别的格子上换位）」和「外部文件拖入（要冒泡到岛根加进架子）」。
+   */
+  const reorderFrom = useRef<ShelfItem | null>(null)
   const reorderSeq = useRef(0)
+  /** 系统拖拽没有 dragend（dragstart 里 preventDefault 了），用这个定时器兜底清掉拖动标记 */
+  const dragResetTimer = useRef(0)
   /** 图标视图滚动容器 */
   const scrollRef = useRef<HTMLDivElement>(null)
   const updateCanScroll = useCallback(() => {
@@ -992,7 +1004,14 @@ function ShelfPanel(): React.JSX.Element {
       setDragOver(false)
       setNotice(null)
     })
-  }, [])
+    // 系统拖拽结束（拖到岛外松手 / 拖到别的应用）：复位架内拖动标记。
+    // 没有这个信号，标记会一直挂着，下次拖外部文件进来会被格子误吞。
+    window.island.onShelfDragEnded(() => {
+      reorderFrom.current = null
+      onDragStateChange?.(false)
+      window.clearTimeout(dragResetTimer.current)
+    })
+  }, [onDragStateChange])
 
   const remove = useCallback(async (id: string) => {
     setItems(await window.island.shelfRemove(id))
@@ -1047,10 +1066,10 @@ function ShelfPanel(): React.JSX.Element {
   const reorderTo = useCallback(async (target: ShelfItem) => {
     const from = reorderFrom.current
     reorderFrom.current = null
-    if (!from || from === target.id) return
+    if (!from || from.id === target.id) return
     setItems((prev) => {
       const ids = prev.map((x) => x.id)
-      const fi = ids.indexOf(from)
+      const fi = ids.indexOf(from.id)
       const ti = ids.indexOf(target.id)
       if (fi === -1 || ti === -1) return prev
       // 互换：A 拖到 B 上，A 占 B 的位置，B 退到 A 原来的位置
@@ -1060,9 +1079,37 @@ function ShelfPanel(): React.JSX.Element {
       void window.island.shelfReorder(ids).then((sorted) => {
         if (seq === reorderSeq.current) setItems(sorted)
       })
-      return prev.map((x) => (x.id === from ? { ...x } : x))
+      return prev.map((x) => (x.id === from.id ? { ...x } : x))
     })
   }, [])
+
+  /**
+   * 起拖：架内换位与拖出到别的应用**用同一次系统拖拽**完成（2026-11-27）。
+   *
+   * 为什么不是「两种拖拽」：探针实测 `webContents.startDrag` 一旦发起，
+   * 拖回自己窗口时页面仍能收到 drop（`files=1`），所以同一次拖拽既能落到别的格子换位、
+   * 也能落到外部应用被收下，不需要用户分两种手势。
+   *
+   * 三个必须照做的细节（`.tmp/dragtest` 实测，Electron 45.2.1）：
+   * 1. `preventDefault()` 掐掉 HTML5 拖拽，否则 startDrag 不接管（跨进程只收到 text/plain、files=0）；
+   * 2. 拖拽图标不能为空，主进程侧已兜底；
+   * 3. startDrag 阻塞到拖拽结束，所以用 send 不 await，并起定时器兜底复位拖动标记。
+   */
+  const startShelfDrag = useCallback(
+    (it: ShelfItem) => {
+      if (it.missing) return
+      reorderFrom.current = it
+      onDragStateChange?.(true)
+      window.island.shelfStartDrag(it.path)
+      // 兜底：万一主进程的 shelf:drag-ended 没到（窗口被销毁等），30 秒后自己清掉
+      window.clearTimeout(dragResetTimer.current)
+      dragResetTimer.current = window.setTimeout(() => {
+        reorderFrom.current = null
+        onDragStateChange?.(false)
+      }, 30000)
+    },
+    [onDragStateChange]
+  )
 
   const fmtSize = (n: number): string => {
     if (n < 1024) return `${n} B`
@@ -1124,6 +1171,13 @@ function ShelfPanel(): React.JSX.Element {
                 key={it.id}
                 className={`shelf-item ${it.missing ? 'missing' : ''}`}
                 title={it.missing ? `文件已不在：${it.path}` : it.path}
+                draggable={!it.missing}
+                onDragStart={(e) => {
+                  // 拖出到别的应用（2026-11-27）：必须掐掉 HTML5 拖拽，让主进程的
+                  // startDrag 接管系统级拖拽，否则拖到剪映/资源管理器对端收不到文件
+                  e.preventDefault()
+                  startShelfDrag(it)
+                }}
               >
                 <FileIcon name={it.name} path={it.path} />
                 <button
@@ -1180,12 +1234,12 @@ function ShelfPanel(): React.JSX.Element {
                     key={it.id}
                     className={`shelf-cell ${it.missing ? 'missing' : ''}`}
                     title={it.missing ? `文件已不在：${it.path}` : it.path}
-                    draggable
+                    draggable={!it.missing}
                     onDragStart={(e) => {
-                      reorderFrom.current = it.id
-                      // Electron 的拖动需要 dataTransfer 里有数据，dragover/drop 才会稳定触发
-                      e.dataTransfer.setData('text/plain', it.id)
-                      e.dataTransfer.effectAllowed = 'move'
+                      // 掐掉 HTML5 拖拽，交给主进程 startDrag 发系统级拖拽：
+                      // 同一次拖拽既能落到别的格子换位，也能拖到剪映/资源管理器被收下。
+                      e.preventDefault()
+                      startShelfDrag(it)
                     }}
                     onDragOver={(e) => {
                       // 网格内换位：只拦截「架内图标拖动」；外部文件拖入必须放行冒泡，
@@ -1200,9 +1254,6 @@ function ShelfPanel(): React.JSX.Element {
                       e.preventDefault()
                       e.stopPropagation()
                       void reorderTo(it)
-                    }}
-                    onDragEnd={() => {
-                      reorderFrom.current = null
                     }}
                   >
                     <button
@@ -3322,14 +3373,35 @@ export default function App(): React.JSX.Element {
   // 最近一次上报/打算用的窗口尺寸。window.innerHeight 要等主进程 setBounds 生效才更新，
   // 切页时若只看它，会把「已经在扩窗路上」的目标页误判成放不下、多等一次回执（约 30ms 空白）。
   const intendedWinSize = useRef<{ w: number; h: number } | null>(null)
-  /** 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失 */
+  /**
+   * 上报展开尺寸的**唯一入口**，带 1px 死区（2026-11-27）。
+   *
+   * 为什么要在渲染层也拦一道：主进程虽有同样的死区，但每帧都发一次 invoke 仍然是
+   * 一次 IPC + 主进程一轮 clamp/比较。用户机器上量出来的尺寸会因 0.75 缩放取整来回抖
+   * ±1px，探针实测这种抖动会把补间从 244ms 拖到 448ms（旧版 animateTo 每次上报都重置计时）。
+   * 现在主进程已改成方向不变不重置，这里再拦一道，抖动连 IPC 都不发。
+   */
+  const lastReportedSize = useRef<{ w: number; h: number } | null>(null)
+  const reportExpandedSize = useCallback((w: number, h: number): Promise<unknown> => {
+    const last = lastReportedSize.current
+    // 死区内的重复上报直接当「窗口已经是这个尺寸」——上次已经报过，主进程执行过了，
+    // 所以等回执的调用方（切页）立即继续是对的，不会白等 300ms 兜底
+    if (last && Math.abs(w - last.w) <= 1 && Math.abs(h - last.h) <= 1) return Promise.resolve()
+    lastReportedSize.current = { w, h }
+    return window.island.setExpandedSize(w, h)
+  }, [])
+  /**
+   * 只扩不缩：先缩小会让当前还显示着的旧页被窗口裁一瞬，得不偿失。
+   * 2px 余量（2026-11-27）：1px 时，量出来的尺寸只要因缩放取整比窗口小 1px 就误判成
+   * 「放得下」而不扩窗；反之又多报一次。2px 与主进程的 1px 死区配合，抖动不上报。
+   */
   const growWindowTo = useCallback((c: { w: number; h: number } | null | undefined) => {
     if (!c || !expandedRef.current) return
-    if (c.w > window.innerWidth + 1 || c.h > window.innerHeight + 1) {
+    if (c.w > window.innerWidth + 2 || c.h > window.innerHeight + 2) {
       intendedWinSize.current = c
-      void window.island.setExpandedSize(c.w, c.h)
+      reportExpandedSize(c.w, c.h)
     }
-  }, [])
+  }, [reportExpandedSize])
   const primeWindowSize = useCallback(
     (i: number) => growWindowTo(pageSizeCache.current[i]),
     [growWindowTo]
@@ -3340,6 +3412,12 @@ export default function App(): React.JSX.Element {
   const islandRef = useRef<HTMLDivElement | null>(null)
   // 一次拖动只处理一次 dragEnter 的去重标记（dragleave/drop 时复位）
   const dragActive = useRef(false)
+  /**
+   * 正在把**置物架里的条目**拖出去（2026-11-27）。
+   * 系统拖拽的 dataTransfer 类型同样是 'Files'，岛根收到 dragEnter 会以为是「拖文件进岛」，
+   * 从而放大窗口、切到置物架页、暂停收起——拖到一半岛自己动起来。用这个标记区分。
+   */
+  const shelfDraggingRef = useRef(false)
 
   // 尺寸自适应上报：岛元素按内容自然撑开（CSS max-content），这里量出实际尺寸报给主进程定窗口。
   // 去抖 80ms：避开 width/height 过渡动画的中间值，只在尺寸稳定后上报。
@@ -3363,7 +3441,8 @@ export default function App(): React.JSX.Element {
           // 回执由切页那条路径自己等（SPEC-switch-size-sync）
           if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
           intendedWinSize.current = { w, h }
-          void window.island.setExpandedSize(w, h)
+          // 走带 1px 死区的统一入口：这条 RO 上报是尺寸抖动的主要来源
+          void reportExpandedSize(w, h)
         } else {
           window.island.setCollapsedWidth(w)
         }
@@ -3376,7 +3455,7 @@ export default function App(): React.JSX.Element {
       if (timer !== null) window.clearTimeout(timer)
       ro.disconnect()
     }
-  }, [])
+  }, [reportExpandedSize])
 
   // 时钟走字
   useEffect(() => {
@@ -3608,11 +3687,11 @@ export default function App(): React.JSX.Element {
       const h = Math.ceil(r.height)
       if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
       intendedWinSize.current = { w, h }
-      void window.island.setExpandedSize(w, h)
+      reportExpandedSize(w, h)
     } else {
       window.island.setCollapsedWidth(Math.ceil(r.width))
     }
-  }, [])
+  }, [reportExpandedSize])
   useLayoutEffect(() => {
     if (firstExpandEffect.current) {
       firstExpandEffect.current = false
@@ -3633,7 +3712,7 @@ export default function App(): React.JSX.Element {
           const h = Math.ceil(r.height)
           if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
           intendedWinSize.current = { w, h }
-          void window.island.setExpandedSize(w, h)
+          reportExpandedSize(w, h)
           // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
           // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
           // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
@@ -3646,12 +3725,43 @@ export default function App(): React.JSX.Element {
     }
     window.island?.setExpanded(expanded)
     setEntrance(expanded ? 'open' : 'close')
-    const id = window.setTimeout(() => {
+    // 入场结束条件：**窗口真的长到目标尺寸**，而不是固定 260ms（2026-11-27 修）。
+    // 旧实现固定 260ms 一到就清掉 --entrance-w/h，岛跳到全尺寸；主进程补间一旦被卡住
+    // （desktopCapturer 实测 118–192ms，覆盖窗场景还会触发 DWM 重合成），窗口停在半路，
+    // 岛就被 `.island { overflow: hidden }` 裁掉——用户视频里的「显示不完整」。
+    // 现在逐帧等窗口到位；入场动画本身 220ms，所以至少也等 220ms（否则缩放进半截被掐断会跳）。
+    // 2 秒还没到位就放弃等待（主进程严重卡死时的兜底，避免永久停在入场态）。
+    const startedAt = performance.now()
+    let raf = 0
+    let timer = 0
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      window.cancelAnimationFrame(raf)
       setEntrance(null)
       // 等 class 移除后的那一帧再量，此时 transform 已经归零
       window.requestAnimationFrame(() => window.requestAnimationFrame(reportCurrentSize))
-    }, 260)
-    return () => window.clearTimeout(id)
+    }
+    const waitWindow = (): void => {
+      const elapsed = performance.now() - startedAt
+      const to = entranceToRef.current
+      const reached = !to || (window.innerWidth >= to.w - 1 && window.innerHeight >= to.h - 1)
+      if ((reached && elapsed >= 220) || elapsed >= 2000) {
+        if (!reached) window.island.logDiag(`entrance timeout; win=${window.innerWidth}x${window.innerHeight} to=${to?.w}x${to?.h}`)
+        finish()
+        return
+      }
+      raf = window.requestAnimationFrame(waitWindow)
+    }
+    // 收起没有裁切风险（岛在变小），保持原来的固定时长，改动面最小
+    if (expanded) raf = window.requestAnimationFrame(waitWindow)
+    else timer = window.setTimeout(finish, 260)
+    return () => {
+      done = true
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(timer)
+    }
   }, [expanded, reportCurrentSize])
 
   // 展开入场期间让岛的宽高跟着窗口长大（SPEC-expand-clip）。
@@ -3892,6 +4002,9 @@ export default function App(): React.JSX.Element {
   // 否则反复 gotoPage(1) 重挂页面重放淡入动画 = 用户看到的频闪抖动（m02309）
   const onDragEnter = (e: React.DragEvent): void => {
     if (!e.dataTransfer.types.includes('Files')) return
+    // 架内拖置物架条目也是 'Files' 拖拽（2026-11-27 改系统拖拽后），但它不是「拖文件进岛」：
+    // 不能因此把岛放大、切页、暂停收起——那会让用户拖到一半发现岛在动
+    if (shelfDraggingRef.current) return
     e.stopPropagation()
     if (dragActive.current) return
     dragActive.current = true
@@ -4107,7 +4220,7 @@ export default function App(): React.JSX.Element {
     const fits = w <= availW + 1 && h <= availH + 1
     if (fits) {
       intendedWinSize.current = { w, h }
-      void window.island.setExpandedSize(w, h)
+      void reportExpandedSize(w, h)
       setPageReady(true)
       return
     }
@@ -4123,12 +4236,12 @@ export default function App(): React.JSX.Element {
       setPageReady(true)
     }
     // DOM 已是新页，这里读到的是新页尺寸（会强制结算一次布局）
-    void window.island.setExpandedSize(w, h).finally(reveal)
+    void reportExpandedSize(w, h).finally(reveal)
     return () => {
       alive = false
       window.clearTimeout(fallback)
     }
-  }, [page])
+  }, [page, reportExpandedSize])
   // 回到网格：网格 362 比多数页高，先按缓存把窗口扩好，再切视图 —— 否则网格会先被
   // 小窗口裁掉底部，等 80ms 去抖的 ResizeObserver 上报后才补上（实测约 100ms）。
   useLayoutEffect(() => {
@@ -4139,8 +4252,8 @@ export default function App(): React.JSX.Element {
     const h = Math.ceil(r.height)
     gridSizeCache.current = { w, h }
     intendedWinSize.current = { w, h }
-    void window.island.setExpandedSize(w, h)
-  }, [view])
+    void reportExpandedSize(w, h)
+  }, [view, reportExpandedSize])
   const gotoPage = useCallback(
     (i: number) => {
       beginNavSnap()
@@ -4466,6 +4579,9 @@ export default function App(): React.JSX.Element {
   // 整个岛都是投放区：文件可以落在面板任意位置
   const onDropRoot = (e: React.DragEvent): void => {
     e.preventDefault()
+    // 正在拖置物架自己的条目：落在空白处不当作「新文件拖入」（虽然 shelfAdd 会去重，
+    // 但会误触发高兴动画，且语义上这不是一次新投放）
+    if (shelfDraggingRef.current) return
     if (!e.dataTransfer.files.length) return
     const paths = Array.from(e.dataTransfer.files)
       .map((f) => window.island.filePath(f))
@@ -4632,7 +4748,7 @@ export default function App(): React.JSX.Element {
           onDropRoot(e)
           onDragLeaveRoot()
           scheduleCollapse()
-          if (e.dataTransfer.files.length) pulseHappy()
+          if (!shelfDraggingRef.current && e.dataTransfer.files.length) pulseHappy()
         }}
         onClick={() => {
           // 展开态点面板空白处（非控件）回到第一页而非直接收起？——收起语义保留：点空白收起
@@ -4859,7 +4975,11 @@ export default function App(): React.JSX.Element {
                 {page === 0 ? (
                   <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} refreshTick={dataTick} />
                 ) : page === 1 ? (
-                  <ShelfPanel />
+                  <ShelfPanel
+                    onDragStateChange={(d) => {
+                      shelfDraggingRef.current = d
+                    }}
+                  />
                 ) : page === 2 ? (
                   <NotifyPanel
                     onUnread={onNotifyUnread}
