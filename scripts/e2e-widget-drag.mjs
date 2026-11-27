@@ -1,10 +1,10 @@
-// e2e-widget-drag.mjs：组件网格长按拖动换位（SPEC-widget-drag）
+// e2e-widget-drag.mjs：组件网格拖动换位（SPEC-widget-drag）
 // D1 网格五张卡等大、三行排满（没有横跨两列的宽卡）
 // D2 网格不裁内容：岛高 ≥ 网格内容底 + 内边距（四套主题下都成立）
-// D3 长按 350ms 进入拖动：被拖卡加 .wg-dragging、落点卡加 .wg-drop-target
+// D3 按下后移动即进入拖动（不等长按）：被拖卡加 .wg-dragging、其余卡让位
 // D4 松手换位：顺序改变、写进 prefs.json、松手不误开页面
-// D5 短按（< 350ms）仍是点击：打开对应组件页
-// D6 长按后不移动就松手：不换位、不打开页面
+// D5 短按（按下即松手）仍是点击：打开对应组件页
+// D6 按住不动（600ms）松手：不换位，按点击处理打开组件页
 // D7 重启后顺序保持
 // 用法：node scripts/e2e-widget-drag.mjs（自动启动 electron，CDP 端口 9321）
 // 注意：会改写隔离目录（.tmp/e2e-userdata）里的 prefs.json，不碰真实用户数据。
@@ -17,7 +17,6 @@ const CDP_PORT = 9321
 const USER_DATA = join(process.env.APPDATA, 'lingdong-island')
 const PREF_JSON = join(USER_DATA, 'prefs.json')
 const ZOOM = 0.75
-const LONG_PRESS = 350
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let passed = 0
@@ -170,19 +169,22 @@ try {
   if (layout.islandH >= layout.gridBottom) ok(`D2a 网格没被岛裁掉（岛 ${layout.islandH} ≥ 内容底 ${layout.gridBottom} 布局 px）`)
   else fail(`D2a 网格被裁：岛 ${layout.islandH} < 内容底 ${layout.gridBottom}`)
 
-  // ---------- D3 / D4：长按拖动换位 ----------
+  // ---------- D3 / D4：按住移动即拖动换位 ----------
+  // 2026-11-27 用户要求「按着它的时候鼠标可以拖动」：按下后移动就起拖，不等 350ms。
   const before = JSON.parse(await orderOf(session))
   const a = await centerOf(session, 0)
   const b = await centerOf(session, 4)
   await session.mouse('mousePressed', a.x, a.y)
-  await sleep(LONG_PRESS + 150)
+  // 按下后立刻小步移动（不等待）：这是「按下就能拖」的核心断言
+  await session.mouse('mouseMoved', a.x + 12, a.y + 12)
+  await sleep(120)
   const pressed = JSON.parse(
     await session.evalJs(
       `JSON.stringify({ dragging: document.querySelectorAll('.wg-dragging').length, dragPage: document.querySelector('.wg-dragging')?.dataset.page ?? null })`
     )
   )
-  if (pressed.dragging === 1 && pressed.dragPage === '0') ok(`D3a 长按 ${LONG_PRESS}ms 后进入拖动（卡 0）`)
-  else fail(`D3a 长按后未进入拖动：${JSON.stringify(pressed)}`)
+  if (pressed.dragging === 1 && pressed.dragPage === '0') ok(`D3a 按下后移动 12px 即进入拖动（不用等长按）`)
+  else fail(`D3a 按下移动后未进入拖动：${JSON.stringify(pressed)}`)
 
   for (let k = 1; k <= 6; k++) {
     await session.mouse('mouseMoved', a.x + ((b.x - a.x) * k) / 6, a.y + ((b.y - a.y) * k) / 6)
@@ -241,19 +243,24 @@ try {
   await session.evalJs(`document.querySelector('.panel-back')?.click(); 1`)
   await sleep(900)
 
-  // ---------- D6：长按不移动就松手 ----------
+  // ---------- D6：按住不动（哪怕按很久）松手仍是点击，不换位 ----------
+  // 2026-11-27 起不再有「长按」概念：判据是「有没有移动」，不是「按了多久」。
   const beforeIdle = JSON.parse(await orderOf(session))
   const d = await centerOf(session, beforeIdle[0])
   await session.mouse('mousePressed', d.x, d.y)
-  await sleep(LONG_PRESS + 150)
+  await sleep(600) // 按得够久，但完全不动
   await session.mouse('mouseReleased', d.x, d.y)
-  await sleep(600)
-  const afterIdle = JSON.parse(await orderOf(session))
+  await sleep(900)
+  // 按住不动松手 = 一次点击 → 照常打开组件页（这正是「按着不动」该有的结果）
   const idleView = await session.evalJs(`JSON.stringify({ grid: !!document.querySelector('.widget-grid'), page: !!document.querySelector('.page-fade') })`)
-  if (sameArr(afterIdle, beforeIdle)) ok(`D6a 长按不移动松手：顺序不变`)
-  else fail(`D6a 长按不移动却换了位：${beforeIdle.join(',')} → ${afterIdle.join(',')}`)
-  if (idleView.includes('"grid":true') && idleView.includes('"page":false')) ok(`D6b 长按不移动松手：没有误开页面`)
-  else fail(`D6b 长按不移动松手误开了页面：${idleView}`)
+  if (idleView.includes('"page":true')) ok(`D6a 按住不动松手按点击处理：打开了组件页`)
+  else fail(`D6a 按住不动松手没打开页面：${idleView}`)
+  // 回到网格再比顺序：此时网格才在 DOM 里（页面态下网格已卸载，读不到卡片）
+  await session.evalJs(`document.querySelector('.panel-back')?.click(); 1`)
+  await sleep(900)
+  const afterIdle = JSON.parse(await orderOf(session))
+  if (sameArr(afterIdle, beforeIdle)) ok(`D6b 按住不动 600ms 松手：顺序不变（没有误换位）`)
+  else fail(`D6b 按住不动却换了位：${beforeIdle.join(',')} → ${afterIdle.join(',')}`)
 
   await session.close()
   session = null
