@@ -118,7 +118,8 @@ const png = join(iconDir, `${key.replace(...)}.png`)
 | 2026-11-27 | `.tmp/probe-icon-cache.mjs`：用 `WScript.Shell` 造两个真实 `.lnk`（指向 notepad.exe / explorer.exe）请求图标 | 得到 `.lnk.8e5596d5.png` 2630 B 与 `.lnk.6a1b144e.png` 1614 B，路径与字节均不同；重复请求 0 ms 命中 | 未逐个核对桌面所有 `.lnk` |
 | 2026-11-27 | `.tmp/probe-tween-restart.mjs jitter`：每 40 ms 上报 ±1px 尺寸 | 窗口高度到终值 263 ms（另一轮 246 ms；改前 448 ms），高度回退帧 0 | — |
 | 2026-11-27 | `.tmp/probe-main-block.mjs 60 1500`：主进程忙等 1500 ms | 岛超界 0/155（改前 75/156），阻塞解除后 61 ms 追平 | — |
-| 2026-11-27 | 回归 `e2e-shelf-missing` / `e2e-shelf-view-pref` / `e2e-exit-and-shelf-view` / `e2e-widget-drag` / `e2e-head-order` / `e2e-pages-custom` | 全 PASS（widget-drag 17、head-order 14/0、pages-custom 7 等） | `scripts/e2e-reorder.mjs` 因 `main` 上既有语法错误（`scripts/e2e-reorder.mjs:77`，commit `d0492b9` 起）未跑 |
+| 2026-11-27 | 回归 `e2e-shelf-missing` / `e2e-shelf-view-pref` / `e2e-exit-and-shelf-view` / `e2e-widget-drag` / `e2e-head-order` / `e2e-pages-custom` | 全 PASS（widget-drag 17、head-order 14/0、pages-custom 7 等） | — |
+| 2026-11-27 | 修 `scripts/e2e-reorder.mjs`（语法 / 切页 / 拖拽方式三处腐化）后运行 | `E2E REORDER PASS`：三次真实鼠标换位断言全过；图标按路径缓存的新命名 `.txt.aeedb744.png` 等可见 | 会真实移动鼠标，跑时勿叠其它置顶窗 |
 | 2026-11-27 | `.tmp/probe-shelf-drag-out.mjs`：真实鼠标把条目拖到**独立进程**接收端 | 接收端日志 `GOT 拖出测试.txt` | 剪映 / 微信等真实应用（A8 真人项） |
 | 2026-11-27 | `.tmp/probe-shelf-reorder.mjs`：真实鼠标把第 1 格拖到第 2 格 | 界面与 `shelf.json` 均为 `B.txt, A.txt, C.txt` | — |
 | 2026-11-27 | `.tmp/probe-shelf-drag-reset.mjs`：拖出到接收端后，再从另一个应用用 `startDrag` 发起真实拖拽拖入岛 | 落盘与界面均新增 `新来的.txt`，标记正确复位 | — |
