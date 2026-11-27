@@ -230,9 +230,10 @@ export default function SettingsApp(): ReactElement {
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 自动更新状态（SPEC-auto-update）：null = 还没取到，按钮先不显示假状态
   const [update, setUpdate] = useState<UpdateState | null>(null)
-  // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
+  // 导出/导入进行中（防连点叠两个对话框）；合并后的结果提示
   const [exporting, setExporting] = useState(false)
-  const [exportNote, setExportNote] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [backupNote, setBackupNote] = useState('')
 
   // 启动回填偏好 + 订阅后续变更
   useEffect(() => {
@@ -381,18 +382,53 @@ export default function SettingsApp(): ReactElement {
   const runExport = (): void => {
     if (exporting) return
     setExporting(true)
-    setExportNote('')
+    setBackupNote('')
     window.island
       .exportData()
       .then((r) => {
-        if (r.ok) setExportNote(`已导出到 ${r.path}`)
-        else if (r.canceled) setExportNote('')
-        else setExportNote(`导出失败：${r.detail ?? r.reason ?? '未知原因'}`)
+        if (r.ok) setBackupNote(`已导出到 ${r.path}`)
+        else if (r.canceled) setBackupNote('')
+        else setBackupNote(`导出失败：${r.detail ?? r.reason ?? '未知原因'}`)
       })
       .catch((err: unknown) => {
-        setExportNote(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+        setBackupNote(`导出失败：${err instanceof Error ? err.message : String(err)}`)
       })
       .finally(() => setExporting(false))
+  }
+
+  /**
+   * 导入数据（SPEC-data-import）：与导出一对。
+   * 主进程做校验、规范化与合并；这里只触发并把结果显示在行内。
+   * 只合并不覆盖，所以不需要二次确认——最坏情况是多出几条数据，不会删掉现有的。
+   */
+  const runImport = (): void => {
+    if (importing) return
+    setImporting(true)
+    setBackupNote('')
+    window.island
+      .importData()
+      .then((r) => {
+        if (r.ok) {
+          const added = r.added ?? { todos: 0, schedule: 0 }
+          const skipped = r.skipped ?? { todos: 0, schedule: 0 }
+          const skipSum = skipped.todos + skipped.schedule
+          const nothing = added.todos === 0 && added.schedule === 0
+          setBackupNote(
+            nothing
+              ? `没有新数据可导入${skipSum > 0 ? `（${skipSum} 条已存在，已跳过）` : ''}`
+              : `已导入待办 ${added.todos} 条、日程 ${added.schedule} 条` +
+                  (skipSum > 0 ? `（跳过重复 ${skipSum} 条）` : '')
+          )
+        } else if (r.canceled) {
+          setBackupNote('')
+        } else {
+          setBackupNote(`导入失败：${r.detail ?? r.reason ?? '未知原因'}`)
+        }
+      })
+      .catch((err: unknown) => {
+        setBackupNote(`导入失败：${err instanceof Error ? err.message : String(err)}`)
+      })
+      .finally(() => setImporting(false))
   }
 
   /** 开机自启：先乐观翻转，再以主进程实际状态校准 */
@@ -646,16 +682,28 @@ export default function SettingsApp(): ReactElement {
                     打开文件夹
                   </button>
                 </Row>
-                <Row label="导出数据" hint="把待办和日程保存成一个 JSON 文件">
+                {/* 导出与导入合并成一行（用户 2026-11-27：「合并成一个，简洁一点」）。
+                    两个按钮并排，结果提示紧跟在本行下方——原先提示写在分区末尾，
+                    中间隔了四张卡，点完按钮看不到任何反馈。 */}
+                <Row label="数据备份" hint="导出一个 JSON 备份文件；或从备份导入（只合并，不覆盖现有数据）">
                   <button
                     type="button"
                     className="set-btn"
-                    disabled={exporting}
+                    disabled={exporting || importing}
                     onClick={runExport}
                   >
                     {exporting ? '导出中…' : '导出…'}
                   </button>
+                  <button
+                    type="button"
+                    className="set-btn"
+                    disabled={exporting || importing}
+                    onClick={runImport}
+                  >
+                    {importing ? '导入中…' : '导入…'}
+                  </button>
                 </Row>
+                {backupNote ? <div className="set-note set-note-inline">{backupNote}</div> : null}
               </div>
               <div className="set-card">
                 <div className="pet-set-head">全屏时怎么办</div>
@@ -731,7 +779,6 @@ export default function SettingsApp(): ReactElement {
                   </button>
                 </Row>
               </div>
-              {exportNote ? <div className="set-note">{exportNote}</div> : null}
             </section>
           ) : section === 'appearance' ? (
             <section className="set-page">

@@ -14,6 +14,7 @@ import { setupShelfStore } from './shelfStore'
 import { setupNotifyStore, stopNotifyStore } from './notifyStore'
 import { setupScheduleStore, stopScheduleStore } from './scheduleStore'
 import { setupExportStore } from './exportStore'
+import { setupImportStore } from './importStore'
 import { setupPrefsStore, getPrefs, patchPrefs } from './prefsStore'
 import { setupMusicStore, stopMusicStore } from './musicStore'
 import { setupLyricStore } from './lyricStore'
@@ -450,6 +451,7 @@ app.whenReady().then(() => {
   setupNotifyStore()
   setupScheduleStore()
   setupExportStore()
+  setupImportStore()
   setupPrefsStore()
   setupMusicStore()
   // 歌词（SPEC-music-lyric）：只注册 IPC，真正联网只在渲染层来问时才发生
