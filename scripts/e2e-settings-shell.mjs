@@ -378,17 +378,23 @@ try {
       JSON.stringify(readPrefs()?.pagesCustom?.pages))
   }
 
-  // ========== S11 导出数据搬进设置窗口（2026-11-11 用户要求） ==========
+  // ========== S11 导出/导入搬进设置窗口（2026-11-11 导出；2026-11-27 合并为「数据备份」一行） ==========
   {
     await settingsEval(`(() => { const b = Array.from(document.querySelectorAll('.set-nav-item')).find(e => e.textContent.includes('常规')); if (b) b.click(); return 'ok' })()`)
     await sleep(600)
-    const hasRow = await settingsEval(`document.body.innerText.includes('导出数据')`)
-    ok('S11a 常规分区有「导出数据」行', hasRow === true)
+    const hasRow = await settingsEval(`document.body.innerText.includes('数据备份')`)
+    ok('S11a 常规分区有「数据备份」行', hasRow === true)
     const btnText = await settingsEval(`(() => {
       const b = Array.from(document.querySelectorAll('.set-btn')).find(e => e.textContent.includes('导出'))
       return b ? b.textContent.trim() : 'no-btn'
     })()`)
     ok('S11b 有「导出…」按钮', typeof btnText === 'string' && btnText.includes('导出'), btnText)
+    // 同一行里还应有「导入…」按钮（用户 2026-11-27 要求合并成一行）
+    const importBtn = await settingsEval(`(() => {
+      const b = Array.from(document.querySelectorAll('.set-btn')).find(e => e.textContent.includes('导入'))
+      return b ? b.textContent.trim() : 'no-btn'
+    })()`)
+    ok('S11b2 同一行有「导入…」按钮', typeof importBtn === 'string' && importBtn.includes('导入'), importBtn)
 
     // 真点一次，主进程会弹原生另存为；用 WM_CLOSE 按标题关掉，断言走的是取消分支
     // （证明 IPC 通道存活且模态确实挂在设置窗口上，不会卡死）。手法同 e2e-export.mjs。
