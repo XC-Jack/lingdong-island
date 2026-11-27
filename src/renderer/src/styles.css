@@ -830,12 +830,32 @@ body {
   justify-content: flex-start;
 }
 
+/* 歌词条进出时关掉宽度过渡（2026-11-28 用户「有卡顿、不完整」）：
+   窗口宽度由主进程一次性 setBounds，岛若还按 220ms 过渡，窗口会落后按中间宽度一截一截追，
+   右边先被裁掉再补上。只关 width，高度/圆角/亮度的过渡保持不变。 */
+.island.collapsed.lyric-snap {
+  transition:
+    height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    --island-lit 600ms ease;
+}
+
 .collapsed-lyric {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   min-width: 0;
+  /* 宽度是一步到位的，内容补一个很短的淡入，避免「啪」地跳出来 */
+  animation: cl-bar-in 160ms ease-out both;
+}
+@keyframes cl-bar-in {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* 封面 30×30 布局 px（视觉 22.5），与胶囊其它图标同一视觉尺度 */
@@ -898,7 +918,7 @@ body {
   }
 }
 
-/* 右侧节奏图标：三根竖条，播放时起伏，暂停时静止压低 */
+/* 右侧节奏图标：三根竖条，播放时起伏，暂停时静止压低；本身是播放/暂停按钮 */
 .cl-eq {
   flex: none;
   display: inline-flex;
@@ -907,7 +927,14 @@ body {
   gap: 2.5px;
   width: 18px;
   height: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
   color: color-mix(in srgb, var(--ink-1) 85%, transparent);
+}
+.cl-eq:hover {
+  color: var(--ink-1);
 }
 .cl-eq i {
   display: block;
@@ -3350,7 +3377,8 @@ body {
     transition-duration: 1ms;
   }
 
-  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：切句与节奏图标都停 */
+  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：入场、切句与节奏图标都停 */
+  .collapsed-lyric,
   .cl-text,
   .cl-eq.playing i {
     animation: none;

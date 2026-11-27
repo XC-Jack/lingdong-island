@@ -3452,11 +3452,23 @@ function CollapsedStatusRow({
       <span key={lineText} className={`cl-text${prelude ? ' prelude' : ''}`}>
         {lineText}
       </span>
-      <span className={`cl-eq${playing ? ' playing' : ''}`} aria-hidden="true">
+      {/* 右侧三根竖条：播放在动、暂停静止；同时是可点的播放/暂停按钮
+          （2026-11-28 用户点它「没反应」——原来它只是装饰，点击冒泡去展开岛也容易被当成没效果） */}
+      <button
+        type="button"
+        className={`cl-eq${playing ? ' playing' : ''}`}
+        aria-label={playing ? '暂停' : '继续播放'}
+        title={playing ? '暂停' : '继续播放'}
+        onClick={(e) => {
+          // 只切播放状态，不冒泡到岛根（否则会同时展开岛）
+          e.stopPropagation()
+          void window.island.musicControl('toggle')
+        }}
+      >
         <i />
         <i />
         <i />
-      </span>
+      </button>
     </div>
   )
 }
@@ -3494,9 +3506,30 @@ export default function App(): React.JSX.Element {
   const [lyricMode, setLyricMode] = useState(false)
   // 尺寸上报是 ResizeObserver 回调，读不到最新 state；用 ref 保证与类名同一时刻生效
   const lyricModeRef = useRef(false)
+  /**
+   * 歌词条进出时临时关掉 `.island` 的宽度过渡（2026-11-28 用户「有卡顿、不完整」）。
+   * 窗口宽度是主进程一次性 setBounds，而岛自身有 220ms 宽度过渡：切进来时岛先在过渡里
+   * 变大、ResizeObserver 80ms 后才按量到的中间宽度去追窗口，右边被窗口裁掉、窗口一截一截跳。
+   * 关掉过渡后宽度一步到位，再用下面这次立即上报把窗口同一帧改到位，两项一起完成。
+   */
+  const [lyricSnap, setLyricSnap] = useState(false)
+  const lyricSnapTimer = useRef<number | null>(null)
   const onLyricMode = useCallback((on: boolean) => {
+    if (lyricModeRef.current === on) return
     lyricModeRef.current = on
     setLyricMode(on)
+    setLyricSnap(true)
+    if (lyricSnapTimer.current !== null) window.clearTimeout(lyricSnapTimer.current)
+    lyricSnapTimer.current = window.setTimeout(() => setLyricSnap(false), 300)
+    // 等 React 把类名刷进 DOM、布局稳定后再量一次最终宽度，直接上报；
+    // 不等 ResizeObserver 的 80ms 防抖去追过渡中间态（那时窗口已经晚了一截）
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const el = islandRef.current
+        if (!el || expandedRef.current) return
+        window.island.setCollapsedWidth(Math.ceil(el.getBoundingClientRect().width), lyricModeRef.current)
+      })
+    })
   }, [])
   const [page, setPage] = useState(0)
   // 组件首页（SPEC-island-widget-grid）：'grid' = 展开后的 iOS 组件网格；数字 = 对应功能页。
@@ -4941,7 +4974,9 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${!expanded && lyricMode ? 'lyric-mode' : ''} ${navSnap ? 'nav-snap' : ''} ${
+        } ${!expanded && lyricMode ? 'lyric-mode' : ''} ${!expanded && lyricSnap ? 'lyric-snap' : ''} ${
+          navSnap ? 'nav-snap' : ''
+        } ${
           entrance ? `island-anim-${entrance}` : ''
         } ${entrance === 'open' ? 'island-entrance' : ''} ${backdrop ? 'has-backdrop' : ''}`}
         // 亮背景加深系数（2026-11-25）：只有暗色玻璃主题用到，其它主题的 CSS 不引用这个变量

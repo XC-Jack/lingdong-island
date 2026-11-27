@@ -153,7 +153,10 @@ const BAR_SNAP = `(() => {
   const cs = txt ? getComputedStyle(txt) : null
   return {
     islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+    innerW: window.innerWidth,
+    expanded: !!document.querySelector('.island.expanded'),
     lyricMode: isl ? isl.classList.contains('lyric-mode') : null,
+    lyricSnap: isl ? isl.classList.contains('lyric-snap') : null,
     bar: !!bar,
     children: bar ? [...bar.children].map((c) => c.className.split(' ')[0]) : [],
     text: txt ? txt.textContent : null,
@@ -228,6 +231,9 @@ try {
     ok('L2a 播放且有歌词时出现歌词条', !!s, JSON.stringify(s && { bar: s.bar }))
     ok('L2b 岛切换到 lyric-mode（窗口宽度上限随之放宽）', s && s.lyricMode === true, String(s?.lyricMode))
     ok('L2c 岛宽 400 视觉 px（±2）', s && s.islandW >= 398 && s.islandW <= 402, String(s?.islandW))
+    ok('L2c2 窗口宽度跟岛同宽（右边不被窗口裁掉）',
+      s && Math.abs((s.innerW ?? 0) - (s.islandW ?? 0)) <= 2,
+      JSON.stringify(s && { innerW: s.innerW, islandW: s.islandW }))
     ok('L2d 条内顺序是 封面 / 岛仔 / 歌词 / 节奏图标',
       s && s.children.length === 4 && s.children[0] === 'cl-cover' && s.children[1] === 'cl-pet' &&
       s.children[2] === 'cl-text' && s.children[3] === 'cl-eq',
@@ -281,6 +287,32 @@ try {
     ok('L4c 恢复播放后节奏图标重新动起来', !!resumed, JSON.stringify(resumed && { eqPlaying: resumed.eqPlaying }))
   }
 
+  // ========== L8 右侧三根竖条：可点的播放/暂停 ==========
+  {
+    const eq = await islandEval(`(() => {
+      const b = document.querySelector('.cl-eq')
+      return b ? { tag: b.tagName, label: b.getAttribute('aria-label') } : null
+    })()`)
+    ok('L8a 节奏图标是可点的按钮（带暂停/继续播放说明）',
+      eq && eq.tag === 'BUTTON' && (eq.label === '暂停' || eq.label === '继续播放'), JSON.stringify(eq))
+    await islandEval(`document.querySelector('.cl-eq')?.click()`)
+    const paused = await waitFor(async () => {
+      const st = await islandEval(`window.island.musicGet().then((s) => s.playing)`)
+      return st === false ? true : null
+    }, 4000)
+    ok('L8b 点一下会暂停播放', paused === true)
+    const afterPause = await islandEval(BAR_SNAP)
+    ok('L8c 点它不会顺手把岛展开（stopPropagation），歌词条仍在',
+      afterPause && afterPause.bar === true && afterPause.expanded !== true,
+      JSON.stringify(afterPause && { bar: afterPause.bar }))
+    await islandEval(`document.querySelector('.cl-eq')?.click()`)
+    const resumed = await waitFor(async () => {
+      const st = await islandEval(`window.island.musicGet().then((s) => s.playing)`)
+      return st === true ? true : null
+    }, 4000)
+    ok('L8d 再点一下恢复播放', resumed === true)
+  }
+
   // ========== L5 设置开关：关掉即恢复普通收起态，重启后保持 ==========
   {
     await islandEval(`window.island.openSettings('general')`)
@@ -293,6 +325,12 @@ try {
     }, 8000)
     ok('L5a 设置页有「收起胶囊显示歌词」开关且默认开着', sw && sw.checked === 'true', JSON.stringify(sw))
     await settingsEval(`document.querySelector('button[aria-label="收起胶囊显示歌词"]')?.click()`)
+    // 宽度过渡必须在切换瞬间关掉：否则窗口按 RO 量到的中间宽度一截一截追（用户 2026-11-28 卡顿/不完整）
+    const sawSnap = await waitFor(async () => {
+      const v = await islandEval(`document.querySelector('.island')?.classList.contains('lyric-snap') ?? false`)
+      return v === true ? true : null
+    }, 2500, 60)
+    ok('L7 切出歌词条时临时关掉宽度过渡（lyric-snap）', sawSnap === true)
     const off = await waitFor(async () => {
       const v = await islandEval(BAR_SNAP)
       return v && v.bar === false ? v : null
@@ -300,6 +338,13 @@ try {
     ok('L5b 关掉开关后歌词条立刻消失、时钟回来', off && off.bar === false && off.clock === true,
       JSON.stringify(off && { bar: off.bar, clock: off.clock }))
     ok('L5c 关掉后岛缩回普通收起宽度（≤290）', off && off.islandW <= 290, String(off?.islandW))
+    // 刚切回来的第一两帧还在等 rAF 里的宽度上报，允许它追上；稳定后必须同宽
+    const synced = await waitFor(async () => {
+      const v = await islandEval(BAR_SNAP)
+      return v && v.bar === false && Math.abs((v.innerW ?? 0) - (v.islandW ?? 0)) <= 2 ? v : null
+    }, 3000)
+    ok('L7b 切换后窗口宽度与岛同宽（没有被中间态甩下）', !!synced,
+      JSON.stringify(synced ? { innerW: synced.innerW, islandW: synced.islandW } : off && { innerW: off.innerW, islandW: off.islandW }))
     const persisted = await waitFor(async () => {
       try { return readPrefs()?.collapsedLyric === false } catch { return false }
     }, 4000)
