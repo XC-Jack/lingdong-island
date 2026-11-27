@@ -233,6 +233,9 @@ export default function SettingsApp(): ReactElement {
   // 导出进行中（防连点叠两个另存为对话框）；导出结果提示（成功给路径、失败给原因）
   const [exporting, setExporting] = useState(false)
   const [exportNote, setExportNote] = useState('')
+  // 导入进行中（防连点叠两个「打开」对话框）；导入结果提示
+  const [importing, setImporting] = useState(false)
+  const [importNote, setImportNote] = useState('')
 
   // 启动回填偏好 + 订阅后续变更
   useEffect(() => {
@@ -393,6 +396,38 @@ export default function SettingsApp(): ReactElement {
         setExportNote(`导出失败：${err instanceof Error ? err.message : String(err)}`)
       })
       .finally(() => setExporting(false))
+  }
+
+  /**
+   * 导入数据（SPEC-data-import）：与导出一对。
+   * 主进程做校验、规范化与合并；这里只触发并把结果显示在行内。
+   * 只合并不覆盖，所以不需要二次确认——最坏情况是多出几条数据，不会删掉现有的。
+   */
+  const runImport = (): void => {
+    if (importing) return
+    setImporting(true)
+    setImportNote('')
+    window.island
+      .importData()
+      .then((r) => {
+        if (r.ok) {
+          const added = r.added ?? { todos: 0, schedule: 0 }
+          const skipped = r.skipped ?? { todos: 0, schedule: 0 }
+          const skipSum = skipped.todos + skipped.schedule
+          setImportNote(
+            `已导入待办 ${added.todos} 条、日程 ${added.schedule} 条` +
+              (skipSum > 0 ? `（跳过重复 ${skipSum} 条）` : '')
+          )
+        } else if (r.canceled) {
+          setImportNote('')
+        } else {
+          setImportNote(`导入失败：${r.detail ?? r.reason ?? '未知原因'}`)
+        }
+      })
+      .catch((err: unknown) => {
+        setImportNote(`导入失败：${err instanceof Error ? err.message : String(err)}`)
+      })
+      .finally(() => setImporting(false))
   }
 
   /** 开机自启：先乐观翻转，再以主进程实际状态校准 */
@@ -656,6 +691,16 @@ export default function SettingsApp(): ReactElement {
                     {exporting ? '导出中…' : '导出…'}
                   </button>
                 </Row>
+                <Row label="导入数据" hint="从备份 JSON 合并待办和日程（不覆盖现有数据）">
+                  <button
+                    type="button"
+                    className="set-btn"
+                    disabled={importing}
+                    onClick={runImport}
+                  >
+                    {importing ? '导入中…' : '导入…'}
+                  </button>
+                </Row>
               </div>
               <div className="set-card">
                 <div className="pet-set-head">全屏时怎么办</div>
@@ -732,6 +777,7 @@ export default function SettingsApp(): ReactElement {
                 </Row>
               </div>
               {exportNote ? <div className="set-note">{exportNote}</div> : null}
+              {importNote ? <div className="set-note">{importNote}</div> : null}
             </section>
           ) : section === 'appearance' ? (
             <section className="set-page">

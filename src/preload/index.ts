@@ -285,6 +285,24 @@ const api = {
   exportData(): Promise<ExportResult> {
     return ipcRenderer.invoke('app:export-data')
   },
+  /**
+   * 数据导入（SPEC-data-import）：弹主进程原生「打开」，把备份 JSON 合并回本机。
+   * 只合并不覆盖；返回新增与跳过的条数供设置窗口显示。
+   */
+  importData(): Promise<ImportResult> {
+    return ipcRenderer.invoke('app:import-data')
+  },
+  /**
+   * 导入完成后主进程广播（SPEC-data-import）：岛收到要重算统计并让面板重拉列表。
+   * 返回取消订阅函数。
+   */
+  onDataImported(cb: () => void): () => void {
+    const h = (): void => cb()
+    ipcRenderer.on('data:imported', h)
+    return () => {
+      ipcRenderer.removeListener('data:imported', h)
+    }
+  },
   /** 界面偏好（US-032）：读 / 写。存 userData/prefs.json（localStorage 跨重启会丢，不用它） */
   prefsGet(): Promise<PrefsShape> {
     return ipcRenderer.invoke('prefs:get')
@@ -596,6 +614,16 @@ export interface ExportResult {
   canceled?: boolean
   path?: string
   reason?: 'canceled' | 'empty' | 'failed'
+  detail?: string
+}
+
+/** 导入结果（与主进程 importStore.ImportResult 保持一致） */
+export interface ImportResult {
+  ok: boolean
+  canceled?: boolean
+  added?: { todos: number; schedule: number }
+  skipped?: { todos: number; schedule: number }
+  reason?: 'canceled' | 'invalid' | 'failed'
   detail?: string
 }
 

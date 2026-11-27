@@ -410,9 +410,12 @@ const IcoClock = (): React.JSX.Element => (
 function TodoPanel({
   onDonePulse,
   onStats,
+  refreshTick,
 }: {
   onDonePulse: () => void
   onStats: (done: number, total: number) => void
+  /** 外部要求重拉列表（SPEC-data-import：导入完成后刷新）。变化即重拉 */
+  refreshTick: number
 }): React.JSX.Element {
   const [todos, setTodos] = useState<Todo[]>([])
   const [items, setItems] = useState<ScheduleItem[]>([])
@@ -444,7 +447,8 @@ function TodoPanel({
     return () => {
       alive = false
     }
-  }, [])
+    // refreshTick 变化时重拉（导入数据后）；挂载时也拉一次
+  }, [refreshTick])
 
   // 时间面板开着时，点面板外自动收起
   useEffect(() => {
@@ -1656,7 +1660,7 @@ function MonthCalendar({
 }
 
 /** 日程面板：左月历 + 右当日安排（日程+待办混排），可带时间（到点弹系统提醒） */
-function SchedulePanel(): React.JSX.Element {
+function SchedulePanel({ refreshTick }: { refreshTick: number }): React.JSX.Element {
   const [items, setItems] = useState<ScheduleItem[]>([])
   const [todos, setTodos] = useState<Todo[]>([])
   const [text, setText] = useState('')
@@ -1695,7 +1699,8 @@ function SchedulePanel(): React.JSX.Element {
   useEffect(() => {
     void window.island.scheduleList().then(setItems)
     void window.island.todosList().then(setTodos)
-  }, [])
+    // refreshTick 变化时重拉（导入数据后）；挂载时也拉一次
+  }, [refreshTick])
 
   // 时间面板开着时，点面板外自动收起
   useEffect(() => {
@@ -3834,6 +3839,17 @@ export default function App(): React.JSX.Element {
     if (!expanded) refreshTodoStats()
   }, [expanded, refreshTodoStats])
 
+  // 导入数据后要求已挂载的待办/日程面板重拉列表（SPEC-data-import）。
+  // 用自增 tick 传给面板当 useEffect 依赖，不重挂组件、不丢正在编辑的草稿。
+  const [dataTick, setDataTick] = useState(0)
+  useEffect(() => {
+    return window.island.onDataImported(() => {
+      setDataTick((t) => t + 1)
+      // 收起态统计也立刻重算（导入可能发生在收起状态）
+      refreshTodoStats()
+    })
+  }, [refreshTodoStats])
+
   // 通知未读回调（NotifyPanel 上抛）
   const onNotifyUnread = useCallback((n: number) => setNotifyUnread(n), [])
 
@@ -4841,7 +4857,7 @@ export default function App(): React.JSX.Element {
                 } ${pageReady ? 'page-ready' : ''}`}
               >
                 {page === 0 ? (
-                  <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} />
+                  <TodoPanel onDonePulse={onDonePulse} onStats={onTodoStats} refreshTick={dataTick} />
                 ) : page === 1 ? (
                   <ShelfPanel />
                 ) : page === 2 ? (
@@ -4851,7 +4867,7 @@ export default function App(): React.JSX.Element {
                     onOpenUpdate={openUpdateSettings}
                   />
                 ) : page === 3 ? (
-                  <SchedulePanel />
+                  <SchedulePanel refreshTick={dataTick} />
                 ) : (
                   <MusicPanel
                     onLyricOpenChange={onLyricOpenChange}

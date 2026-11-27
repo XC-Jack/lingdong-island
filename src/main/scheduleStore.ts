@@ -194,3 +194,34 @@ export function stopScheduleStore(): void {
     timer = null
   }
 }
+
+/**
+ * 把导入的日程合并进本机列表（SPEC-data-import）。
+ *
+ * 与待办不同，日程有内存态 `items`（提醒检查每分钟读它），所以合并必须落在 `items` 上、
+ * 再 save()——直接写文件会让下一次 `schedule:add` 用旧内存把导入结果覆盖掉。
+ *
+ * 去重：同 id 或同内容指纹（`text|day|time`）都跳过。指纹不带 done/reminded，
+ * 因为「同一件事同一天同一时刻」就是同一条，完成状态差异不该让它重复进来。
+ */
+export function mergeSchedule(
+  incoming: ScheduleItem[]
+): { list: ScheduleItem[]; added: number; skipped: number } {
+  const fp = (it: ScheduleItem): string => `${it.text}|${it.day}|${it.time ?? ''}`
+  const seenIds = new Set(items.map((i) => i.id))
+  const seenFps = new Set(items.map(fp))
+  let added = 0
+  let skipped = 0
+  for (const it of incoming) {
+    if (seenIds.has(it.id) || seenFps.has(fp(it))) {
+      skipped += 1
+      continue
+    }
+    items.push(it)
+    seenIds.add(it.id)
+    seenFps.add(fp(it))
+    added += 1
+  }
+  if (added > 0) save()
+  return { list: items, added, skipped }
+}
