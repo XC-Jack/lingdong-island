@@ -3311,7 +3311,7 @@ export default function App(): React.JSX.Element {
   // 各页上次量到的尺寸：切页前先按它把窗口扩好，新页渲染完时窗口往往已经到位，
   // 把「变大」那条路径的空白压到 0（首次访问某页没有缓存，仍走回执等待，SPEC-switch-size-sync）。
   const pageSizeCache = useRef<Record<number, { w: number; h: number }>>({})
-  // 组件网格的尺寸：返回网格也要提前扩窗（网格 330 比多数页高，2026-11-24 快速点击实测
+  // 组件网格的尺寸：返回网格也要提前扩窗（网格 362 比多数页高，2026-11-24 快速点击实测
   // 窗口比岛矮 27.5px、持续约 100ms，网格底部被裁——就是用户说的「点太快有点卡」）。
   const gridSizeCache = useRef<{ w: number; h: number } | null>(null)
   // 最近一次上报/打算用的窗口尺寸。window.innerHeight 要等主进程 setBounds 生效才更新，
@@ -4113,7 +4113,7 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(fallback)
     }
   }, [page])
-  // 回到网格：网格 330 比多数页高，先按缓存把窗口扩好，再切视图 —— 否则网格会先被
+  // 回到网格：网格 362 比多数页高，先按缓存把窗口扩好，再切视图 —— 否则网格会先被
   // 小窗口裁掉底部，等 80ms 去抖的 ResizeObserver 上报后才补上（实测约 100ms）。
   useLayoutEffect(() => {
     if (view !== 'grid' || !expandedRef.current) return
