@@ -521,10 +521,13 @@ body {
 /* 每页固定高度（布局 px，= 该页当前完整内容实测屏高 ÷ 0.75）。
    2026-11-24 用户选择「每页各自固定」：页内不再随任务数/消息数/浮层伸缩；
    切页时窗口仍会换一次尺寸。改这些值前先量该页屏高，并同步 docs/facts/视觉设计规范.md。
-     view-grid 330（视觉 247.4）、待办 310（232.7）、置物架 251（188.4）、
-     通知 292（219.2）、日程 339（254.4）、音乐 292（219.1，有歌曲时的历史实测值）。 */
+     view-grid 362（视觉 271.5）、待办 310（232.7）、置物架 251（188.4）、
+     通知 292（219.2）、日程 339（254.4）、音乐 292（219.1，有歌曲时的历史实测值）。
+   view-grid 2026-11-27 由 330 抬到 362（SPEC-widget-drag）：五张卡改成等大后
+   网格从「两行方格 + 一条矮宽卡」变成三行 88 高方格，实测网格 322 + 上下内边距 40 = 362，
+   沿用 330 会把最后一行裁掉 12 布局 px。透明玻璃主题卡更高（96），另见下面的覆盖。 */
 .island.expanded.view-grid {
-  height: 330px;
+  height: 362px;
 }
 
 .island.expanded.page-0 {
@@ -1290,7 +1293,9 @@ body {
   gap: 10px;
 }
 
-/* 组件卡：2 列方格，音乐页横跨两列的宽卡 */
+/* 组件卡：2 列方格，五张卡等大（2026-11-27 SPEC-widget-drag）。
+   音乐卡原来横跨两列，用户把它拖到中间时两列格子塞不下宽卡，中间会空出一格、
+   后面的卡整体错位；改成等大后任意顺序都自动排满。 */
 .widget {
   position: relative;
   display: flex;
@@ -1307,6 +1312,8 @@ body {
   text-align: left;
   cursor: pointer;
   overflow: hidden;
+  /* 长按拖动时不要顺带选中卡片里的文字 */
+  user-select: none;
   transition:
     background 160ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1318,17 +1325,36 @@ body {
   transform: scale(0.97);
 }
 
-.widget.wide {
-  grid-column: span 2;
-  min-height: 54px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto auto;
-  column-gap: 10px;
-  align-items: center;
+/* ---------- 组件卡长按拖动（SPEC-widget-drag，2026-11-27） ----------
+   iOS 主屏式：被拖的卡浮在光标下，其余卡实时滑开让位（松手前就看到最终位置）。
+   位移全部由 App 写内联 transform（要除以 .app 的 zoom），这里只管观感与过渡。
+
+   两条过渡分开写，不能共用一个：
+   - 被拖那张必须 transition:none —— 否则 160ms 缓动让卡「粘在鼠标后面」；
+   - 其余卡要 160ms 缓动 —— 让位时是滑过去的，不是瞬移。 */
+.widget.wg-dragging {
+  z-index: 5;
+  cursor: grabbing;
+  /* 抬起：阴影比卡面高一档，四套主题通用（半透明黑，不染色） */
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.32),
+    0 2px 6px rgba(0, 0, 0, 0.2);
+  /* 换成不透明底：卡面本身是 30%~4.5% 白的半透明，压在别的卡上会两边文字互相透出来
+     （2026-11-27 截图核对时发现，看着像糊成一片）。--bg-pop 是各主题的弹层不透明底，
+     四套自动适配，不新增裸色值。 */
+  background: var(--bg-pop);
+  /* 跟手要快：不能有 .widget 上那 160ms 的缓动拖影 */
+  transition: none;
 }
-.widget.wide .widget-icon {
-  grid-row: span 2;
+/* 拖动期间整张网格的其余卡：transform 走缓动，让位是滑过去的 */
+.wg-body.wg-reflow .widget:not(.wg-dragging) {
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* 让位中的卡不抢指针事件：落点靠槽位快照算，卡片飘动不该改变命中结果 */
+  pointer-events: none;
+}
+/* 被拖的卡压在最上层，别被后面让位的卡盖住 */
+.wg-body.wg-reflow .widget.wg-dragging {
+  position: relative;
 }
 
 /* 彩色小图标：iOS 组件里每个 App 一个色相。全部由现有 token 派生，不新增裸色值 */
@@ -1382,9 +1408,6 @@ body {
   text-overflow: ellipsis;
   max-width: 100%;
 }
-.widget.wide .widget-meta {
-  margin-top: 0;
-}
 
 /* 待办卡右下角的进度环（与头部 n/m 同一份统计） */
 .widget-ring {
@@ -1427,6 +1450,11 @@ body {
 }
 [data-theme='glass-clear'] .widget:hover {
   background: rgba(255, 255, 255, 0.08);
+}
+/* 透明玻璃的卡是 96 高（另三套 88），三行网格多占 24 布局 px：
+   固定高度跟着抬到 386，否则最后一行被裁（2026-11-27 SPEC-widget-drag 实测）。 */
+[data-theme='glass-clear'] .island.expanded.view-grid {
+  height: 386px;
 }
 [data-theme='glass-clear'] .widget-icon,
 [data-theme='glass-clear'] .widget-ring {
@@ -1488,19 +1516,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-}
-/* 音乐宽卡：贴纸占左侧两行，文字在右 */
-[data-theme='glass-clear'] .widget.wide {
-  min-height: 56px;
-  padding: 9px 12px;
-}
-[data-theme='glass-clear'] .widget.wide .widget-sticker {
-  grid-row: span 2;
-  width: 30px;
-  height: 30px;
-}
-[data-theme='glass-clear'] .widget.wide .widget-label {
-  margin-top: 0;
 }
 
 /* 功能页左上角的返回键（回组件首页）。尺寸与徽章一致（30），圆形底 */

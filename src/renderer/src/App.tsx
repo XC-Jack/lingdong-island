@@ -16,6 +16,14 @@ const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, sti
 const AUTO_COLLAPSE_MS = 700
 /** 渲染层整体缩放（styles.css `.app` 的 zoom）。getBoundingClientRect 是屏幕 px，样式写的是布局 px */
 const ZOOM = 0.75
+/**
+ * 组件网格长按拖动的触发时长（SPEC-widget-drag）。
+ * 350ms 而不是 200ms：太短会把「按住稍久一点再松手」的普通点击误判成拖动，
+ * 用户想点开组件却只挪了一下位置。
+ */
+const GRID_LONG_PRESS_MS = 350
+/** 长按未满就把指针移开超过这个距离（屏幕 px）→ 放弃长按，按普通点击处理 */
+const GRID_LONG_PRESS_SLOP = 6
 
 /**
  * 主题落到 `<html data-theme>`（SPEC-island-themes / SPEC-glass-clear）。
@@ -3228,6 +3236,19 @@ export default function App(): React.JSX.Element {
   const bannerTimer = useRef<number | null>(null)
   const bannerCountRef = useRef<number>(0)
   const hoverRef = useRef(false)
+  /* 组件网格长按拖动的运行时标记（SPEC-widget-drag）。
+     声明在这么早的位置，是因为 scheduleCollapse（下面）要读 gridDragging 决定「拖动中不收起」；
+     拖动本身的完整逻辑在 openPageFromGrid 附近，用同一批 ref。 */
+  /** 长按计时器、按下时的屏幕坐标、当前指针 id */
+  const gridPress = useRef<{ timer: number; x: number; y: number; id: number } | null>(null)
+  /** 拖动起点（屏幕 px）：长按成功那一刻记下，之后所有位移都相对它算 */
+  const gridDragOrigin = useRef<{ x: number; y: number } | null>(null)
+  /** 拖动是否真的开始了（区分「按下没动」与「已经在拖」） */
+  const gridDragging = useRef(false)
+  /** 长按成功后指针实际移动过的最大距离（屏幕 px）：太小就当作「长按但没拖」，不换位 */
+  const gridDragMoved = useRef(0)
+  /** 拖动结束后要吞掉紧随的 click，避免松手顺带打开组件页 */
+  const gridSwallowClick = useRef(false)
   // 岛内右键的原生菜单是否打开（SPEC-app-menu-collapse）。菜单是独立窗口：打开瞬间岛会失焦，
   // 光标移向菜单时也会触发 mouseleave。这两条平时都会收岛，菜单开着时必须暂缓，
   // 否则用户还没来得及点「暂时隐藏灵动岛」，岛就缩回去了（2026-11-25 用户报障）。
@@ -3715,6 +3736,9 @@ export default function App(): React.JSX.Element {
       if (lyricOpenRef.current) return
       // 右键菜单开着（光标移到菜单上必然触发过 mouseleave）：这次不收，等菜单关闭再判断。
       if (appMenuOpenRef.current) return
+      // 正在长按拖动组件卡（SPEC-widget-drag）：拖到网格外沿时 island 会收到 mouseleave，
+      // 这时收岛等于把用户手里的卡凭空抽走。松手后 hover 状态自己会重新排收起。
+      if (gridDragging.current || gridPress.current !== null) return
       const el = document.activeElement
       if (hoverRef.current || (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable))) return
       setExpanded(false)
@@ -3837,6 +3861,11 @@ export default function App(): React.JSX.Element {
     if (!expanded) return
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        // 正在拖组件卡时 Esc 只取消这次拖动，不收起岛（SPEC-widget-drag）
+        if (gridDragging.current || gridPress.current !== null) {
+          endGridDrag()
+          return
+        }
         setExpanded(false)
         scheduleCollapse()
       }
@@ -4047,6 +4076,181 @@ export default function App(): React.JSX.Element {
     growWindowTo(gridSizeCache.current)
     setView('grid')
   }, [beginNavSnap, growWindowTo])
+
+  /* ---------- 组件网格长按拖动换位（SPEC-widget-drag，2026-11-27） ----------
+     用户原话「我鼠标长按某个组件的时候可以拖动它，然后随意摆放位置」。
+     为什么不用 HTML5 draggable：它是「按下即拖」，在网格里会和「点一下打开组件」抢手势，
+     手指一抖就把点击变成拖动。这里用 Pointer Events 做 350ms 长按判定，
+     长按成功后才进入拖动，短按照旧打开组件。
+
+     视觉按 iOS 主屏的做法：被拖的卡浮在光标下，其余卡**实时滑开让位**，
+     松手前就能看到最终位置。实现是「只动 transform、不动 DOM 顺序」：
+     - 被拖那张：translate = 光标位移（它留在自己的槽位里，只是视觉上飘起来）
+     - 其余每张：translate = 新槽位 − 原槽位（CSS 的 transform 过渡负责滑动）
+     为什么不用重排 DOM 的做法：重排会改变元素自身的布局位置，跟手的位移就失去参照，
+     每帧都要重新反算，还会让落点判断随布局抖动来回跳。
+
+     落点按**格子**算，不按卡片算：槽位在拖动全程不动（卡片只是被 transform 挪了位置），
+     所以用开始拖动时快照的槽位矩形判断光标落在第几格，结果稳定、不会震荡。 */
+  const [dragPage, setDragPage] = useState<number | null>(null)
+  const [dragSlot, setDragSlot] = useState<number | null>(null)
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  /** 拖动开始时的槽位快照：屏幕 px 矩形 + 每张卡的布局偏移（layout px） */
+  const gridSlots = useRef<{ rects: DOMRect[]; offsets: { x: number; y: number }[] } | null>(null)
+
+  const endGridDrag = (): void => {
+    if (gridPress.current) window.clearTimeout(gridPress.current.timer)
+    gridPress.current = null
+    gridDragOrigin.current = null
+    gridSlots.current = null
+    gridDragging.current = false
+    gridDragMoved.current = 0
+    setDragPage(null)
+    setDragSlot(null)
+    setDragOffset({ x: 0, y: 0 })
+  }
+
+  /** 光标落在第几个槽位（用拖动开始时的快照，槽位全程不动） */
+  const slotAt = (x: number, y: number): number | null => {
+    const snap = gridSlots.current
+    if (!snap) return null
+    for (let i = 0; i < snap.rects.length; i++) {
+      const r = snap.rects[i]
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return i
+    }
+    return null
+  }
+
+  const onWidgetPointerDown = (i: number) => (e: React.PointerEvent<HTMLElement>): void => {
+    if (e.button !== 0) return
+    gridDragging.current = false
+    gridSwallowClick.current = false
+    const x = e.clientX
+    const y = e.clientY
+    const id = e.pointerId
+    const timer = window.setTimeout(() => {
+      gridPress.current = null
+      // 快照当前槽位：rects 给落点判断，offsets 给「其余卡滑到新槽位」算位移
+      const cards = gridRef.current?.querySelectorAll<HTMLElement>('.widget[data-page]')
+      if (cards && cards.length > 0) {
+        const list = Array.from(cards)
+        gridSlots.current = {
+          rects: list.map((c) => c.getBoundingClientRect()),
+          offsets: list.map((c) => ({ x: c.offsetLeft, y: c.offsetTop }))
+        }
+      }
+      gridDragging.current = true
+      gridDragOrigin.current = { x, y }
+      setDragPage(i)
+      setDragSlot(null)
+      setDragOffset({ x: 0, y: 0 })
+      clearCollapseTimer()
+    }, GRID_LONG_PRESS_MS)
+    gridPress.current = { timer, x, y, id }
+    // 捕获指针：拖到窗口边缘甚至窗外也继续收 move/up，松手不会「丢事件」卡在拖动态
+    try {
+      e.currentTarget.setPointerCapture(id)
+    } catch {
+      /* 指针已失效，忽略：没有捕获时拖到窗外会提前结束，不影响点击 */
+    }
+  }
+
+  const onWidgetPointerMove = (e: React.PointerEvent<HTMLElement>): void => {
+    const p = gridPress.current
+    if (p !== null) {
+      // 还没到长按时长就把指针挪开超过容差 → 用户是在点或划，不是长按
+      if (Math.abs(e.clientX - p.x) > GRID_LONG_PRESS_SLOP || Math.abs(e.clientY - p.y) > GRID_LONG_PRESS_SLOP) {
+        window.clearTimeout(p.timer)
+        gridPress.current = null
+      }
+      return
+    }
+    const origin = gridDragOrigin.current
+    if (!gridDragging.current || dragPage === null || origin === null) return
+    const dx = e.clientX - origin.x
+    const dy = e.clientY - origin.y
+    gridDragMoved.current = Math.max(gridDragMoved.current, Math.hypot(dx, dy))
+    // 位移要除回 zoom：getBoundingClientRect 是屏幕 px，transform 写的是布局 px
+    setDragOffset({ x: dx / ZOOM, y: dy / ZOOM })
+    // 还没拖出一点距离就不让位：长按后原地松手不该换位（用户只是按久了）
+    if (gridDragMoved.current < GRID_LONG_PRESS_SLOP) return
+    // 拖出网格外时保持上一个落点（不要一离开就整片弹回去，那样看着像抖了一下）
+    const s = slotAt(e.clientX, e.clientY)
+    if (s !== null) setDragSlot(s)
+  }
+
+  const onWidgetPointerUp = (e: React.PointerEvent<HTMLElement>): void => {
+    const wasDragging = gridDragging.current
+    const from = dragPage
+    // 这几个值必须在 endGridDrag() 之前取——它会清空 ref/state，之后读到的一律是空
+    const moved = gridDragMoved.current
+    const slot = dragSlot ?? slotAt(e.clientX, e.clientY)
+    endGridDrag()
+    // 拖动期间 mouseleave 排的收起被 scheduleCollapse 主动放弃了（拖动中不收起），
+    // 这里补排一次：否则用户把卡拖到岛外松手后，岛会一直摊着不收。
+    if (wasDragging && !hoverRef.current) scheduleCollapse()
+    if (!wasDragging || from === null) return
+    // 拖动结束后浏览器仍会派发一次 click：吞掉它，否则会打开组件页
+    gridSwallowClick.current = true
+    window.setTimeout(() => {
+      gridSwallowClick.current = false
+    }, 0)
+    // 长按了但基本没动（只是按久了松手）：不换位，也不打开页面
+    if (moved < GRID_LONG_PRESS_SLOP || slot === null) return
+    reorderWidgets(from, slot)
+  }
+
+  /**
+   * 把 from 放到第 slot 个格子上，其余卡顺移（SPEC-widget-drag）。
+   *
+   * 语义是「拖到第几格就放第几格」——比设置窗口那套「上半插前 / 下半插后」更适合网格：
+   * 两列布局里一张卡有上下左右四个邻位，按左右半边判前后会跟直觉打架。
+   * 这里直接以落点格号为最终下标，用户看到哪张卡占哪格，松手就是那个结果。
+   */
+  const reorderWidgets = (from: number, slot: number): void => {
+    const pages = pagesCustom.pages
+    const fi = pages.indexOf(from)
+    if (fi === -1) return
+    const rest = pages.filter((p) => p !== from)
+    // 夹到合法范围（落点快照可能比当前页数多，理论上不会，防御一下）
+    const at = Math.max(0, Math.min(rest.length, slot))
+    rest.splice(at, 0, from)
+    if (rest.every((p, idx) => p === pages[idx])) return
+    const next = { ...pagesCustom, pages: rest }
+    pagesCustomDirty.current = true
+    setPagesCustom(next)
+    // 与设置窗口同一条链路：写主进程，广播回来两边一起刷新
+    window.island.prefsSet({ pagesCustom: next }).catch(() => {
+      /* 写失败下次还是旧顺序，不打扰用户 */
+    })
+  }
+
+  /**
+   * 拖动时的预览顺序：把被拖的卡插到落点格上，其余顺移。
+   * 和 reorderWidgets 同一套算法，只是不落盘——松手前卡片就按这个顺序让位。
+   */
+  const dragPreview = useMemo<number[] | null>(() => {
+    if (dragPage === null || dragSlot === null) return null
+    const rest = pagesCustom.pages.filter((p) => p !== dragPage)
+    const at = Math.max(0, Math.min(rest.length, dragSlot))
+    rest.splice(at, 0, dragPage)
+    return rest
+  }, [dragPage, dragSlot, pagesCustom.pages])
+
+  /** 某张卡此刻该有的 transform（layout px）：被拖的跟手，其余滑到预览槽位 */
+  const widgetTransform = (i: number, slotIndex: number): string | undefined => {
+    if (dragPage === null) return undefined
+    if (i === dragPage) return `translate(${dragOffset.x}px, ${dragOffset.y}px) scale(1.04)`
+    const preview = dragPreview
+    const snap = gridSlots.current
+    if (!preview || !snap) return undefined
+    const to = preview.indexOf(i)
+    if (to === -1 || to === slotIndex) return undefined
+    const from = snap.offsets[slotIndex]
+    const target = snap.offsets[to]
+    if (!from || !target) return undefined
+    return `translate(${target.x - from.x}px, ${target.y - from.y}px)`
+  }
 
   // 缩放动画（iOS 打开 App 的手感）：从起点矩形放大到目标容器的矩形。
   // 只在「点组件进去 / 点返回出来」时跑；窗口尺寸仍走原有的 setExpandedSize 链路。
@@ -4325,8 +4529,10 @@ export default function App(): React.JSX.Element {
           <>
           {view === 'grid' ? (
             /* 组件首页（SPEC-island-widget-grid）：iOS 主屏式组件网格。
-               待办/置物架/通知/日程各一个方格，音乐一条宽卡；按「页面管理」的显隐与顺序排列。
-               点任一组件 → 记下它的矩形，交给 view 变化后的 layout effect 做放大动画。 */
+               五张卡等大（2026-11-27 SPEC-widget-drag：音乐不再是横跨两列的宽卡，
+               否则拖到中间会挤出一个空洞）；按「页面管理」的显隐与顺序排列。
+               点任一组件 → 记下它的矩形，交给 view 变化后的 layout effect 做放大动画。
+               长按 350ms 可拖动换位（见上面的 onWidgetPointer*）。 */
             <div className="widget-grid" ref={gridRef}>
               <div className="wg-head">
                 <span className="wg-brand">灵动岛</span>
@@ -4341,8 +4547,8 @@ export default function App(): React.JSX.Element {
                     .map((k) => renderStatusItem(k))}
                 </span>
               </div>
-              <div className="wg-body">
-                {enabledPages.map((i) => {
+              <div className={`wg-body${dragPage !== null ? ' wg-reflow' : ''}`}>
+                {enabledPages.map((i, slotIndex) => {
                   const pct = i === 0 && todoStats.total > 0 ? todoStats.done / todoStats.total : 0
                   const meta =
                     i === 0
@@ -4361,15 +4567,30 @@ export default function App(): React.JSX.Element {
                   // 「透明玻璃」主题的说明行：数字已经单独放在右上，这里只留单位/范围，避免重复
                   const sub =
                     i === 0 ? '已完成' : i === 1 ? '文件收纳' : i === 2 ? '条未读' : i === 3 ? '今天与以后' : '播放控制'
+                  const dragging = dragPage === i
+                  const tf = widgetTransform(i, slotIndex)
                   return (
                     <button
                       key={i}
                       type="button"
-                      className={`widget ${i === 4 ? 'wide' : ''}`}
+                      className={`widget ${dragging ? 'wg-dragging' : ''}`}
                       data-page={i}
                       aria-label={`打开${PAGE_META[i].label}`}
+                      // 长按拖动（SPEC-widget-drag）。draggable=false 挡住浏览器自带的
+                      // 「拖拽图片/文字」原生行为，否则按住卡里的 <img>/文字会先触发它。
+                      draggable={false}
+                      style={tf ? { transform: tf } : undefined}
+                      onPointerDown={onWidgetPointerDown(i)}
+                      onPointerMove={onWidgetPointerMove}
+                      onPointerUp={onWidgetPointerUp}
+                      onPointerCancel={endGridDrag}
                       onClick={(e) => {
                         e.stopPropagation()
+                        // 刚拖完的那次 click 不算点击：否则松手会顺带打开组件页
+                        if (gridSwallowClick.current) {
+                          gridSwallowClick.current = false
+                          return
+                        }
                         openPageFromGrid(i, e.currentTarget)
                       }}
                     >
