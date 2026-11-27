@@ -101,3 +101,17 @@
 2. **拖动期间不碰 React 状态**：新增 `GridDragSession`，起拖时一次性快照卡片矩形与 offset，之后每帧直接写 `el.style.transform`；pointermove 用 `requestAnimationFrame` 合并，一帧最多画一次。被拖卡的位移、其余卡的让位位移全部在 DOM 层算，React 全程不重渲染。
 3. **松手不闪一帧**：`endGridDrag` 不立刻清 transform，而是把卡片列表存进 `pendingDragClear`，由 `useLayoutEffect` 在 React 重排之后、绘制之前清掉，避免旧位置闪一下。
 4. **一个真 bug**：Esc / pointercancel 取消拖动时没设置「吞掉下一次 click」的标志，松手后浏览器合成的 click 会打开组件页。探针实测 click 在松手后 317ms 才到，最初用 0ms 定时器复位标志太早。改成 500ms 时间窗（`swallowNextClick` + `gridSwallowTimer`）。
+
+## 八、验收记录
+
+### 8.1 用户试用（2026-11-27）
+
+- 交付物：分支 `widget-drag` 提交 `97b5cdf`，本机预览版（`npm start`，electron 进程 4 个常驻）。
+- 用户试用后的原话：「没什么问题，合并吧」。
+- 覆盖到的：主路径——展开岛 → 网格按下拖动 → 换位 → 松手 → 顺序变化；点击卡片仍能打开组件页。
+- **未覆盖**：SPEC 第五节 A1–A6 的逐条自动化核对（自检已跑，但用户验收是人工试用，不是按验收条件逐条走）；真实鼠标手感之外的触屏 / 高 DPI。
+- 结论：用户确认可用，授权合并回 `main`。
+
+### 8.2 独立验收状态
+
+按 `docs/工程规则.md` 第三节第 5 条（2026-11-11 用户决定），独立验收**按批进行**——本功能随本批功能一起，在合并后对 `main` 的固定提交做一次统一验收。因此本条 SPEC 目前**尚无独立验收记录**，只有用户试用确认。合并后若批量验收查出问题，在 `main` 上开修复分支处理。
