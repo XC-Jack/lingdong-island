@@ -61,7 +61,12 @@
 2. `glass-clear` 下岛体背景不含深色叠加，背后桌面经模糊后可见；岛**没有外投影**。
 3. 组件首页五张卡片：贴纸在左上、数字在右上、标题与说明在左下；待办数字 = 完成/总数。
 4. 切回 `glass-light` / `glass-dark` / `mono`，三套主题的岛外观与改动前逐像素一致（截图对照）。
+   - **2026-11-27 订正**：`glass-dark` 这一条已被 `SPEC-glass-dark-liquid`（2026-11-25，合并 `c286e39`、随 0.6.4 发版）
+     推翻——暗色玻璃从「近黑实心」改成真透视玻璃，现在**会抓屏**，外观与当时不同属预期，不是回归。
+     `glass-light` 与 `mono` 的对照仍然有效。
 5. 切到 `glass-dark`（纯黑）时仍不抓屏，不出现底图；切到 `glass-clear` 时抓屏生效。
+   - **2026-11-27 订正：本条已作废**。现行行为是「`mono` 不抓屏，其余三套（`glass-light` / `glass-dark` / `glass-clear`）
+     都抓屏」，见 `src/renderer/src/App.tsx:3961-3968` 的判断 `if (islandTheme === 'mono' || avoidHidden)`。[实测]
 6. `npm run typecheck`、`npm run build` EXIT=0；受影响的 e2e 全过。
 7. 设置窗口的浅色/深色无回归：四张卡在设置页里都可读、可点。
 

@@ -1,5 +1,11 @@
 # SPEC：视觉换皮第一步（不改结构）
 
+> **2026-11-27 订正**：本文记录的色值是 2026-11-24 当时的中间状态，之后被 `SPEC-island-themes`（主题 token 体系）
+> 与 `SPEC-visual-refresh` 后续轮次整体替换，**下文「实际改了什么」表里的具体色值不要当作现状**：
+> 当时写的强调色 `#7c9cff` 现为 `#0a6cf0`（`glass-light` 默认主题，`src/renderer/src/styles.css:50`）；
+> 底色也不再是 `rgba(26,27,31,0.97)`，默认主题已换成亮色乳白玻璃。[实测]
+> 现行取值以 `docs/facts/视觉设计规范.md` 与 `styles.css` 为准。
+
 - 建立日期：2026-11-24
 - 基线：`switch-size-sync` `a98d191`（切页尺寸同步修复，用户机器上跑的 0.4.3 就是它）
 - 任务分支：`visual-refresh`
@@ -53,6 +59,8 @@
 - A1 `npm run typecheck`、`npm run build` 通过。
 - A2 五个展开页 + 收起态各截一张图，与改动前并排对比，逐条对照本文第一节六个问题：纯黑→带色深灰、紫→蓝、层次靠亮度、圆角收敛、字号上调。
 - A3 对比度抽检：主文字、次要文字、辅助文字各一组，用工具算出实际比值并记录。
+  - **2026-11-27 订正**：本条当时的证据是截图与比值记录，已随 `.tmp/` 清理；且色值已被后续主题轮次替换
+    （见文首订正）。**本条不能再按原证据复核**；如需现行对比度，须针对当前主题重新抽检。
 - A4 回归：`e2e-head-order`、`e2e-collapse-order`、`e2e-todo-today`、`e2e-schedule-day`、`e2e-bell-notify`、`e2e-shelf-view-pref`、`e2e-banner-fit`、`e2e-code-hint`、`perf-click-latency`。
 - A5 用户在自己机器上看过并认可方向（审美属主观，最终由用户判定）。
 
