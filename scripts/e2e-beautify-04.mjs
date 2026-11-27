@@ -338,16 +338,46 @@ const main = async () => {
       const todayMarkCs = todayMark ? getComputedStyle(todayMark) : null
       // 颜色解析：这段 JS 是塞进模板字符串再传给页面的，反斜杠会被吃掉，
       // 所以一律用字符类取数字，不要写转义括号。
-      const nums = (s) => (s.match(/[0-9.]+/g) || []).map(Number)
-      const near3 = (p, r, g, b, tol) => Math.abs(p[0] - r) <= tol && Math.abs(p[1] - g) <= tol && Math.abs(p[2] - b) <= tol
-      // 描边：box-shadow 里应有蓝色（2026-11-11 第二轮改成描边态，不再用底色）
-      const ringNums = nums(cs.boxShadow || '')
-      const hasBlueRing = ringNums.length >= 3 && !near3(ringNums, 242, 243, 245, 12) && (ringNums[0] - 100) ** 2 + (ringNums[1] - 181) ** 2 + (ringNums[2] - 246) ** 2 < 9000
-      // 打开日程页默认选中今天：此时形态 = 蓝实心底 + 一圈白描边（区分「今天」与「我点的某天」）。
+      //
+      // 2026-11-27（SPEC-fix-e2e-accent-token）：原先这里写死旧强调蓝 #64b5f6
+      // （100,181,246），主题换色后断言长期假红，且不同主题下时红时绿。
+      // 改为读当前主题的 --accent 再算距离，换主题/换配色都自动跟随。
+      // 只从颜色函数那一段里取数字：box-shadow 里还混着偏移/模糊/扩展量，
+      // 直接取整串的前三个数会取到 0 0 0。
+      const pickColor = (s) => {
+        if (!s) return null
+        const at = s.indexOf('color(srgb')
+        if (at >= 0) {
+          const seg = s.slice(at, s.indexOf(')', at) + 1)
+          const n = (seg.match(/[0-9.]+/g) || []).map(Number)
+          if (n.length < 3) return null
+          return [n[0] * 255, n[1] * 255, n[2] * 255]
+        }
+        const rgAt = s.indexOf('rgb')
+        if (rgAt >= 0) {
+          const seg = s.slice(rgAt, s.indexOf(')', rgAt) + 1)
+          const n = (seg.match(/[0-9.]+/g) || []).map(Number)
+          if (n.length < 3) return null
+          return [n[0], n[1], n[2]]
+        }
+        return null
+      }
+      const dist2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
+      // 用探针元素把 var(--accent) 解析成实际 rgb（getPropertyValue 拿到的是原始写法，可能是 #hex）
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--accent)'
+      document.body.appendChild(probe)
+      const accentColor = pickColor(getComputedStyle(probe).color)
+      probe.remove()
+      // 距离阈值：同一 token 渲染出来应为 0；留 60² 的余量容纳取整与 color-mix 舍入
+      const NEAR = 60 ** 2
+      const ringColor = pickColor(cs.boxShadow || '')
+      const hasAccentRing = !!(accentColor && ringColor && dist2(ringColor, accentColor) < NEAR)
+      // 打开日程页默认选中今天：此时形态 = 强调色实心底 + 一圈反色描边（区分「今天」与「我点的某天」）。
       const isSelected = cell.classList.contains('selected')
-      const bgNums = nums(cs.backgroundColor || '')
-      const isBlueBg = bgNums.length >= 3 && (bgNums[0] - 100) ** 2 + (bgNums[1] - 181) ** 2 + (bgNums[2] - 246) ** 2 < 9000
-      const todayRingOk = isSelected ? isBlueBg : hasBlueRing
+      const bgColor = pickColor(cs.backgroundColor || '')
+      const isAccentBg = !!(accentColor && bgColor && dist2(bgColor, accentColor) < NEAR)
+      const todayRingOk = !!accentColor && (isSelected ? isAccentBg : hasAccentRing)
       // 对称性：所有可见格子的高度必须一致（用户 2026-11-11 反馈「今天那行被撑高」）
       const heights = cells.map((b) => Math.round(b.getBoundingClientRect().height))
       const minH = Math.min(...heights)
@@ -360,7 +390,8 @@ const main = async () => {
         selected: cell.classList.contains('selected'),
         bg: cs.backgroundColor,
         ringColor: cs.boxShadow,
-        hasBlueRing,
+        hasAccentRing,
+        accentColor: accentColor ? 'rgb(' + accentColor.map((n) => Math.round(n)).join(', ') + ')' : 'none',
         todayRingOk,
         todayMarkColor: todayMarkCs ? todayMarkCs.backgroundColor : 'none',
         tagCount: cell.querySelectorAll('.cal-tag, .cal-tags, .cal-more').length,
@@ -387,7 +418,11 @@ const main = async () => {
       const isWhiteBg = near(p[0], 242) && near(p[1], 243) && near(p[2], 245) && (p.length < 4 || p[3] > 0.5)
       return !isWhiteBg
     })(), `bg=${cv.bg} selected=${cv.selected}`)
-    ok('C2b 未选中时今天靠蓝描边标识 / 选中时是蓝底，绝不再是白底', cv.todayRingOk === true, `ring=${cv.ringColor} selected=${cv.selected}`)
+    ok(
+      'C2b 未选中时今天靠强调色描边标识 / 选中时是强调色底，绝不再是白底',
+      cv.todayRingOk === true,
+      `accent=${cv.accentColor} ring=${cv.ringColor} selected=${cv.selected}`
+    )
     ok('C2c 今天的点点与底色反色（选中蓝底→浅点；未选中深底→亮蓝点）', (() => {
       if (!cv.found) return false
       const p = (cv.todayMarkColor.match(/[0-9.]+/g) || []).map(Number)
