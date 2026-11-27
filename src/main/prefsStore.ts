@@ -69,6 +69,12 @@ interface PrefsShape {
    */
   desktopLyricEnabled?: boolean
   /**
+   * 收起态是否显示歌词条（SPEC-collapsed-lyric-bar）。
+   * 缺失 = true（用户 2026-11-27 点名要的功能，交付即可用）。
+   * 开启时收起态会维持音乐桥接租约，代价约 100 MB 内存；关掉即回到按需启动。
+   */
+  collapsedLyric?: boolean
+  /**
    * 用户锁定的音源（SPEC-music-source-strategy）。存小写进程名（不带 .exe），
    * 缺失 / 空串 = 自动跟随播放。
    */
@@ -321,6 +327,7 @@ function load(): PrefsShape {
     if (typeof parsed.desktopLyricEnabled === 'boolean') {
       out.desktopLyricEnabled = parsed.desktopLyricEnabled
     }
+    if (typeof parsed.collapsedLyric === 'boolean') out.collapsedLyric = parsed.collapsedLyric
     const pin = normalizeExeName(parsed.musicSourcePin)
     if (pin) out.musicSourcePin = pin
     const known = normalizeKnownPlayers(parsed.musicKnownPlayers)
@@ -412,7 +419,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
   const data = load()
   // 快照一份用于事后比较（load() 每次返回新对象，直接引用会被后续赋值改掉）
   const before = JSON.stringify(data)
-  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, islandTheme, desktopLyricEnabled, musicSourcePin, musicKnownPlayers } =
+  const { pagesCustom, shelfView, musicIntro, petSkin, petMode, petWindowPos, avoidMode, neteaseCdpMode, clockFormat, islandTheme, desktopLyricEnabled, collapsedLyric, musicSourcePin, musicKnownPlayers } =
     (payload ?? {}) as {
       pagesCustom?: unknown
       shelfView?: unknown
@@ -425,6 +432,7 @@ function applyPatch(payload: unknown): PrefsShape | null {
       clockFormat?: unknown
       islandTheme?: unknown
       desktopLyricEnabled?: unknown
+      collapsedLyric?: unknown
       musicSourcePin?: unknown
       musicKnownPlayers?: unknown
     }
@@ -461,6 +469,8 @@ function applyPatch(payload: unknown): PrefsShape | null {
   else if (islandTheme !== undefined) delete data.islandTheme
   if (typeof desktopLyricEnabled === 'boolean') data.desktopLyricEnabled = desktopLyricEnabled
   else if (desktopLyricEnabled !== undefined) delete data.desktopLyricEnabled
+  if (typeof collapsedLyric === 'boolean') data.collapsedLyric = collapsedLyric
+  else if (collapsedLyric !== undefined) delete data.collapsedLyric
   const pin = normalizeExeName(musicSourcePin)
   if (pin) data.musicSourcePin = pin
   else if (musicSourcePin !== undefined) delete data.musicSourcePin

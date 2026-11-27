@@ -226,6 +226,9 @@ export default function SettingsApp(): ReactElement {
   // 「词」第二下召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开
   const [desktopLyric, setDesktopLyric] = useState(true)
   const desktopLyricDirty = useRef(false)
+  // 收起态歌词条（SPEC-collapsed-lyric-bar）：默认开
+  const [collapsedLyric, setCollapsedLyric] = useState(true)
+  const collapsedLyricDirty = useRef(false)
   // 版本号与数据目录（appInfo 异步取，取不到就显示占位）
   const [info, setInfo] = useState<{ version: string; userData: string } | null>(null)
   // 自动更新状态（SPEC-auto-update）：null = 还没取到，按钮先不显示假状态
@@ -246,6 +249,7 @@ export default function SettingsApp(): ReactElement {
         if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
         if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
         if (!desktopLyricDirty.current) setDesktopLyric(prefs.desktopLyricEnabled ?? true)
+        if (!collapsedLyricDirty.current) setCollapsedLyric(prefs.collapsedLyric ?? true)
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
         if (v) setPagesCustom(v)
@@ -263,6 +267,7 @@ export default function SettingsApp(): ReactElement {
       if (!cdpModeDirty.current) setCdpMode(prefs.neteaseCdpMode ?? 'auto')
       if (!clockFormatDirty.current) setClockFormat(prefs.clockFormat ?? 'time')
       if (!desktopLyricDirty.current) setDesktopLyric(prefs.desktopLyricEnabled ?? true)
+      if (!collapsedLyricDirty.current) setCollapsedLyric(prefs.collapsedLyric ?? true)
     })
     return () => {
       alive = false
@@ -361,6 +366,16 @@ export default function SettingsApp(): ReactElement {
     desktopLyricDirty.current = true
     setDesktopLyric(next)
     window.island.prefsSet({ desktopLyricEnabled: next }).catch(() => {
+      /* 写失败下次还是旧值，不打扰用户 */
+    })
+  }
+
+  /** 收起态歌词条：乐观切换 + 写主进程（岛经 prefs:changed 当场生效） */
+  const toggleCollapsedLyric = (): void => {
+    const next = !collapsedLyric
+    collapsedLyricDirty.current = true
+    setCollapsedLyric(next)
+    window.island.prefsSet({ collapsedLyric: next }).catch(() => {
       /* 写失败下次还是旧值，不打扰用户 */
     })
   }
@@ -774,6 +789,23 @@ export default function SettingsApp(): ReactElement {
                     aria-label="点词第二下打开桌面歌词"
                     className={`set-switch ${desktopLyric ? 'on' : ''}`}
                     onClick={toggleDesktopLyric}
+                  >
+                    <span className="set-knob" />
+                  </button>
+                </Row>
+              </div>
+              <div className="set-card">
+                <Row
+                  label="收起胶囊显示歌词"
+                  hint="播放音乐时，收起态胶囊显示当前一句歌词（封面 + 歌词 + 节奏图标）。开启后会常驻音乐检测，约占 100 MB 内存；关掉则恢复按需启动。"
+                >
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={collapsedLyric}
+                    aria-label="收起胶囊显示歌词"
+                    className={`set-switch ${collapsedLyric ? 'on' : ''}`}
+                    onClick={toggleCollapsedLyric}
                   >
                     <span className="set-knob" />
                   </button>

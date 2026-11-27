@@ -3258,6 +3258,209 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string }[] = [
   { icon: IcoMusic, label: '音乐' },
 ]
 
+/**
+ * 收起态歌词条（SPEC-collapsed-lyric-bar）。
+ *
+ * 参考视频里的形态：播放时整条胶囊切成「封面 + 岛仔 + 当前一句歌词 + 节奏图标」，
+ * 不播放/没歌词时原样显示时间电量等状态组件。
+ *
+ * 为什么单独一个组件：音乐状态每秒都在推（播放位置），放在 App 根会让整棵岛跟着
+ * 4Hz 重渲染；这里自己订阅，只重渲染这一条。
+ *
+ * 为什么挂载时主动 musicGet()：收起态是常态，用户不会为了歌词先点开音乐页；
+ * 主进程的桥接是懒启动的，这里就是「有人用音乐」的那只手。musicDemand 每 60 秒续一次租，
+ * 卸载时交还，桥接按既有 2 分钟空闲规则回收。
+ */
+function CollapsedStatusRow({
+  enabled,
+  order,
+  renderItem,
+  onLyricMode,
+  petEnabled,
+  petSkin,
+  petMode,
+  mood
+}: {
+  /** 设置里「收起胶囊显示歌词」；关掉时完全不碰音乐桥接 */
+  enabled: boolean
+  order: CollapsedKey[]
+  renderItem: (k: CollapsedKey) => React.JSX.Element | null
+  /** 歌词条是否生效（决定岛根类名与窗口宽度上限），只在切换时回调 */
+  onLyricMode: (on: boolean) => void
+  petEnabled: boolean
+  petSkin: string
+  petMode: string
+  mood: 'idle' | 'happy'
+}): React.JSX.Element {
+  const [music, setMusic] = useState<MusicState | null>(null)
+  /** 歌词结果连同它对应的查询键一起存：只有键与当前歌曲一致的结果才拿来显示 */
+  const [lyric, setLyric] = useState<{ key: string; result: LyricResult } | null>(null)
+  const [, setTick] = useState(0)
+  const [coverErr, setCoverErr] = useState('')
+  const lyricForRef = useRef('')
+  /** 最近一次收到音乐快照的时刻：心跳发现太久没回包时补一次 musicGet（桥接可能被回收过） */
+  const stateAtRef = useRef(0)
+  /** 收到快照时的播放位置与时刻：两次快照之间按真实流逝时间外推（与音乐页同一口径） */
+  const posBaseRef = useRef<{ pos: number; at: number } | null>(null)
+
+  useEffect(() => {
+    if (!enabled) return
+    let alive = true
+    ensureClockWatcher()
+    const apply = (s: MusicState): void => {
+      if (!alive) return
+      stateAtRef.current = Date.now()
+      setMusic(s)
+    }
+    window.island.musicDemand(true)
+    void window.island.musicGet().then(apply)
+    const off = window.island.onMusicState(apply)
+    // 60 秒续一次「有人用」；若桥接被回收/崩溃，超过 15 秒没有回包就重新拉起。
+    // 为什么不用更密的心跳：桥接正常时每秒都在推，60 秒续租足够覆盖 120 秒租期。
+    const beat = window.setInterval(() => {
+      window.island.musicDemand(true)
+      if (Date.now() - stateAtRef.current > 15_000) {
+        void window.island.musicGet().then(apply)
+      }
+    }, 60_000)
+    return () => {
+      alive = false
+      off()
+      window.clearInterval(beat)
+      window.island.musicDemand(false)
+    }
+  }, [enabled])
+
+  // 新快照到达：记下外推基准；换歌时旧歌词不能闪到新歌上，查询键会自然换掉
+  useEffect(() => {
+    if (!music) return
+    posBaseRef.current = { pos: music.position, at: performance.now() }
+  }, [music?.title, music?.artist, music?.position, music?.playing])
+
+  const lyricKey =
+    music?.active && music.title
+      ? `${music.title}|${music.artist}|${music.album}|${Math.round(music.duration)}`
+      : ''
+  /** 只有与当前歌曲同一个键的歌词才作数：换歌时旧结果立刻作废，不闪到新歌上 */
+  const lyricNow = lyric && lyric.key === lyricKey ? lyric.result : null
+  const hasLyric = !!lyricNow?.ok && (lyricNow.lines?.length ?? 0) > 0
+
+  // 播放中每 250ms 重算一次当前句；暂停/无会话不空转
+  useEffect(() => {
+    if (!enabled || !music?.active || !music.playing || !hasLyric) return
+    const id = window.setInterval(() => setTick((n) => (n + 1) % 1_000_000), 250)
+    return () => window.clearInterval(id)
+  }, [enabled, music?.active, music?.playing, hasLyric])
+
+  useEffect(() => {
+    if (!enabled || !lyricKey) return
+    if (lyricForRef.current === lyricKey) return // 当前歌已经查过（成功或失败只查一次）
+    lyricForRef.current = lyricKey
+    // 换歌先清掉上一首的结果：联网查歌词最长要 6 秒，不能让新歌开头亮着旧歌词
+    setLyric(null)
+    let alive = true
+    void window.island
+      .lyricGet({
+        title: music?.title ?? '',
+        artist: music?.artist ?? '',
+        album: music?.album ?? '',
+        duration: music?.duration ?? 0
+      })
+      .then((r) => {
+        if (alive) setLyric({ key: lyricKey, result: r })
+      })
+      .catch(() => {
+        if (alive) {
+          setLyric({
+            key: lyricKey,
+            result: {
+              ok: false,
+              title: music?.title ?? '',
+              artist: music?.artist ?? '',
+              source: 'none',
+              lines: [],
+              reason: '查歌词时出错了，稍后再试'
+            }
+          })
+        }
+      })
+    return () => {
+      alive = false
+      // 查询被中途取消（关开关 / 换歌）时让出标记，下次还能再查一次
+      if (lyricForRef.current === lyricKey) lyricForRef.current = ''
+    }
+  }, [enabled, lyricKey, music?.title, music?.artist, music?.album, music?.duration])
+
+  const lines = hasLyric ? (lyricNow?.lines ?? []) : []
+  /**
+   * 位置：播放器报时长就按快照 + 最多 0.9 秒外推（与音乐页一致）；
+   * 网易云这类不报时长的，用模块级进度钟自己数。
+   */
+  const playing = music?.playing === true
+  const pos = (() => {
+    if (!music?.active) return 0
+    if (music.duration > 0) {
+      const base = posBaseRef.current
+      const extra = playing && base ? Math.min((performance.now() - base.at) / 1000, 0.9) : 0
+      return Math.min(music.duration, Math.max(0, (base?.pos ?? music.position) + extra))
+    }
+    return clockNow()
+  })()
+  // 当前句：取「开始时间 ≤ 当前位置」的最后一行；前奏期没有亮句
+  let activeIdx = -1
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].time <= pos + 0.15) activeIdx = i
+    else break
+  }
+  /** 前奏期显示第一句但压暗，既不是空白也不假装已经唱到 */
+  const prelude = activeIdx < 0 && lines.length > 0
+  const lineText = activeIdx >= 0 ? lines[activeIdx].text : (lines[0]?.text ?? '')
+  const active = enabled && music?.active === true && lines.length > 0
+
+  useEffect(() => {
+    onLyricMode(active)
+    return () => {
+      if (active) onLyricMode(false)
+    }
+  }, [active, onLyricMode])
+
+  if (!active) return <>{order.map((k) => renderItem(k))}</>
+
+  const coverOk = !!music?.cover && coverErr !== music.cover
+  const title = `${music?.title ?? ''}${music?.artist ? ` - ${music.artist}` : ''}`
+  return (
+    <div
+      className={`collapsed-lyric${playing ? '' : ' paused'}`}
+      role="group"
+      aria-label={`正在播放${title ? `《${title}》` : ''}，歌词：${lineText}`}
+      title={title ? `${title}\n${lineText}` : lineText}
+    >
+      <span className="cl-cover" aria-hidden="true">
+        {coverOk ? (
+          <img src={music?.cover ?? ''} alt="" onError={() => setCoverErr(music?.cover ?? '')} />
+        ) : (
+          <span className="cl-cover-ph">
+            <IcoMusic />
+          </span>
+        )}
+      </span>
+      {petEnabled && petMode === 'island' && (
+        <span className="cl-pet" aria-hidden="true">
+          <Pet skin={petSkin} mood={mood} size="tiny" />
+        </span>
+      )}
+      <span key={lineText} className={`cl-text${prelude ? ' prelude' : ''}`}>
+        {lineText}
+      </span>
+      <span className={`cl-eq${playing ? ' playing' : ''}`} aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   // 岛主题（SPEC-island-themes）：默认亮色玻璃，mount 后从 prefs 回填。
@@ -3285,6 +3488,16 @@ export default function App(): React.JSX.Element {
   const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
   // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
   const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
+  // 收起态歌词条（SPEC-collapsed-lyric-bar）：默认开，与主进程缺失值一致
+  const [collapsedLyricEnabled, setCollapsedLyricEnabled] = useState(true)
+  // 歌词条是否正在生效：用于岛根类名（固定宽度）与收起态宽度上限
+  const [lyricMode, setLyricMode] = useState(false)
+  // 尺寸上报是 ResizeObserver 回调，读不到最新 state；用 ref 保证与类名同一时刻生效
+  const lyricModeRef = useRef(false)
+  const onLyricMode = useCallback((on: boolean) => {
+    lyricModeRef.current = on
+    setLyricMode(on)
+  }, [])
   const [page, setPage] = useState(0)
   // 组件首页（SPEC-island-widget-grid）：'grid' = 展开后的 iOS 组件网格；数字 = 对应功能页。
   // 收起再展开总是回到网格；点组件或翻页才进具体页。注意它与 page 是两层：
@@ -3313,6 +3526,7 @@ export default function App(): React.JSX.Element {
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
         if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+        if (typeof prefs.collapsedLyric === 'boolean') setCollapsedLyricEnabled(prefs.collapsedLyric)
         setIslandTheme(applyIslandTheme(prefs.islandTheme))
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
@@ -3444,7 +3658,8 @@ export default function App(): React.JSX.Element {
           // 走带 1px 死区的统一入口：这条 RO 上报是尺寸抖动的主要来源
           void reportExpandedSize(w, h)
         } else {
-          window.island.setCollapsedWidth(w)
+          // 歌词条固定 400 视觉 px，比普通胶囊宽：带上标记让主进程放宽上限（SPEC-collapsed-lyric-bar）
+          window.island.setCollapsedWidth(w, lyricModeRef.current)
         }
       }, 80)
     })
@@ -3689,7 +3904,7 @@ export default function App(): React.JSX.Element {
       intendedWinSize.current = { w, h }
       reportExpandedSize(w, h)
     } else {
-      window.island.setCollapsedWidth(Math.ceil(r.width))
+      window.island.setCollapsedWidth(Math.ceil(r.width), lyricModeRef.current)
     }
   }, [reportExpandedSize])
   useLayoutEffect(() => {
@@ -4067,6 +4282,7 @@ export default function App(): React.JSX.Element {
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
       if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+      if (typeof prefs.collapsedLyric === 'boolean') setCollapsedLyricEnabled(prefs.collapsedLyric)
       setIslandTheme(applyIslandTheme(prefs.islandTheme))
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
@@ -4725,9 +4941,9 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''} ${
-          entrance === 'open' ? 'island-entrance' : ''
-        } ${backdrop ? 'has-backdrop' : ''}`}
+        } ${!expanded && lyricMode ? 'lyric-mode' : ''} ${navSnap ? 'nav-snap' : ''} ${
+          entrance ? `island-anim-${entrance}` : ''
+        } ${entrance === 'open' ? 'island-entrance' : ''} ${backdrop ? 'has-backdrop' : ''}`}
         // 亮背景加深系数（2026-11-25）：只有暗色玻璃主题用到，其它主题的 CSS 不引用这个变量
         style={{ '--island-lit': String(backdropLit) } as React.CSSProperties}
         ref={islandRef}
@@ -5023,8 +5239,19 @@ export default function App(): React.JSX.Element {
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。
                 order 恒含全部 6 项（normalizeOrder 会补齐），关掉的只是不渲染，位置信息保留。
-                渲染实现抽到 renderStatusItem（美化-03），与展开态头部共用同一份。 */}
-            {pagesCustom.order.map((k) => renderStatusItem(k))}
+                渲染实现抽到 renderStatusItem（美化-03），与展开态头部共用同一份。
+                播放音乐时整条换成歌词条（SPEC-collapsed-lyric-bar），没歌词就原样显示这些组件。 */}
+            <CollapsedStatusRow
+              enabled={collapsedLyricEnabled}
+              order={pagesCustom.order}
+              renderItem={renderStatusItem}
+              onLyricMode={onLyricMode}
+              petEnabled={pagesCustom.collapsed.pet}
+              petSkin={petSkin}
+              petMode={petMode}
+              mood={mood}
+            />
+
           </>
         )}
       </div>

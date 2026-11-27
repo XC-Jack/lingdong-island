@@ -820,6 +820,125 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ---------- 收起态歌词条（SPEC-collapsed-lyric-bar） ----------
+   参考视频里的形态：播放时整条胶囊变成「封面 + 岛仔 + 当前一句 + 节奏图标」。
+   宽度固定 400 视觉 px（0.75 缩放下 533 布局 px），不随每句长短跳动；
+   主进程按 setCollapsedWidth 的 lyric 标记把上限从 290 放宽到 420。 */
+.island.collapsed.lyric-mode {
+  width: 533px;
+  /* 歌词条不按内容撑开：固定宽度才能让长句截断、短句不缩 */
+  justify-content: flex-start;
+}
+
+.collapsed-lyric {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+/* 封面 30×30 布局 px（视觉 22.5），与胶囊其它图标同一视觉尺度 */
+.cl-cover {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cl-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cl-cover-ph {
+  display: inline-flex;
+  color: color-mix(in srgb, var(--ink-1) 55%, transparent);
+}
+.cl-cover-ph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cl-pet {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 当前一句：单行、居中、过长省略；前奏期压暗显示第一句 */
+.cl-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink-1);
+  /* 切句时轻轻淡入，不闪；尊重系统「减弱动态效果」 */
+  animation: cl-line-in 160ms ease-out both;
+}
+.cl-text.prelude {
+  opacity: 0.55;
+}
+@keyframes cl-line-in {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 右侧节奏图标：三根竖条，播放时起伏，暂停时静止压低 */
+.cl-eq {
+  flex: none;
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2.5px;
+  width: 18px;
+  height: 18px;
+  color: color-mix(in srgb, var(--ink-1) 85%, transparent);
+}
+.cl-eq i {
+  display: block;
+  width: 2.5px;
+  height: 14px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: scaleY(0.3);
+  transform-origin: bottom;
+}
+.cl-eq.playing i {
+  animation: cl-eq 900ms ease-in-out infinite;
+}
+.cl-eq.playing i:nth-child(2) {
+  animation-duration: 700ms;
+  animation-delay: -220ms;
+}
+.cl-eq.playing i:nth-child(3) {
+  animation-duration: 1100ms;
+  animation-delay: -520ms;
+}
+@keyframes cl-eq {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 .collapsed-clock {
   /* 2026-11-16 用户 m01634：字号 15→17.5、字重 600→800、亮度纯白；第二版再放大一档 */
   font-size: 17.5px;
@@ -3229,6 +3348,12 @@ body {
 
   .island {
     transition-duration: 1ms;
+  }
+
+  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：切句与节奏图标都停 */
+  .cl-text,
+  .cl-eq.playing i {
+    animation: none;
   }
 }
 

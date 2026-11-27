@@ -45,6 +45,12 @@ const COLLAPSED_WIN_HEIGHT = 76
 /** 收起态宽度上下限（防过窄/过宽）。2026-11-16 用户 m01634 胶囊放大后同步放宽 113~240 → 134~290 */
 const COLLAPSED_MIN_W = 134
 const COLLAPSED_MAX_W = 290
+/**
+ * 歌词条模式的上限（SPEC-collapsed-lyric-bar）。
+ * 歌词条按参考视频做成一条宽胶囊：渲染层固定 400 视觉 px，这里留 420 的余量；
+ * 普通收起态仍按 290 夹，不因为这项功能把日常胶囊放开。
+ */
+const COLLAPSED_LYRIC_MAX_W = 420
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
 let collapsedWidth = 168
 /** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
@@ -561,10 +567,11 @@ ipcMain.on('island:log-diag', (_event, line: unknown) => {
 })
 
 // 渲染层量出收起态内容宽度后下发（随信息数量自适应：有电量时宽、无电量时窄）
-ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
+ipcMain.on('island:set-collapsed-width', (_event, value: unknown, lyric: unknown) => {
   const w = Number(value)
   if (!Number.isFinite(w)) return
-  const next = Math.round(Math.min(COLLAPSED_MAX_W, Math.max(COLLAPSED_MIN_W, w)))
+  const maxW = lyric === true ? COLLAPSED_LYRIC_MAX_W : COLLAPSED_MAX_W
+  const next = Math.round(Math.min(maxW, Math.max(COLLAPSED_MIN_W, w)))
   // 1px 死区，理由同 SIZE_DEADZONE_PX（收起态同样会被取整抖动带着来回改窗口宽度）
   if (Math.abs(next - collapsedWidth) <= SIZE_DEADZONE_PX) return
   collapsedWidth = next
