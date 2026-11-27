@@ -544,8 +544,15 @@ try {
     const cards = await settingsEval(
       `Array.from(document.querySelectorAll('.theme-card')).map(e => e.getAttribute('data-theme-id'))`
     )
-    ok('S13a 外观分区四张主题卡，顺序为 亮色玻璃 → 纯黑玻璃 → 纯黑极简 → 透明玻璃',
+    ok('S13a 外观分区四张主题卡，顺序为 亮色玻璃 → 暗色玻璃 → 纯黑极简 → 透明玻璃',
       Array.isArray(cards) && cards.join(',') === 'glass-light,glass-dark,mono,glass-clear', JSON.stringify(cards))
+
+    // 卡片显示名（2026-11-27 合并暗色玻璃分支时，glass-dark 从「纯黑玻璃」改叫「暗色玻璃」）
+    const names = await settingsEval(
+      `Array.from(document.querySelectorAll('.theme-card-name')).map(e => e.textContent.trim())`
+    )
+    ok('S13a2 四张卡的显示名与顺序一致',
+      Array.isArray(names) && names.join(',') === '亮色玻璃,暗色玻璃,纯黑极简,透明玻璃', JSON.stringify(names))
 
     // prefs 基线里没有 islandTheme：应回落到默认主题
     const onBefore = await settingsEval(
@@ -572,7 +579,7 @@ try {
 
     const r2 = await pickTheme('glass-dark')
     const [pref2, isl2, on2] = [readPrefs().islandTheme, await islandTheme(), await cardOn()]
-    ok('S13d 点「纯黑玻璃」：三处同步为 glass-dark',
+    ok('S13d 点「暗色玻璃」：三处同步为 glass-dark',
       r2 === 'ok' && pref2 === 'glass-dark' && isl2 === 'glass-dark' && on2 === 'glass-dark',
       `prefs ${pref2} / 岛 ${isl2} / 卡 ${on2}`)
 

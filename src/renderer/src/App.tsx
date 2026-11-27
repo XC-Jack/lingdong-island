@@ -3207,8 +3207,10 @@ export default function App(): React.JSX.Element {
   // 岛主题（SPEC-island-themes）：默认亮色玻璃，mount 后从 prefs 回填。
   // 除了写 <html data-theme>，还留一份 state 给「真透视」抓屏循环判条件。
   const [islandTheme, setIslandTheme] = useState<IslandTheme>('glass-light')
-  // 岛背后的桌面底图（data URL，只在内存里）。只有亮色玻璃主题需要，换主题立刻清空。
+  // 岛背后的桌面底图（data URL，只在内存里）。两套玻璃主题都需要，换到纯黑极简立刻清空。
   const [backdrop, setBackdrop] = useState<string | null>(null)
+  // 底图亮度档（0~1，2026-11-25）：`--island-lit`，让暗色玻璃在亮背景上自动加深。
+  const [backdropLit, setBackdropLit] = useState(0)
   const [now, setNow] = useState(() => new Date())
   const [battery, setBattery] = useState<number | null>(null)
   // 充电中（status:snapshot 一直带着 charging，UI 从未用过——电量态轮次开始消费）
@@ -3950,25 +3952,65 @@ export default function App(): React.JSX.Element {
    * 真透视（SPEC-island-themes 第二轮）：定期向主进程要「岛背后那块桌面」当底图。
    * 主进程抓屏 60~150ms 且异步，这里只管起定时器；收起 5s、展开 1.5s 一次——
    * 展开时用户更可能换页/挪窗口，色块变化更明显，抓得勤一点。
-   * 换主题（另两套是不透明玻璃）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
+   * 换主题（纯黑极简是实心块面）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
    * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
+   *
+   * 2026-11-25：两套玻璃都抓。深色玻璃（glass-dark）从实心黑改成透明玻璃后，
+   * 同样需要桌面模糊底图才有质感；纯黑极简（mono）保持不抓、不依赖底图。
    */
   useEffect(() => {
-    // 亮色乳白玻璃与透明玻璃都靠真透视底图（后者本体不染色，全靠它出颜色）；
-    // 纯黑玻璃 / 纯黑极简是不透明块面，不抓屏。
-    if ((islandTheme !== 'glass-light' && islandTheme !== 'glass-clear') || avoidHidden) {
+    // 亮色乳白玻璃、暗色玻璃、透明玻璃都靠真透视底图（后两者本体染色少，全靠它出质感）；
+    // 纯黑极简是不透明块面，不抓屏。
+    if (islandTheme === 'mono' || avoidHidden) {
       setBackdrop(null)
+      setBackdropLit(0)
       return
     }
     let alive = true
     let timer: number | undefined
+    /**
+     * 按底图平均亮度算「亮背景加深」系数（0=暗桌面，1=很亮）。
+     * 2026-11-25 用户反馈：背后换成白色应用时整块岛透得发白、白字看不清。
+     * 苹果液态玻璃的做法是材质随背后明暗自适应，这里用同一思路：
+     * 把底图缩到 8×8 一次算完平均亮度，交给 CSS 的 `--island-lit` 决定 veil 压多暗。
+     * 只在拿到新底图时算一次，开销可忽略；算失败就保持上一档，不影响玻璃显示。
+     */
+    const measure = (url: string): void => {
+      const img = new Image()
+      img.onload = () => {
+        if (!alive) return
+        try {
+          const c = document.createElement('canvas')
+          c.width = 8
+          c.height = 8
+          const ctx = c.getContext('2d')
+          if (!ctx) return
+          ctx.drawImage(img, 0, 0, 8, 8)
+          const d = ctx.getImageData(0, 0, 8, 8).data
+          // 取 75 分位而不是平均值：背景半白半黑时平均值只有 0.5、判不出问题，
+          // 而只要有一块亮背景压在岛下面，白字就已经开始难读了。
+          const lums: number[] = []
+          for (let i = 0; i < d.length; i += 4) lums.push(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2])
+          lums.sort((a, b) => a - b)
+          const lum = lums[Math.floor(lums.length * 0.75)] / 255
+          // 0.30 以下算暗背景（不加深）；0.75 以上顶到满档
+          setBackdropLit(Math.min(1, Math.max(0, (lum - 0.3) / 0.45)))
+        } catch {
+          /* 读像素失败就沿用上一档，不影响可用性 */
+        }
+      }
+      img.src = url
+    }
     /** 拉一次底图；返回是否拿到（没拿到就早点重试——启动初期窗口还没 show 时会返回 null） */
     const pull = (): Promise<boolean> => {
       if (document.hidden) return Promise.resolve(false)
       return window.island
         .islandBackdrop()
         .then((url) => {
-          if (alive && url) setBackdrop(url)
+          if (alive && url) {
+            setBackdrop(url)
+            measure(url)
+          }
           return !!url
         })
         .catch(() => false) // 失败静默：底图是锦上添花，不能因此报错或弹窗
@@ -4553,7 +4595,9 @@ export default function App(): React.JSX.Element {
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
         } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''} ${
           entrance === 'open' ? 'island-entrance' : ''
-        }`}
+        } ${backdrop ? 'has-backdrop' : ''}`}
+        // 亮背景加深系数（2026-11-25）：只有暗色玻璃主题用到，其它主题的 CSS 不引用这个变量
+        style={{ '--island-lit': String(backdropLit) } as React.CSSProperties}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。

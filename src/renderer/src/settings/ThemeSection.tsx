@@ -6,7 +6,7 @@ import { ISLAND_THEMES } from '../../../shared/types'
 /**
  * 设置窗口「外观」分区（SPEC-settings-theme）。
  *
- * 三套主题的取值、CSS token、岛内 `data-theme` 切换和 `prefs.islandTheme` 读写链路
+ * 四套主题的取值、CSS token、岛内 `data-theme` 切换和 `prefs.islandTheme` 读写链路
  * 在 SPEC-island-themes 里已经做完，这里只补一个能点的入口：
  * 点卡片 → 立刻 prefsSet → 主进程落盘并广播 → 岛当场换肤。
  *
@@ -22,8 +22,8 @@ const THEME_META: Record<IslandTheme, { name: string; desc: string }> = {
     desc: '半透明乳白玻璃，桌面颜色从底下透上来，深色文字。默认。'
   },
   'glass-dark': {
-    name: '纯黑玻璃',
-    desc: '近黑的玻璃底 + 一道极淡的白边，白色文字，适合深色桌面。'
+    name: '暗色玻璃',
+    desc: '半透明黑玻璃，背后桌面被模糊后透上来，亮描边勾出玻璃边，白色文字。'
   },
   mono: {
     name: '纯黑极简',
@@ -97,7 +97,7 @@ export default function ThemeSection(): ReactElement {
               onClick={() => pickTheme(id)}
             >
               {/* 预览图是纯 CSS 示意图：底色代表桌面，胶囊代表岛。
-                  材质取值照抄 styles.css 的三段主题（B 的乳白玻璃 / A 的黑玻璃 / C 的实心黑），
+                  材质取值照抄 styles.css 的四段主题（B 的乳白玻璃 / A 的暗色玻璃 / C 的实心黑 / D 的透明玻璃），
                   改了那边的 token 要同步这里。 */}
               <span className="theme-prev" data-t={id} aria-hidden="true">
                 <span className="theme-prev-island">
@@ -117,7 +117,7 @@ export default function ThemeSection(): ReactElement {
       {failed ? <div className="set-note">保存失败，请重试。</div> : null}
       <div className="pet-set-tip">
         只改桌面上的岛；这个设置窗口始终是深色，方便看清控件。切换立刻生效，不用重启。
-        「亮色玻璃」「透明玻璃」会实时读取岛背后的桌面来上色，另外两套是纯黑，不抓屏。
+        三套玻璃（亮色玻璃 / 暗色玻璃 / 透明玻璃）都会实时读取岛背后的桌面（模糊后垫在岛下），纯黑极简是实心块面，不抓屏。
       </div>
     </div>
   )

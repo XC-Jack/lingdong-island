@@ -727,8 +727,12 @@ div.pm-row[draggable='true'] {
     radial-gradient(90% 90% at 96% 10%, #b9cdf3 0%, transparent 64%),
     linear-gradient(180deg, #c9a98f 0%, #8e7a86 100%);
 }
+/* 暗色玻璃：桌面要有层次，才看得出玻璃把背后的颜色模糊着透上来（2026-11-25 换材质） */
 .theme-prev[data-t='glass-dark']::before {
-  background: linear-gradient(180deg, #3b4252 0%, #1f232b 100%);
+  background:
+    radial-gradient(120% 90% at 12% -6%, #4a5366 0%, transparent 62%),
+    radial-gradient(90% 90% at 96% 10%, #6b5a7a 0%, transparent 64%),
+    linear-gradient(180deg, #2a2f3a 0%, #14161c 100%);
 }
 .theme-prev[data-t='mono']::before {
   background: linear-gradient(180deg, #34373d 0%, #1b1d21 100%);
@@ -761,12 +765,14 @@ div.pm-row[draggable='true'] {
     inset 0 1px 0 rgba(255, 255, 255, 0.95),
     0 4px 10px rgba(8, 16, 32, 0.22);
 }
+/* 预览里的玻璃胶囊：设置窗口不是透明窗，backdrop-filter 真能模糊到背后的预览底色，
+   比只画渐变更直观地表达「透 + 模糊」。 */
 .theme-prev[data-t='glass-dark'] .theme-prev-island {
-  background: linear-gradient(180deg, rgba(10, 10, 12, 0.97) 0%, rgba(5, 5, 7, 0.97) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 4px 10px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(180deg, rgba(30, 33, 42, 0.55) 0%, rgba(10, 11, 15, 0.62) 100%);
+  backdrop-filter: blur(4px) saturate(1.2);
+  border: 1px solid rgba(255, 255, 255, 0.26);
+  /* 与岛内一致：无外投影、无顶沿高光（用户 2026-11-25 要求） */
+  box-shadow: none;
 }
 .theme-prev[data-t='mono'] .theme-prev-island {
   background: #000;

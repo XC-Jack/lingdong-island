@@ -91,22 +91,38 @@
     'Microsoft YaHei UI', system-ui, sans-serif;
 }
 
-/* ===== A：纯黑玻璃（用户否决的是「调浅的黑」，这里回到真黑） ===== */
+/* ===== A：暗色玻璃（2026-11-25 重做为真透明玻璃） =====
+   用户原话「太丑了，完全看不出来是玻璃质感……做一个透明玻璃质感的主题」，参考 Apple 液态玻璃
+   与深色界面里的玻璃卡片。三个要点：
+     1) 本体只挡一半左右，模糊后的桌面从底下透上来；有底图时 .island 与 .island-veil 两层叠加，
+        实际不透明度约 0.66/0.77，白字在亮桌面上仍够读；底图很亮时再按 `--island-lit` 自动加深；
+     2) 右上冷光 + 右下暖光两块极淡环境色斑，让「玻璃」有折射感，而不是一块半透明黑；
+     3) 边缘 1px 亮描边。顶部打光与内高光已按用户 2026-11-25 要求去掉。
+   抓不到底图时走「.island:not(.has-backdrop)」兜底，接近原来的实心深色，保证可读。 */
 [data-theme='glass-dark'] {
   --ink-1: #ffffff;
-  --island-top: rgba(10, 10, 12, 0.97);
-  --island-bottom: rgba(5, 5, 7, 0.97);
+  /* 顶部打光已按用户 2026-11-25 18:06 的要求去掉（v0.6.1）：受光斑透明，
+     只保留右上冷光与右下暖光两块环境色斑，它们来自壁纸而不是「打光」。 */
   --island-hi: transparent;
-  --island-cool: transparent;
-  --island-warm: transparent;
-  --border-island: rgba(255, 255, 255, 0.11);
-  /* 无阴影、无顶光 */
+  --island-cool: rgba(126, 170, 255, 0.1);
+  --island-warm: rgba(255, 154, 122, 0.08);
+  --border-island: rgba(255, 255, 255, 0.26);
+  /* 无阴影、无顶光（2026-11-25 用户要求） */
   --shadow-island: none;
-  --bg-pop: rgba(18, 18, 21, 0.985);
+  --bg-pop: rgba(20, 21, 26, 0.94);
   --shadow-pop: 0 10px 28px rgba(0, 0, 0, 0.45);
   --shadow-pop-sm: 0 6px 18px rgba(0, 0, 0, 0.35);
-  --bg-chip: rgba(24, 25, 29, 0.94);
-  --bg-chip-hover: rgba(38, 39, 45, 0.96);
+  --bg-chip: rgba(24, 25, 29, 0.9);
+  --bg-chip-hover: rgba(38, 39, 45, 0.94);
+  /* 深色玻璃上的控件表面：从 :root 继承的 0.3/0.44/0.62 白是给乳白玻璃用的，
+     压在深色玻璃上会把卡片和按钮整片冲白（第一版实测卡片上的白字读不清）。
+     这里改成薄薄一层加亮，保持「玻璃上再放一块更亮的玻璃」的层次。 */
+  --surface-1: rgba(255, 255, 255, 0.07);
+  --surface-2: rgba(255, 255, 255, 0.12);
+  --surface-3: rgba(255, 255, 255, 0.18);
+  --line: rgba(255, 255, 255, 0.1);
+  --line-2: rgba(255, 255, 255, 0.16);
+  --line-3: rgba(255, 255, 255, 0.24);
   --accent: #ffffff;
   --accent-hover: #e6e6ea;
   --accent-ink: #0a0a0b;
@@ -129,6 +145,19 @@
   --ink-3: color-mix(in srgb, var(--ink-1) 50%, transparent);
   --ink-4: color-mix(in srgb, var(--ink-1) 42%, transparent);
   --ink-5: color-mix(in srgb, var(--ink-1) 22%, transparent);
+}
+
+/* 抓不到桌面底图时（远程桌面、抓屏失败、权限异常）的兜底：
+   退回接近实心的深色玻璃，保证白字可读；有底图时用上面那套半透明材质。
+   `.has-backdrop` 由 App 在拿到底图时挂到 .island 上，两套玻璃主题共用。 */
+[data-theme='glass-dark'] .island:not(.has-backdrop) {
+  --island-top: rgba(12, 13, 17, 0.92);
+  --island-bottom: rgba(6, 6, 9, 0.95);
+  /* 兜底也不加顶部打光（与有底图时一致，2026-11-25 用户要求） */
+  --island-hi: transparent;
+  --island-cool: transparent;
+  --island-warm: transparent;
+  --island-veil: linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
 }
 
 /* ===== C：纯黑极简（靠留白和字号，不靠颜色） ===== */
@@ -317,7 +346,35 @@ body {
   transition:
     width 220ms cubic-bezier(0.22, 1, 0.36, 1),
     height 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    /* 亮背景加深系数由抓屏循环每 1.5s 更新一次，直接跳变会闪一下；
+       注册成 <number> 自定义属性后才能补间（2026-11-25，见 --island-lit）。 */
+    --island-lit 600ms ease;
+}
+
+/* 注册 --island-lit，让暗色玻璃的亮度自适应能平滑过渡而不是每 1.5s 跳一档 */
+@property --island-lit {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/* ===== 暗色玻璃的亮度自适应（2026-11-25，参考 Apple 液态玻璃） =====
+   `--island-lit` 由渲染层按底图亮度写在这一个元素的内联样式上（0=暗桌面，1=很亮），
+   0.30→0.75 的亮度区间线性映射到 0→1。
+   ⚠️ 这几个变量必须声明在 `.island` 上，不能放在 `[data-theme='glass-dark']`（html 根节点）：
+   自定义属性在**声明它的元素**上就完成 var() 替换，根节点拿不到 .island 内联的 --island-lit，
+   算出来永远是初始值 0（2026-11-27 合并时用探针实测到过这个坑，lit 改 0/0.5/1 时 veil 恒为 0.42）。
+   `.island-veil` 是 .island 的子元素，继承这几个变量，两边仍然同源。 */
+[data-theme='glass-dark'] .island {
+  --island-top: rgba(15, 17, 23, calc(0.42 + var(--island-lit, 0) * 0.42));
+  --island-bottom: rgba(7, 8, 12, calc(0.5 + var(--island-lit, 0) * 0.38));
+  /* 深色玻璃的图层栈：右上冷光 → 右下暖光 → 本体渐变。
+     不带顶部受光带（用户 2026-11-25 要求去掉打光）。 */
+  --island-veil:
+    radial-gradient(95% 85% at 104% 4%, var(--island-cool) 0%, transparent 62%),
+    radial-gradient(135% 120% at 92% 106%, var(--island-warm) 0%, transparent 68%),
+    linear-gradient(180deg, var(--island-top) 0%, var(--island-bottom) 100%);
 }
 
 /* 切页瞬间关过渡（2026-11-24 快速点击卡顿）：窗口是 setBounds 一次性跳变的，
