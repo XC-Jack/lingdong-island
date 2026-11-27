@@ -14,6 +14,8 @@ import stickerMusic from './assets/stickers/hp.png'
 const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, stickerMusic]
 /** 收起 700ms 后自动收回，给鼠标留出移入面板的时间 */
 const AUTO_COLLAPSE_MS = 700
+/** 渲染层整体缩放（styles.css `.app` 的 zoom）。getBoundingClientRect 是屏幕 px，样式写的是布局 px */
+const ZOOM = 0.75
 
 /**
  * 主题落到 `<html data-theme>`（SPEC-island-themes / SPEC-glass-clear）。
@@ -3524,6 +3526,10 @@ export default function App(): React.JSX.Element {
   //   3) 动画结束后补一次真实尺寸，避免按动画中的中间值把窗口定小。
   const [entrance, setEntrance] = useState<'open' | 'close' | null>(null)
   entranceRef.current = entrance
+  // SPEC-expand-clip：展开入场的起点（收起态外框）与终点（当前页面板外框），都是视觉 px。
+  // 入场期间逐帧按窗口实际尺寸在两者之间插值，岛的宽高永远 ≤ 窗口。
+  const entranceFromRef = useRef<{ w: number; h: number } | null>(null)
+  const entranceToRef = useRef<{ w: number; h: number } | null>(null)
   const firstExpandEffect = useRef(true)
   const reportCurrentSize = useCallback(() => {
     const el = islandRef.current
@@ -3561,6 +3567,13 @@ export default function App(): React.JSX.Element {
           if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
           intendedWinSize.current = { w, h }
           void window.island.setExpandedSize(w, h)
+          // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
+          // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
+          // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
+          entranceFromRef.current = { w: window.innerWidth, h: window.innerHeight }
+          entranceToRef.current = { w, h }
+          el.style.setProperty('--entrance-w', `${entranceFromRef.current.w}px`)
+          el.style.setProperty('--entrance-h', `${entranceFromRef.current.h}px`)
         }
       }
     }
@@ -3573,6 +3586,46 @@ export default function App(): React.JSX.Element {
     }, 260)
     return () => window.clearTimeout(id)
   }, [expanded, reportCurrentSize])
+
+  // 展开入场期间让岛的宽高跟着窗口长大（SPEC-expand-clip）。
+  // 为什么逐帧读窗口尺寸、而不是让 CSS 过渡按固定时长跑：窗口由主进程 setInterval 补间，
+  // 主进程一旦被卡住（抓屏 desktopCapturer 实测阻塞 135~192ms 就是实例），窗口会停在原地，
+  // 而 CSS 过渡照走 → 岛又比窗口大、又被裁。这里改成「窗口长到哪，岛就长到哪」：
+  // 按窗口当前宽高在收起外框与面板外框之间取进度 p，岛的宽高永远不超过窗口。
+  // 锚点与窗口一致（顶部对齐、水平居中），所以看起来就是胶囊自然长成面板。
+  useEffect(() => {
+    const el = islandRef.current
+    if (!el) return
+    if (entrance !== 'open') {
+      el.style.removeProperty('--entrance-w')
+      el.style.removeProperty('--entrance-h')
+      return
+    }
+    let raf = 0
+    const tick = (): void => {
+      const from = entranceFromRef.current
+      const to = entranceToRef.current
+      if (from && to && to.w > from.w && to.h > from.h) {
+        // 窗口 innerWidth/Height 是视觉 px；岛的 width/height 写在 .app（zoom: 0.75）里，
+        // 是布局 px，所以要除以 zoom 才是屏幕上看到的大小（不除会小 25%）。
+        // 取宽高两个方向进度的较小值，保证任一方向都不超出窗口。
+        const pw = (window.innerWidth - from.w) / (to.w - from.w)
+        const ph = (window.innerHeight - from.h) / (to.h - from.h)
+        const p = Math.min(1, Math.max(0, Math.min(pw, ph)))
+        const w = (from.w + (to.w - from.w) * p) / ZOOM
+        const h = (from.h + (to.h - from.h) * p) / ZOOM
+        el.style.setProperty('--entrance-w', `${w.toFixed(1)}px`)
+        el.style.setProperty('--entrance-h', `${h.toFixed(1)}px`)
+      }
+      raf = window.requestAnimationFrame(tick)
+    }
+    raf = window.requestAnimationFrame(tick)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      el.style.removeProperty('--entrance-w')
+      el.style.removeProperty('--entrance-h')
+    }
+  }, [entrance])
 
   // 每次收起（点桌面 / 自动超时 / Esc / 避让）后把视图退回组件网格：
   // 下次展开先看到组件，而不是上次停留的那一页（SPEC-island-widget-grid）。
@@ -4207,7 +4260,9 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''}`}
+        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''} ${
+          entrance === 'open' ? 'island-entrance' : ''
+        }`}
         ref={islandRef}
         onMouseEnter={onEnter}
         // US-041 摸边唤回后的「移开回隐」：避让临时现身期间鼠标离开岛窗口 → 上报主进程。

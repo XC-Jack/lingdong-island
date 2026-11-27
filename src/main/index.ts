@@ -614,6 +614,11 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
   const win = mainWindow
   if (!win || win.isDestroyed() || !win.isVisible()) return null
   if (backdropBusy) return null // 上一次还没抓完（低端机/4K 屏可能超 200ms），直接跳过这一拍
+  // 开合补间进行中不抓屏（2026-11-26，SPEC-expand-clip）：desktopCapturer.getSources 实测
+  // 阻塞主进程 135~192ms，会把 16ms 的补间定时器卡出一个 100ms 级空档 —— 窗口停在原地、
+  // 岛已经展开，屏幕上就是「只剩页头一条」的裁切态。补间只有 220ms，跳过这一拍几乎无感
+  // （渲染层展开态每 1.5s 拉一次，下一次就补上了）。
+  if (tweenTimer) return null
   backdropBusy = true
   try {
     const bounds = win.getBounds() // DIP
