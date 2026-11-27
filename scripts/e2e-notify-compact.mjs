@@ -71,7 +71,13 @@ async function startApp() {
 
 async function stopApp(child) {
   if (!child || child.exitCode !== null) return
-  execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' })
+  // 2026-11-27（SPEC-fix-e2e-rot-2）：进程可能已自行退出，taskkill 返回 128 会抛错，
+  // 把脚手架问题算成测试失败。吞掉非零退出。
+  try {
+    execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' })
+  } catch {
+    /* 进程已退出 / 无权限：都不是被测行为 */
+  }
   await sleep(800)
 }
 

@@ -19,6 +19,7 @@
 import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, copyFileSync, unlinkSync, existsSync } from 'node:fs'
+import { near, parseCssColor, resolveTokensExpr } from './e2e-color.mjs'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
@@ -150,9 +151,10 @@ const DOM_Q = `(() => {
   })
 })()`
 
-const GREEN = 'rgba(75, 214, 130, 0.9)'
-const WHITE = 'rgba(255, 255, 255, 0.98)' // 与 styles.css `.head-battery-ring .ring-fg` 同步（2026-11-16 美化轮提亮）
-const RED = 'rgba(255, 107, 107, 0.9)'
+// 2026-11-27（SPEC-fix-e2e-rot-2）：原先写死 WHITE/GREEN/RED 三个旧色值。
+// 默认主题换成亮色乳白玻璃后（SPEC-island-themes）弧色全部变了，waitFor 永远等不到，
+// 16 项断言级联失败。改为 boot 后读当前主题 token，按距离判定。
+let TOK = {}
 
 /** 轮询直到 predicate 成立或超时，返回 {v, at}（at=距 tStart 毫秒），at=0 表示没等到 */
 async function waitFor(wsUrl, pred, timeoutAt) {
@@ -163,6 +165,9 @@ async function waitFor(wsUrl, pred, timeoutAt) {
   }
   return { v: null, at: 0 }
 }
+
+/** 弧色是否等于某 token（取不到 token 时恒 false，不做静默放行） */
+const strokeIs = (v, token) => !!v && near(parseCssColor(v.stroke), TOK[token])
 
 let tStart = 0
 
@@ -179,17 +184,18 @@ const main = async () => {
     // tStart 取在 spawn 之前，这样 at 与 bundle 里定时器的基准（进程启动）基本对齐
     tStart = Date.now()
     const wsUrl = await boot()
+    TOK = JSON.parse(await cdp(wsUrl, resolveTokensExpr(['--ink-1', '--ok', '--danger'])))
 
     // 初始态：取数要 2 秒，等它落地（必须早于第一次假事件）
     const init = await waitFor(wsUrl, (v) => v.has && v.num === '80', EVENT_PLUG_MS - 500)
     console.log('[初始]', JSON.stringify(init.v), '距 spawn', init.at, 'ms')
     ok('P3-0 渲染层已挂上 onStatusChanged', init.v?.api === 'function', String(init.v?.api))
     ok('P3-1 初始数字 80', init.v?.num === '80', String(init.v?.num))
-    ok('P3-2 初始非充电（白弧）', init.v?.stroke === WHITE, String(init.v?.stroke))
+    ok('P3-2 初始非充电（弧是主题文字色）', strokeIs(init.v, '--ink-1'), String(init.v?.stroke))
     ok('P3-3 初始 title 电量 80%', init.v?.title === '电量 80%', String(init.v?.title))
 
     // === 事件①：插电。紧随其后的取数要 2 秒才回来 ===
-    const green = await waitFor(wsUrl, (v) => v.has && v.stroke === GREEN, EVENT_PLUG_MS + 6_000)
+    const green = await waitFor(wsUrl, (v) => v.has && near(parseCssColor(v.stroke), TOK['--ok']), EVENT_PLUG_MS + 6_000)
     console.log('[插电事件后]', JSON.stringify(green.v), '距 spawn', green.at, 'ms')
     ok('P3-4 事件到达后弧变绿', !!green.v, `${green.at}ms`)
     ok('P3-5 变绿时 charging 类已加', !!green.v && green.v.cls.includes('charging'), String(green.v?.cls))
@@ -202,30 +208,30 @@ const main = async () => {
     const num99 = await waitFor(wsUrl, (v) => v.has && v.num === '99', 20_000)
     console.log('[取数返回后]', JSON.stringify(num99.v), '距启动', num99.at, 'ms')
     ok('P3-9 百分比随后更新到 99', num99.v?.num === '99', String(num99.v?.num))
-    ok('P3-10 弧仍是绿', num99.v?.stroke === GREEN, String(num99.v?.stroke))
+    ok('P3-10 弧仍是绿', strokeIs(num99.v, '--ok'), String(num99.v?.stroke))
     ok('P3-11 title 充电中 99%', num99.v?.title === '充电中 · 电量 99%', String(num99.v?.title))
     ok('P3-12 aria 同步', num99.v?.aria === '充电中 · 电量 99%', String(num99.v?.aria))
     ok('P3-13 百分比比颜色晚到 1 秒以上（证明两段各走各的）', num99.at > 0 && green.at > 0 && num99.at - green.at > 1_000, `绿=${green.at}ms 数=${num99.at}ms`)
 
     // === 事件②：第 12 秒拔电，取数会读到 15|False（低电、没充电）===
-    const white = await waitFor(wsUrl, (v) => v.has && v.stroke === WHITE, EVENT_UNPLUG_MS + 6_000)
+    const white = await waitFor(wsUrl, (v) => v.has && near(parseCssColor(v.stroke), TOK['--ink-1']), EVENT_UNPLUG_MS + 6_000)
     console.log('[拔电事件后]', JSON.stringify(white.v), '距 spawn', white.at, 'ms')
-    ok('P3-14 拔电事件后弧变白', !!white.v, `${white.at}ms`)
+    ok('P3-14 拔电事件后弧回到主题文字色', !!white.v, `${white.at}ms`)
     // 白态也要断言百分比还没跟上（独立验收 C3：早期版本白态只断言弧变白，
     // 「变白时数字还是 99」只是日志里的观察值，不是断言）。
-    ok('P3-14b 变白时百分比还是旧的 99（颜色不等取数）', !!white.v && white.v.num === '99', String(white.v?.num))
-    ok('P3-15 变白时 charging 类已撤', !!white.v && !white.v.cls.includes('charging'), String(white.v?.cls))
+    ok('P3-14b 变色时百分比还是旧的 99（颜色不等取数）', !!white.v && white.v.num === '99', String(white.v?.num))
+    ok('P3-15 变色时 charging 类已撤', !!white.v && !white.v.cls.includes('charging'), String(white.v?.cls))
     // 窗口 1500ms：既给足 CDP 采样抖动（实测最大 885ms），又明显小于 SLOW_READ_MS=2000，
-    // 所以「变白早于取数落地」依然成立。原先 600ms 裕量太薄（独立验收 C3 实测 12 次里 1 次假失败）。
-    ok('P3-16 变白时刻贴着事件（拔电后 1.5 秒内）', white.at > 0 && white.at < EVENT_UNPLUG_MS + 1_500, `${white.at}ms`)
+    // 所以「变色早于取数落地」依然成立。原先 600ms 裕量太薄（独立验收 C3 实测 12 次里 1 次假失败）。
+    ok('P3-16 变色时刻贴着事件（拔电后 1.5 秒内）', white.at > 0 && white.at < EVENT_UNPLUG_MS + 1_500, `${white.at}ms`)
 
     // 红色要等事件②（22s）之后那次 2 秒的取数落地，截止时间按秒级余量给足
-    const red = await waitFor(wsUrl, (v) => v.has && v.stroke === RED, EVENT_UNPLUG_MS + 12_000)
+    const red = await waitFor(wsUrl, (v) => v.has && near(parseCssColor(v.stroke), TOK['--danger']), EVENT_UNPLUG_MS + 12_000)
     console.log('[取数返回后]', JSON.stringify(red.v), '距启动', red.at, 'ms')
-    ok('P3-17 取数带回 15% 后弧变红（低电态）', !!red.v, String(red.v?.stroke))
+    ok('P3-17 取数带回 15% 后弧变危险色（低电态）', !!red.v, String(red.v?.stroke))
     ok('P3-18 变红时 title 电量偏低', red.v?.title === '电量偏低 · 15%', String(red.v?.title))
     ok('P3-19 变红时数字也是 15', red.v?.num === '15', String(red.v?.num))
-    ok('P3-20 变红比变白晚 1 秒以上（同样不等取数）', red.at > 0 && white.at > 0 && red.at - white.at > 1_000, `白=${white.at}ms 红=${red.at}ms`)
+    ok('P3-20 变危险色比变回文字色晚 1 秒以上（同样不等取数）', red.at > 0 && white.at > 0 && red.at - white.at > 1_000, `白=${white.at}ms 红=${red.at}ms`)
 
     await stop()
   } finally {

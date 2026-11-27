@@ -9,6 +9,7 @@
 import { spawn } from './isolate-userdata.mjs'
 import { join } from 'node:path'
 import { readFileSync, writeFileSync, copyFileSync, unlinkSync, existsSync } from 'node:fs'
+import { near, notNear, parseCssColor, resolveTokensExpr } from './e2e-color.mjs'
 
 const ROOT = join(import.meta.dirname, '..')
 const CDP_PORT = 9321
@@ -90,25 +91,25 @@ const DOM_Q = `(() => {
   })
 })()`
 
-const GREEN = 'rgba(75, 214, 130, 0.9)'
-const RED = 'rgba(255, 107, 107, 0.9)'
-const WHITE = 'rgba(255, 255, 255, 0.98)' // 与 styles.css `.head-battery-ring .ring-fg` 同步（2026-11-16 美化轮提亮）
-const REDNUM = 'rgba(255, 107, 107, 0.95)'
-
+// 2026-11-27（SPEC-fix-e2e-rot-2）：原先这里写死旧色值
+//   WHITE rgba(255,255,255,.98) / GREEN rgba(75,214,130,.9) / RED rgba(255,107,107,.9)
+// 默认主题换成亮色乳白玻璃后（SPEC-island-themes），弧色是 --ink-1 深色、
+// 绿红也各自换了值，断言长期假红。改为启动后读当前主题 token 再算距离。
+// tok 由 main 在每次 boot 后解析得到，形状 { '--ink-1': [r,g,b], '--ok': ..., '--danger': ... }
 const scenarios = [
   { name: 'S1 普通（80% 不充电）', line: '80|false', patch: true,
-    check: (d) => {
+    check: (d, tok) => {
       ok('S1 渲染', d.has)
       ok('S1 无 low/charging 类', d.cls.trim() === 'head-battery-ring', d.cls)
       ok('S1 数字 80', d.num === '80', d.num)
       ok('S1 title 电量 80%', d.title === '电量 80%', d.title)
       ok('S1 aria 同 title', d.aria === '电量 80%', d.aria)
       ok('S1 无闪电', !d.hasBolt)
-      ok('S1 弧白色', d.stroke === WHITE, d.stroke)
-      ok('S1 数字非红', d.numColor !== REDNUM, d.numColor)
+      ok('S1 弧是主题文字色（普通态）', near(parseCssColor(d.stroke), tok['--ink-1']), d.stroke)
+      ok('S1 数字非红', notNear(parseCssColor(d.numColor), tok['--danger']), d.numColor)
     } },
   { name: 'S2 充电（99% 充电中）', line: '99|True', patch: true,
-    check: (d) => {
+    check: (d, tok) => {
       ok('S2 渲染', d.has)
       ok('S2 charging 类', d.cls.includes('charging'), d.cls)
       ok('S2 无 low 类（充电压过低电阈值线以上）', !d.cls.includes('low'), d.cls)
@@ -116,27 +117,27 @@ const scenarios = [
       ok('S2 title 充电中', d.title === '充电中 · 电量 99%', d.title)
       ok('S2 aria 充电中', d.aria === '充电中 · 电量 99%', d.aria)
       ok('S2 无闪电', !d.hasBolt)
-      ok('S2 弧绿色', d.stroke === GREEN, d.stroke)
+      ok('S2 弧是主题成功色（充电）', near(parseCssColor(d.stroke), tok['--ok']), d.stroke)
     } },
   { name: 'S3 充电且低电（15% 充电中）', line: '15|True', patch: true,
-    check: (d) => {
+    check: (d, tok) => {
       ok('S3 charging 类', d.cls.includes('charging'), d.cls)
       ok('S3 无 low 类（充电优先）', !d.cls.includes('low'), d.cls)
       ok('S3 title 充电中 15%', d.title === '充电中 · 电量 15%', d.title)
       ok('S3 aria 充电中 15%', d.aria === '充电中 · 电量 15%', d.aria)
       ok('S3 无闪电', !d.hasBolt)
-      ok('S3 弧绿（不是红）', d.stroke === GREEN, d.stroke)
-      ok('S3 数字非红', d.numColor !== REDNUM, d.numColor)
+      ok('S3 弧是成功色（不是危险色）', near(parseCssColor(d.stroke), tok['--ok']) && notNear(parseCssColor(d.stroke), tok['--danger']), d.stroke)
+      ok('S3 数字非红', notNear(parseCssColor(d.numColor), tok['--danger']), d.numColor)
     } },
   { name: 'S4 低电不充电（15% 没插电）', line: '15|false', patch: true,
-    check: (d) => {
+    check: (d, tok) => {
       ok('S4 low 类', d.cls.includes('low'), d.cls)
       ok('S4 无 charging 类', !d.cls.includes('charging'), d.cls)
       ok('S4 无闪电', !d.hasBolt)
       ok('S4 title 电量偏低', d.title === '电量偏低 · 15%', d.title)
       ok('S4 aria 电量偏低', d.aria === '电量偏低 · 15%', d.aria)
-      ok('S4 弧红', d.stroke === RED, d.stroke)
-      ok('S4 数字红', d.numColor === REDNUM, d.numColor)
+      ok('S4 弧是危险色（低电）', near(parseCssColor(d.stroke), tok['--danger']), d.stroke)
+      ok('S4 数字是危险色', near(parseCssColor(d.numColor), tok['--danger']), d.numColor)
     } }
 ]
 
@@ -147,10 +148,12 @@ const main = async () => {
     for (const sc of scenarios) {
       patchBundle(sc.line)
       const wsUrl = await boot()
+      // 先读当前主题 token，断言跟随主题而不是写死色值
+      const tok = JSON.parse(await cdp(wsUrl, resolveTokensExpr(['--ink-1', '--ok', '--danger'])))
       const raw = await cdp(wsUrl, DOM_Q)
       const d = JSON.parse(raw)
       console.log(`[${sc.name}] snapshot DOM:`, raw)
-      sc.check(d)
+      sc.check(d, tok)
       await stop()
     }
   } finally {

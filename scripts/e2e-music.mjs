@@ -273,11 +273,29 @@ try {
       const seekBox = await islandEval(`document.querySelectorAll('.music-seek').length`)
       ok('M2j 有会话时渲染进度条拖拽热区', seekBox === 1, `实际 ${seekBox}`)
       // 音量：只对得上当前播放应用的音频会话才允许拖，对不上号必须置灰且显示 --
-      const volUi = await islandEval(`(() => { const i = document.querySelector('.music-volume input[type="range"]'); const n = document.querySelector('.music-volume-num'); return { disabled: i ? i.disabled : null, text: n ? n.textContent.trim() : null } })()`)
-      ok('M2l 音量滑块按 canVolume 置灰、对不上号显示 --',
-        volUi && volUi.disabled === (state.canVolume !== true) &&
-        (state.canVolume === true ? /^\d+%$/.test(volUi.text ?? '') : volUi.text === '--'),
-        `禁用=${volUi?.disabled} / canVolume=${state.canVolume} / 显示=${volUi?.text}`)
+      // 2026-11-27（SPEC-fix-e2e-rot-2）：原先先 waitForMusicState 取 state、再单独一次 eval 读 UI，
+      // 两次采样之间 canVolume 会从 false 翻 true（SMTC 会话缓存约 2 秒才匹配上），造成假失败。
+      // 改为同一次 eval 内同时取 state 与 UI，并轮询到两者一致（最多 5 秒）——
+      // 测的是「最终 UI 与 canVolume 一致」这个不变量，不再依赖某一瞬间的采样时机。
+      const volConsistent = (v) => v && v.disabled === (v.canVolume !== true) &&
+        (v.canVolume === true ? /^\d+%$/.test(v.text ?? '') : v.text === '--')
+      let volUi = null
+      {
+        const t0 = Date.now()
+        while (Date.now() - t0 < 5000) {
+          const raw = await islandEval(`(async () => {
+            const s = await window.island.musicGet()
+            const i = document.querySelector('.music-volume input[type="range"]')
+            const n = document.querySelector('.music-volume-num')
+            return JSON.stringify({ canVolume: s ? s.canVolume : null, disabled: i ? i.disabled : null, text: n ? n.textContent.trim() : null })
+          })()`)
+          volUi = JSON.parse(raw ?? 'null')
+          if (volConsistent(volUi)) break
+          await sleep(400)
+        }
+      }
+      ok('M2l 音量滑块按 canVolume 置灰、对不上号显示 --', volConsistent(volUi),
+        `禁用=${volUi?.disabled} / canVolume=${volUi?.canVolume} / 显示=${volUi?.text}`)
       // 第 2 批：有封面时 .music-cover 里是 <img>，没封面时回落音符 svg，二者必居其一
       const coverUi = await islandEval(`(() => { const c = document.querySelector('.music-cover'); const i = c?.querySelector('img.music-cover-img'); const s = c?.querySelector('svg'); return { hasImg: !!i, hasSvg: !!s, imgPrefix: i ? (i.getAttribute('src') || '').slice(0, 24) : '' } })()`)
       ok('M2m 封面容器渲染（有封面用 img / 无封面回落音符 svg）',

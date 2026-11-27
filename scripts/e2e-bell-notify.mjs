@@ -5,7 +5,7 @@
  * N3 点铃铛后：岛展开、当前页 = 通知（page 2）、标题「通知」、页点第 3 个 active
  * N3b 铃铛 title / aria-label 带「点击查看」语义，且 role=button、可聚焦
  * N3c 展开态头部也有铃铛（同一份 renderStatusItem，行为一致）
- * N4 **反证**：不点铃铛、只点胶囊空白处 → 展开后仍在第一页（待办），
+ * N4 **反证**：不点铃铛、只点胶囊空白处 → 展开后停在组件网格（不是通知页），
  *    证明 N3 不是「展开后本来就到通知页」
  * N5 铃铛点击不会被岛根 onClick 吃掉（不会刚展开又被收起）
  *
@@ -157,14 +157,18 @@ try {
     skip('N3b 铃铛可点语义', '同上')
     skip('N5 点击不会被岛根收起', '同上')
   } else {
-    // ---------- N4 反证：先点空白处，必须落在第一页 ----------
+    // ---------- N4 反证：先点空白处，展开后必须停在组件网格、不是通知页 ----------
+    // 2026-11-27（SPEC-fix-e2e-rot-2）：SPEC-island-widget-grid 之后展开首屏是组件网格
+    // （view === 'grid'，不渲染 .panel-title、页点全部非 active），不再「直接进待办页」。
+    // 反证的目的不变：证明 N3 的「到通知页」是点铃铛带来的，不是展开自带的。
     await cdpEval(clickSel('.collapsed-clock'))
     await sleep(1200)
     const sBlank = await cdpEval(READ_STATE)
+    const sBlankGrid = await cdpEval(`!!document.querySelector('.widget-grid')`)
     ok(
-      'N4 只点胶囊空白处 → 展开并在第一页（待办），不是通知页',
-      sBlank?.expanded === true && sBlank?.title === '待办' && sBlank?.activeIdx === 0,
-      JSON.stringify(sBlank)
+      'N4 只点胶囊空白处 → 展开在组件网格，不是通知页',
+      sBlank?.expanded === true && sBlank?.activeIdx !== 2 && sBlankGrid === true,
+      JSON.stringify({ ...sBlank, grid: sBlankGrid })
     )
 
     // 收回去
