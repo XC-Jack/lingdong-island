@@ -1,6 +1,6 @@
 {
   "name": "lingdong-island",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "description": "Windows 桌面灵动岛",
   "main": "./out/main/index.js",
