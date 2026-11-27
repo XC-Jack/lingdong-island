@@ -157,6 +157,9 @@ const main = async () => {
     // —— A4：展开态的网络图标只能出现在头部信息行内 ——
     // 美化-03 起展开态头部也按「页面管理」的开关与顺序展示网络图标（与收起态完全同步），
     // 所以原断言「展开态不出现网络图标」作废；改为约束位置：必须在 .head-info 里，不得散落到别处。
+    // 2026-11-27（SPEC-fix-e2e-rot-2）：展开首屏是组件网格（SPEC-island-widget-grid），
+    // 网格头部按设计只放「电量/时钟/网络/铃铛」四项，不渲染岛仔（.head-pet），
+    // 所以不再要求 hasPetRow；只要求存在信息行且网络图标在其内。
     await cdp(
       wsUrl,
       `(() => {
@@ -175,14 +178,15 @@ const main = async () => {
             wifi: !!el,
             inInfo: !!(el && info && info.contains(el)),
             expanded: document.querySelector('.island').className.includes('expanded'),
-            hasPetRow: !!document.querySelector('.head-pet'),
+            inGrid: !!document.querySelector('.widget-grid'),
             hasInfoRow: !!info
           })
         })()`
       )
     )
     assert(a4b.expanded, 'A4 点击后未进入展开态')
-    assert(a4b.hasPetRow && a4b.hasInfoRow, 'A4 展开态头部缺岛仔层或信息行: ' + JSON.stringify(a4b))
+    assert(a4b.inGrid, 'A4 展开首屏不是组件网格（SPEC-island-widget-grid 后应为网格）: ' + JSON.stringify(a4b))
+    assert(a4b.hasInfoRow, 'A4 展开态头部缺信息行: ' + JSON.stringify(a4b))
     assert(!a4b.wifi || a4b.inInfo, 'A4 展开态网络图标跑到 .head-info 之外: ' + JSON.stringify(a4b))
     assert(a4b.wifi === a2.has && !!(!a4b.wifi || a4b.inInfo), 'A4 展开态与收起态的网络图标显隐不一致')
     console.log('[4] A4 通过：展开态网络图标位于头部信息行（wifi=' + a4b.wifi + '）')
