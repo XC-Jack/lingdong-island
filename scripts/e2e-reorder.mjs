@@ -73,10 +73,15 @@ const main = async () => {
   console.log('[1] 加入3项:', added)
   if (JSON.parse(added).length !== 3) throw new Error('添加失败')
 
-  // 展开岛切到置物架
-  await evalJs("(document.querySelector('.island').click(), setTimeout(()=>document.querySelector('.widget[data-page="0"]')?.click(), 150), 1);1")
-  await sleep(500)
-  await evalJs("document.querySelectorAll('.dot')[1]?.click();1")
+  // 展开岛切到置物架（按圆点提示文字找，不依赖页面顺序——用户可自定义页序）
+  await evalJs("document.querySelector('.island').click();1")
+  await sleep(700)
+  const jumped = val(
+    await evalJs(
+      "(()=>{const d=[...document.querySelectorAll('.dot')].find(x=>(x.getAttribute('aria-label')||'').includes('置物架'));if(!d)return false;d.click();return true})()"
+    )
+  )
+  if (jumped !== true) throw new Error('找不到「置物架」页的圆点')
   await sleep(400)
 
   // [2] 文件夹图标：_folder.png 应已生成且 IMG 加载成功
@@ -88,31 +93,33 @@ const main = async () => {
   const folderIcon = icons.find((x) => x.src.includes('_folder'))
   if (!folderIcon || !folderIcon.ok) throw new Error('文件夹图标未生成/未加载')
 
-  // [3] 连续两次拖动换位：模拟 reorderTo 的数据流（CDP 无法合成真实 HTML5 drag，直接驱动同一条代码路径）
+  // [3] 连续三次真实鼠标拖动换位。
+  // 2026-11-27 起拖动改走系统级 startDrag：CDP 合成的 dragstart 会直接调它，
+  // 没有真实按键按住时主进程（也是 CDP 所在进程）会被卡死，所以必须用真实鼠标。
   const names = () => evalJs("JSON.stringify([...document.querySelectorAll('.shelf-cell-name')].map(n=>n.textContent))")
-  const doReorder = async (fromName, targetName) => {
-    const res = val(
+  const cellPos = async (name) => {
+    const raw = val(
       await evalJs(
-        `(async()=>{
-          const cells=[...document.querySelectorAll('.shelf-cell')];
-          const find=(nm)=>cells.find(c=>c.querySelector('.shelf-cell-name')?.textContent===nm);
-          const src=find(${JSON.stringify(fromName)}), tgt=find(${JSON.stringify(targetName)});
-          if(!src||!tgt) return 'cell missing';
-          const dt=new DataTransfer();
-          src.querySelector('[title]')&&null;
-          // 触发与真实拖动一致的处理器链
-          const mk=(type,el)=>{const ev=new DragEvent(type,{bubbles:true,cancelable:true});Object.defineProperty(ev,'dataTransfer',{value:dt});el.dispatchEvent(ev)};
-          mk('dragstart',src);
-          mk('dragover',tgt);
-          mk('drop',tgt);
-          mk('dragend',src);
-          await new Promise(r=>setTimeout(r,600));
-          return JSON.stringify([...document.querySelectorAll('.shelf-cell-name')].map(n=>n.textContent));
-        })()`,
-        true
+        `(()=>{const c=[...document.querySelectorAll('.shelf-cell')].find(x=>x.querySelector('.shelf-cell-name')?.textContent===${JSON.stringify(name)});if(!c)return null;const b=c.getBoundingClientRect();return JSON.stringify({x:b.x+b.width/2,y:b.y+b.height/2,sx:screenX,sy:screenY,dpr:devicePixelRatio})})()`
       )
     )
-    return res
+    if (!raw) return null
+    const p = JSON.parse(raw)
+    return [Math.round((p.sx + p.x) * p.dpr), Math.round((p.sy + p.y) * p.dpr)]
+  }
+  const doReorder = async (fromName, targetName) => {
+    const a = await cellPos(fromName)
+    const b = await cellPos(targetName)
+    if (!a || !b) return 'cell missing'
+    const ps = path.join(path.dirname(fileURLToPath(import.meta.url)), 'win-real-drag.ps1')
+    const res = spawnSync(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps, String(a[0]), String(a[1]), String(b[0]), String(b[1]), '22', '55'],
+      { encoding: 'utf8' }
+    )
+    if (res.status !== 0) throw new Error(`真实拖拽失败: ${res.stderr || res.status}`)
+    await sleep(1200)
+    return val(await names())
   }
 
   const order0 = JSON.parse(val(await names()))
