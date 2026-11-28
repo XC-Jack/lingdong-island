@@ -918,52 +918,29 @@ body {
   }
 }
 
-/* 右侧节奏图标：三根竖条，播放时起伏，暂停时静止压低；本身是播放/暂停按钮 */
-.cl-eq {
+/* 右侧播放/暂停按钮（2026-11-28 第三轮替换三根竖条节奏动画）：
+   播放中显示暂停图标、暂停时显示播放图标；图标在按钮内垂直居中（原来 flex-end 导致偏下）。 */
+.cl-play {
   flex: none;
   display: inline-flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  gap: 2.5px;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
+  border-radius: 50%;
   background: none;
   cursor: pointer;
   color: color-mix(in srgb, var(--ink-1) 85%, transparent);
 }
-.cl-eq:hover {
+.cl-play:hover {
   color: var(--ink-1);
 }
-.cl-eq i {
+.cl-play svg {
   display: block;
-  width: 2.5px;
-  height: 14px;
-  border-radius: 2px;
-  background: currentColor;
-  transform: scaleY(0.3);
-  transform-origin: bottom;
-}
-.cl-eq.playing i {
-  animation: cl-eq 900ms ease-in-out infinite;
-}
-.cl-eq.playing i:nth-child(2) {
-  animation-duration: 700ms;
-  animation-delay: -220ms;
-}
-.cl-eq.playing i:nth-child(3) {
-  animation-duration: 1100ms;
-  animation-delay: -520ms;
-}
-@keyframes cl-eq {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
+  width: 18px;
+  height: 18px;
 }
 
 .collapsed-clock {
@@ -3377,10 +3354,9 @@ body {
     transition-duration: 1ms;
   }
 
-  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：入场、切句与节奏图标都停 */
+  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：入场与切句的淡入都停 */
   .collapsed-lyric,
-  .cl-text,
-  .cl-eq.playing i {
+  .cl-text {
     animation: none;
   }
 }

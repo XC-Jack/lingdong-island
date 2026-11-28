@@ -48,9 +48,13 @@ export interface NotifyListResult {
 const shelfAddedCbs: ((list: ShelfItem[]) => void)[] = []
 
 const api = {
-  /** 请求主进程把窗口切到展开/收起尺寸 */
-  setExpanded(value: boolean): void {
-    ipcRenderer.send('island:set-expanded', value)
+  /**
+   * 请求主进程把窗口切到展开/收起尺寸。
+   * `instant` = 不做 220ms 补间，直接 setBounds。歌词条模式专用：歌词条比展开态更宽，
+   * 开合时宽度是变窄，旧的入场插值只处理「宽高都变大」，会裁掉岛（2026-11-28 用户实测抖动）。
+   */
+  setExpanded(value: boolean, instant = false): void {
+    ipcRenderer.send('island:set-expanded', value, instant)
   },
   /**
    * 收起态内容宽度上报（主进程按它定窗口宽，clamp 134~290）。

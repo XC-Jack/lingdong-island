@@ -3298,6 +3298,8 @@ function CollapsedStatusRow({
   const [, setTick] = useState(0)
   const [coverErr, setCoverErr] = useState('')
   const lyricForRef = useRef('')
+  /** 本次挂载首次拿到音乐快照时的歌曲键：用于区分「刚重建、歌词在查」与「同一挂载内换歌」 */
+  const mountKeyRef = useRef<string | null>(null)
   /** 最近一次收到音乐快照的时刻：心跳发现太久没回包时补一次 musicGet（桥接可能被回收过） */
   const stateAtRef = useRef(0)
   /** 收到快照时的播放位置与时刻：两次快照之间按真实流逝时间外推（与音乐页同一口径） */
@@ -3417,12 +3419,37 @@ function CollapsedStatusRow({
   const lineText = activeIdx >= 0 ? lines[activeIdx].text : (lines[0]?.text ?? '')
   const active = enabled && music?.active === true && lines.length > 0
 
+  /**
+   * 上报「歌词条是否生效」。
+   * 必须等拿到音乐快照（`music !== null`）再报：每次展开都会卸载本组件，收起重建时
+   * 初始 `music` 是 null、`active` 暂时为 false；若此时照报 false，会把 App 里的歌词模式
+   * 清掉——收起那一帧先按普通胶囊量宽（139），拿到快照后再撑到 400，窗口分两步跳
+   * （2026-11-28 第三轮实测，用户说的「抖动 / 显示不完整」之一）。
+   * 不用 cleanup 回报 false：卸载是展开造成的，不是歌词失效；真正的失效会由下一次
+   * 音乐状态推送（active=false）或关开关走到这里。
+   */
   useEffect(() => {
-    onLyricMode(active)
-    return () => {
-      if (active) onLyricMode(false)
+    if (!enabled) {
+      onLyricMode(false)
+      return
     }
-  }, [active, onLyricMode])
+    if (!music) return
+    if (!music.active) {
+      onLyricMode(false)
+      return
+    }
+    // 本次挂载第一次拿到音乐快照时先记下它：收起后组件重建、歌词还在查（缓存/联网），
+    // 这时报 false 会让 App 先按普通胶囊量宽，随后再撑到 400（两步跳）。
+    // 等同一首歌的歌词查完再确认；同一挂载内换歌（key 变了）则立即回落，避免宽胶囊空撑。
+    const settled = !!lyric && lyric.key === lyricKey
+    if (mountKeyRef.current === null) mountKeyRef.current = lyricKey
+    if (!settled) {
+      if (lyricKey === mountKeyRef.current) return
+      onLyricMode(false)
+      return
+    }
+    onLyricMode(hasLyric)
+  }, [enabled, music, music?.active, active, hasLyric, lyric, lyricKey, onLyricMode])
 
   if (!active) return <>{order.map((k) => renderItem(k))}</>
 
@@ -3452,11 +3479,11 @@ function CollapsedStatusRow({
       <span key={lineText} className={`cl-text${prelude ? ' prelude' : ''}`}>
         {lineText}
       </span>
-      {/* 右侧三根竖条：播放在动、暂停静止；同时是可点的播放/暂停按钮
-          （2026-11-28 用户点它「没反应」——原来它只是装饰，点击冒泡去展开岛也容易被当成没效果） */}
+      {/* 右侧播放/暂停按钮（2026-11-28 第三轮）：原来三根竖条既没有按钮观感、又偏下，
+          用户要求换掉。播放中显示暂停图标，暂停时显示播放图标，点击只切播放状态、不展开岛。 */}
       <button
         type="button"
-        className={`cl-eq${playing ? ' playing' : ''}`}
+        className={`cl-play${playing ? ' playing' : ''}`}
         aria-label={playing ? '暂停' : '继续播放'}
         title={playing ? '暂停' : '继续播放'}
         onClick={(e) => {
@@ -3465,9 +3492,7 @@ function CollapsedStatusRow({
           void window.island.musicControl('toggle')
         }}
       >
-        <i />
-        <i />
-        <i />
+        {playing ? <IcoPause /> : <IcoPlay />}
       </button>
     </div>
   )
@@ -3515,6 +3540,12 @@ export default function App(): React.JSX.Element {
   const [lyricSnap, setLyricSnap] = useState(false)
   const lyricSnapTimer = useRef<number | null>(null)
   const onLyricMode = useCallback((on: boolean) => {
+    // 展开时 CollapsedStatusRow 会卸载，它的清理回调会报 false——那只是组件生命周期，
+    // 不代表「歌词条不该出现」。若照单全收，收起那一帧会先按普通胶囊量宽，紧接着再被歌词条
+    // 撑到 400，窗口分两步跳（2026-11-28 第三轮用户说的「抖动 / 显示不完整」）。
+    // 展开期间保留上一次的 true，收起时才能一次按歌词条宽度到位；真正的失效（音乐停了、
+    // 关了开关）发生在收起态，那时 expandedRef 为 false，照常处理。
+    if (!on && expandedRef.current) return
     if (lyricModeRef.current === on) return
     lyricModeRef.current = on
     setLyricMode(on)
@@ -3946,28 +3977,102 @@ export default function App(): React.JSX.Element {
       window.island?.setExpanded(expanded)
       return
     }
-    if (expanded) {
-      const el = islandRef.current
-      if (el) {
-        // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
-        // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
-        const prev = el.style.transition
-        el.style.transition = 'none'
-        const r = el.getBoundingClientRect()
+    const el = islandRef.current
+    /**
+     * 歌词态切换不做尺寸动画（2026-11-28 第三轮）。
+     * 歌词条 400 视觉 px 比展开态 255 宽，点开时宽度是**变窄**：入场插值只在
+     * `to.w > from.w && to.h > from.h` 时生效，宽度变窄直接跳过，岛停在 300 而窗口缩到 255，
+     * 右边被裁；收起时岛又瞬间变宽到 400、窗口还在补间里，同样被裁。用户要求这一处不要动画。
+     * 处理：临时关掉 `.island` 的尺寸过渡，按最终尺寸量一次上报，再让主进程一步 setBounds。
+     */
+    const lyricToggle = lyricModeRef.current
+    let snapTimer = 0
+    let releaseRaf = 0
+    /** 主进程 setBounds 是跨进程的，渲染层这一帧已经按最终尺寸画好了，窗口还得一两帧才跟上。
+     *  这期间把岛钳在当前窗口内，避免「岛比窗口大 → 右边/底部被裁」（采样实测约 30ms）。 */
+    const clampToWindow = (targetW: number, targetH: number): void => {
+      if (!el) return
+      const winW = window.innerWidth
+      const winH = window.innerHeight
+      let clamped = false
+      if (targetW > 0 && winW < targetW - 1) {
+        el.style.width = `${winW / ZOOM}px`
+        el.style.minWidth = '0'
+        clamped = true
+      }
+      if (targetH > 0 && winH < targetH - 1) {
+        el.style.height = `${winH / ZOOM}px`
+        // `.island.expanded` 的 min-height:150 会顶住钳制后的高度（实测仍溢出 37px）
+        el.style.minHeight = '0'
+        clamped = true
+      }
+      if (!clamped) return
+      const release = (): void => {
+        const wOk = targetW <= 0 || window.innerWidth >= targetW - 1
+        const hOk = targetH <= 0 || window.innerHeight >= targetH - 1
+        if (wOk && hOk) {
+          el.style.width = ''
+          el.style.height = ''
+          el.style.minWidth = ''
+          el.style.minHeight = ''
+          return
+        }
+        releaseRaf = window.requestAnimationFrame(release)
+      }
+      releaseRaf = window.requestAnimationFrame(release)
+    }
+    if (el) {
+      // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
+      // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
+      const prev = el.style.transition
+      el.style.transition = 'none'
+      const r = el.getBoundingClientRect()
+      if (lyricToggle) {
+        // 保留 none 到这次尺寸变化落定（400ms 后恢复，届时没有样式变化，不会补播动画）
+        snapTimer = window.setTimeout(() => {
+          el.style.transition = prev
+        }, 400)
+      } else {
         el.style.transition = prev
-        if (r.width > 0 && r.height > 0) {
+      }
+      if (r.width > 0 && r.height > 0) {
+        if (expanded) {
           const w = Math.ceil(r.width)
           const h = Math.ceil(r.height)
           if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
           intendedWinSize.current = { w, h }
           reportExpandedSize(w, h)
-          // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
-          // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
-          // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
-          entranceFromRef.current = { w: window.innerWidth, h: window.innerHeight }
-          entranceToRef.current = { w, h }
-          el.style.setProperty('--entrance-w', `${entranceFromRef.current.w}px`)
-          el.style.setProperty('--entrance-h', `${entranceFromRef.current.h}px`)
+          if (lyricToggle) {
+            clampToWindow(w, h)
+          } else {
+            // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
+            // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
+            // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
+            entranceFromRef.current = { w: window.innerWidth, h: window.innerHeight }
+            entranceToRef.current = { w, h }
+            el.style.setProperty('--entrance-w', `${entranceFromRef.current.w}px`)
+            el.style.setProperty('--entrance-h', `${entranceFromRef.current.h}px`)
+          }
+        } else if (lyricToggle) {
+          // 收起：`collapsedWidth` 决定 computeBounds(false) 的宽度，必须跟着歌词条量到的 400 走
+          const w = Math.ceil(r.width)
+          window.island.setCollapsedWidth(w, true)
+          clampToWindow(w, 0)
+        }
+      }
+    }
+    if (lyricToggle) {
+      setEntrance(null)
+      window.island?.setExpanded(expanded, true)
+      return () => {
+        window.clearTimeout(snapTimer)
+        window.cancelAnimationFrame(releaseRaf)
+        if (el) {
+          el.style.transition = ''
+          el.style.width = ''
+          el.style.height = ''
+          el.style.minWidth = ''
+          el.style.minHeight = ''
         }
       }
     }

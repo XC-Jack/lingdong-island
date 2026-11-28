@@ -10,6 +10,10 @@
  * L5 设置里关掉「收起胶囊显示歌词」→ 歌词条立刻消失、岛缩回普通宽度；重启后仍然关闭
  *    （配置真的落盘）；再打开 → 歌词条恢复
  * L6 放歌但查不到歌词 → 不出现歌词条，状态组件照旧（不拿空歌词硬撑一条空条）
+ * L7 进/出歌词条时宽度过渡被临时关掉，切换后窗口与岛同宽
+ * L8 右侧播放/暂停按钮：有图标、带说明，点了只切播放状态、不展开岛
+ * L9 歌词态点岛展开 / 收起：逐帧采样岛不超出窗口，且不走 island-entrance 入场动画
+ *    （歌词条 400 视觉 px 比展开态 255 宽，旧插值只处理宽高都变大，会裁掉右边）
  *
  * 前提：npm run build（e2e 加载 out/ 产物）。
  * 用 ISLAND_FAKE_MUSIC 伪造播放会话、预置歌词缓存，不依赖本机真实播放器，也不碰真实用户数据
@@ -161,7 +165,8 @@ const BAR_SNAP = `(() => {
     children: bar ? [...bar.children].map((c) => c.className.split(' ')[0]) : [],
     text: txt ? txt.textContent : null,
     prelude: txt ? txt.classList.contains('prelude') : null,
-    eqPlaying: (() => { const e = document.querySelector('.cl-eq'); return e ? e.classList.contains('playing') : null })(),
+    playLabel: (() => { const e = document.querySelector('.cl-play'); return e ? e.getAttribute('aria-label') : null })(),
+    playIcon: (() => { const e = document.querySelector('.cl-play'); return e ? !!e.querySelector('svg') : null })(),
     coverImg: !!document.querySelector('.cl-cover img'),
     coverPh: !!document.querySelector('.cl-cover-ph'),
     pet: !!document.querySelector('.cl-pet'),
@@ -234,14 +239,16 @@ try {
     ok('L2c2 窗口宽度跟岛同宽（右边不被窗口裁掉）',
       s && Math.abs((s.innerW ?? 0) - (s.islandW ?? 0)) <= 2,
       JSON.stringify(s && { innerW: s.innerW, islandW: s.islandW }))
-    ok('L2d 条内顺序是 封面 / 岛仔 / 歌词 / 节奏图标',
+    ok('L2d 条内顺序是 封面 / 岛仔 / 歌词 / 播放按钮',
       s && s.children.length === 4 && s.children[0] === 'cl-cover' && s.children[1] === 'cl-pet' &&
-      s.children[2] === 'cl-text' && s.children[3] === 'cl-eq',
+      s.children[2] === 'cl-text' && s.children[3] === 'cl-play',
       JSON.stringify(s?.children))
     ok('L2e 没有封面时回落音符占位', s && s.coverPh === true && s.coverImg === false,
       JSON.stringify(s && { ph: s.coverPh, img: s.coverImg }))
     ok('L2f 当前句是第一条歌词', s && s.text === LINES[0].text, JSON.stringify(s?.text))
-    ok('L2g 播放中节奏图标在动（.playing）', s && s.eqPlaying === true, String(s?.eqPlaying))
+    ok('L2g 播放中右侧是暂停图标（点它=暂停）',
+      s && s.playLabel === '暂停' && s.playIcon === true,
+      JSON.stringify(s && { label: s.playLabel, icon: s.playIcon }))
     ok('L2h 状态组件（时钟）让位、不跟歌词挤在一起', s && s.clock === false, String(s?.clock))
     ok('L2i 无障碍名里有歌名和当前句', s && typeof s.aria === 'string' && s.aria.includes(SONG.title) && s.aria.includes(LINES[0].text),
       JSON.stringify(s?.aria))
@@ -275,27 +282,28 @@ try {
       const st = await islandEval(`window.island.musicGet().then((s) => s.playing)`)
       return st === false ? v : null
     }, 5000)
-    ok('L4a 暂停后节奏图标停止动画（不再带 .playing）', paused && paused.eqPlaying === false,
-      JSON.stringify(paused && { eqPlaying: paused.eqPlaying }))
+    ok('L4a 暂停后按钮变成播放图标（继续播放）',
+      paused && paused.playLabel === '继续播放' && paused.playIcon === true,
+      JSON.stringify(paused && { label: paused.playLabel, icon: paused.playIcon }))
     ok('L4b 暂停时歌词条仍然在（不是只有播放才显示）', paused && paused.bar === true && paused.text === before?.text,
       JSON.stringify(paused && { bar: paused.bar, text: paused.text, before: before?.text }))
     await islandEval(`window.island.musicControl('toggle')`)
     const resumed = await waitFor(async () => {
       const v = await islandEval(BAR_SNAP)
-      return v?.eqPlaying === true ? v : null
+      return v?.playLabel === '暂停' ? v : null
     }, 5000)
-    ok('L4c 恢复播放后节奏图标重新动起来', !!resumed, JSON.stringify(resumed && { eqPlaying: resumed.eqPlaying }))
+    ok('L4c 恢复播放后按钮回到暂停图标', !!resumed, JSON.stringify(resumed && { label: resumed.playLabel }))
   }
 
-  // ========== L8 右侧三根竖条：可点的播放/暂停 ==========
+  // ========== L8 右侧播放/暂停按钮 ==========
   {
     const eq = await islandEval(`(() => {
-      const b = document.querySelector('.cl-eq')
-      return b ? { tag: b.tagName, label: b.getAttribute('aria-label') } : null
+      const b = document.querySelector('.cl-play')
+      return b ? { tag: b.tagName, label: b.getAttribute('aria-label'), svg: !!b.querySelector('svg') } : null
     })()`)
-    ok('L8a 节奏图标是可点的按钮（带暂停/继续播放说明）',
-      eq && eq.tag === 'BUTTON' && (eq.label === '暂停' || eq.label === '继续播放'), JSON.stringify(eq))
-    await islandEval(`document.querySelector('.cl-eq')?.click()`)
+    ok('L8a 右侧是可点的播放/暂停按钮（带图标与暂停/继续播放说明）',
+      eq && eq.tag === 'BUTTON' && eq.svg === true && (eq.label === '暂停' || eq.label === '继续播放'), JSON.stringify(eq))
+    await islandEval(`document.querySelector('.cl-play')?.click()`)
     const paused = await waitFor(async () => {
       const st = await islandEval(`window.island.musicGet().then((s) => s.playing)`)
       return st === false ? true : null
@@ -305,12 +313,94 @@ try {
     ok('L8c 点它不会顺手把岛展开（stopPropagation），歌词条仍在',
       afterPause && afterPause.bar === true && afterPause.expanded !== true,
       JSON.stringify(afterPause && { bar: afterPause.bar }))
-    await islandEval(`document.querySelector('.cl-eq')?.click()`)
+    await islandEval(`document.querySelector('.cl-play')?.click()`)
     const resumed = await waitFor(async () => {
       const st = await islandEval(`window.island.musicGet().then((s) => s.playing)`)
       return st === true ? true : null
     }, 4000)
     ok('L8d 再点一下恢复播放', resumed === true)
+  }
+
+  // ========== L9 歌词态点岛展开 / 收起：不裁切、不做入场动画 ==========
+  // 歌词条 400 视觉 px 比展开态 255 宽，点开时宽度变窄；旧的入场插值只处理宽高都变大，
+  // 会裁掉右边（2026-11-28 用户实测「抖动 / 显示不完整」）。这里在同一次 eval 里
+  // 先点开、采样 400ms，再按 Esc 收起继续采样，避免两次 eval 之间被失焦自动收起干扰。
+  {
+    const SAMPLE_MS = 1000
+    const ESC_AT = 400
+    const frames = await islandEval(`new Promise((resolve) => {
+      const t0 = performance.now()
+      const out = []
+      let escaped = false
+      const tick = () => {
+        const t = Math.round(performance.now() - t0)
+        if (!escaped && t >= ${ESC_AT}) {
+          escaped = true
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+        }
+        const isl = document.querySelector('.island')
+        if (isl) {
+          const r = isl.getBoundingClientRect()
+          out.push({
+            t,
+            phase: escaped ? 'co' : 'ex',
+            iw: Math.round(r.width),
+            ih: Math.round(r.height),
+            winW: window.innerWidth,
+            winH: window.innerHeight,
+            entrance: isl.classList.contains('island-entrance'),
+            expanded: isl.classList.contains('expanded'),
+            lyricMode: isl.classList.contains('lyric-mode'),
+            snap: isl.classList.contains('lyric-snap')
+          })
+        }
+        if (t < ${SAMPLE_MS}) requestAnimationFrame(tick)
+        else resolve(out)
+      }
+      requestAnimationFrame(tick)
+      const isl = document.querySelector('.island')
+      if (isl) isl.click()
+    })`)
+    const summarize = (arr) => {
+      let overW = -999
+      let overH = -999
+      let worst = null
+      for (const f of arr) {
+        if (f.iw - f.winW > overW) overW = f.iw - f.winW
+        if (f.ih - f.winH > overH) overH = f.ih - f.winH
+        const d = Math.max(f.iw - f.winW, f.ih - f.winH)
+        if (!worst || d > worst.d) worst = { d, t: f.t, iw: f.iw, ih: f.ih, winW: f.winW, winH: f.winH, lyricMode: f.lyricMode, expanded: f.expanded }
+      }
+      return {
+        n: arr.length,
+        overW,
+        overH,
+        worst,
+        entrance: arr.some((f) => f.entrance),
+        last: arr[arr.length - 1] || null
+      }
+    }
+    const ex = summarize((frames || []).filter((f) => f.phase === 'ex'))
+    const co = summarize((frames || []).filter((f) => f.phase === 'co'))
+
+    ok('L9a 歌词态点岛展开：过程中岛不超出窗口（宽/高）',
+      ex.n > 0 && ex.overW <= 1 && ex.overH <= 1, JSON.stringify(ex))
+    ok('L9b 歌词态展开不走入场动画（island-entrance 未出现）',
+      ex.n > 0 && ex.entrance === false, JSON.stringify(ex))
+    ok('L9c 展开后窗口与岛同尺寸',
+      ex.last && ex.last.expanded === true && ex.last.winW === ex.last.iw && Math.abs(ex.last.winH - ex.last.ih) <= 2,
+      JSON.stringify(ex.last))
+    ok('L9d 歌词态收起：过程中岛不超出窗口（宽/高）',
+      co.n > 0 && co.overW <= 1 && co.overH <= 1, JSON.stringify(co))
+    ok('L9e 歌词态收起不走入场动画（island-entrance 未出现）',
+      co.n > 0 && co.entrance === false, JSON.stringify(co))
+    const back = await waitFor(async () => {
+      const v = await islandEval(BAR_SNAP)
+      return v && v.bar && !v.expanded ? v : null
+    }, 5000)
+    ok('L9f 收起后回到歌词条，且窗口与岛同宽',
+      back && Math.abs(back.innerW - back.islandW) <= 2,
+      JSON.stringify(back && { innerW: back.innerW, islandW: back.islandW, bar: back.bar }))
   }
 
   // ========== L5 设置开关：关掉即恢复普通收起态，重启后保持 ==========

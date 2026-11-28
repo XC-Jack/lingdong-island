@@ -531,7 +531,14 @@ app.on('window-all-closed', () => {
 })
 
 // 渲染进程请求改变展开状态
-ipcMain.on('island:set-expanded', (_event, value: boolean) => {
+ipcMain.on('island:set-expanded', (_event, value: boolean, instant: unknown) => {
+  // 歌词态切换（2026-11-28）：宽度是变窄，旧的入场插值只处理「宽高都变大」，会裁岛；
+  // 用户明确要求这一处不要动画，所以直接 setBounds 一步到位。即使已经在补间中也要截停。
+  if (instant === true) {
+    if (!value) appendDiagLog(`render set-expanded=false (lyric instant); hasFocus=${mainWindow?.isFocused() ?? 'no-win'}`)
+    applyBoundsNow(value)
+    return
+  }
   if (value === expanded) return
   // US-036 诊断探针：收起发生时记录一行，便于定位「打字时岛自己收起」的真实路径。
   // 诊断稳定后可整体移除（连同 logDiag 通道）。
