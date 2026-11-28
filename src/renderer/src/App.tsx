@@ -16,6 +16,60 @@ const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, sti
 const AUTO_COLLAPSE_MS = 700
 /** 渲染层整体缩放（styles.css `.app` 的 zoom）。getBoundingClientRect 是屏幕 px，样式写的是布局 px */
 const ZOOM = 0.75
+
+/**
+ * 把岛临时钳在当前窗口内，等主进程 setBounds 跟上（跨进程通常 1~2 帧）。
+ *
+ * 场景：渲染层这一帧已经按最终尺寸画好，窗口还要等 IPC 才改。若不钳制，岛会比窗口大，
+ * 右边/下边被 `.island { overflow:hidden }` 之外的窗口边界裁掉（音乐页点「词」实测裁 147×50px）。
+ * 返回取消函数；最多等 1 秒，主进程异常时也会释放，避免永久变形。
+ */
+function clampIslandToWindow(el: HTMLElement, targetW: number, targetH: number): () => void {
+  const winW = window.innerWidth
+  const winH = window.innerHeight
+  const clampW = targetW > 0 && winW < targetW - 1
+  const clampH = targetH > 0 && winH < targetH - 1
+  if (!clampW && !clampH) return () => {}
+  if (clampW) {
+    el.style.width = `${winW / ZOOM}px`
+    el.style.minWidth = '0'
+  }
+  if (clampH) {
+    el.style.height = `${winH / ZOOM}px`
+    // `.island.expanded` 的 min-height:150 会顶住钳制后的高度（实测仍溢出 37px）
+    el.style.minHeight = '0'
+  }
+  const startedAt = performance.now()
+  let raf = 0
+  const release = (): void => {
+    const wOk = !clampW || window.innerWidth >= targetW - 1
+    const hOk = !clampH || window.innerHeight >= targetH - 1
+    if ((wOk && hOk) || performance.now() - startedAt > 1000) {
+      if (clampW) {
+        el.style.width = ''
+        el.style.minWidth = ''
+      }
+      if (clampH) {
+        el.style.height = ''
+        el.style.minHeight = ''
+      }
+      return
+    }
+    raf = window.requestAnimationFrame(release)
+  }
+  raf = window.requestAnimationFrame(release)
+  return () => {
+    window.cancelAnimationFrame(raf)
+    if (clampW) {
+      el.style.width = ''
+      el.style.minWidth = ''
+    }
+    if (clampH) {
+      el.style.height = ''
+      el.style.minHeight = ''
+    }
+  }
+}
 /**
  * 组件网格拖动的起拖阈值（SPEC-widget-drag）。
  * 按下后指针移动超过这个距离（屏幕 px）就进入拖动；不移动直接松手 = 点击打开组件。
@@ -2404,6 +2458,9 @@ function MusicPanel({
   const onWordClick = (): void => {
     if (desktopBusy) return
     if (lyricOpen) {
+      // 同步上报（不等下面的 effect）：App 要在同一次提交里关掉尺寸过渡、量最终尺寸，
+      // 否则岛先变大/变小、窗口 80ms 后才跟上，右侧与底部会被裁（2026-11-28 实测 147×50px）。
+      onLyricOpenChange?.(false)
       setLyricOpen(false)
       if (canDesktopLyric) {
         setDesktopBusy(true)
@@ -2422,6 +2479,7 @@ function MusicPanel({
         .finally(() => setDesktopBusy(false))
       return
     }
+    onLyricOpenChange?.(true)
     setLyricOpen(true)
   }
   // 把开合状态（含 × 关闭、切页卸载）同步给 App：面板开着时岛不自动收起
@@ -3258,6 +3316,249 @@ const PAGE_META: { icon: () => React.JSX.Element; label: string }[] = [
   { icon: IcoMusic, label: '音乐' },
 ]
 
+/**
+ * 收起态歌词条（SPEC-collapsed-lyric-bar）。
+ *
+ * 参考视频里的形态：播放时整条胶囊切成「封面 + 岛仔 + 当前一句歌词 + 节奏图标」，
+ * 不播放/没歌词时原样显示时间电量等状态组件。
+ *
+ * 为什么单独一个组件：音乐状态每秒都在推（播放位置），放在 App 根会让整棵岛跟着
+ * 4Hz 重渲染；这里自己订阅，只重渲染这一条。
+ *
+ * 为什么挂载时主动 musicGet()：收起态是常态，用户不会为了歌词先点开音乐页；
+ * 主进程的桥接是懒启动的，这里就是「有人用音乐」的那只手。musicDemand 每 60 秒续一次租，
+ * 卸载时交还，桥接按既有 2 分钟空闲规则回收。
+ */
+function CollapsedStatusRow({
+  enabled,
+  order,
+  renderItem,
+  onLyricMode,
+  petEnabled,
+  petSkin,
+  petMode,
+  mood
+}: {
+  /** 设置里「收起胶囊显示歌词」；关掉时完全不碰音乐桥接 */
+  enabled: boolean
+  order: CollapsedKey[]
+  renderItem: (k: CollapsedKey) => React.JSX.Element | null
+  /** 歌词条是否生效（决定岛根类名与窗口宽度上限），只在切换时回调 */
+  onLyricMode: (on: boolean) => void
+  petEnabled: boolean
+  petSkin: string
+  petMode: string
+  mood: 'idle' | 'happy'
+}): React.JSX.Element {
+  const [music, setMusic] = useState<MusicState | null>(null)
+  /** 歌词结果连同它对应的查询键一起存：只有键与当前歌曲一致的结果才拿来显示 */
+  const [lyric, setLyric] = useState<{ key: string; result: LyricResult } | null>(null)
+  const [, setTick] = useState(0)
+  const [coverErr, setCoverErr] = useState('')
+  const lyricForRef = useRef('')
+  /** 本次挂载首次拿到音乐快照时的歌曲键：用于区分「刚重建、歌词在查」与「同一挂载内换歌」 */
+  const mountKeyRef = useRef<string | null>(null)
+  /** 最近一次收到音乐快照的时刻：心跳发现太久没回包时补一次 musicGet（桥接可能被回收过） */
+  const stateAtRef = useRef(0)
+  /** 收到快照时的播放位置与时刻：两次快照之间按真实流逝时间外推（与音乐页同一口径） */
+  const posBaseRef = useRef<{ pos: number; at: number } | null>(null)
+
+  useEffect(() => {
+    if (!enabled) return
+    let alive = true
+    ensureClockWatcher()
+    const apply = (s: MusicState): void => {
+      if (!alive) return
+      stateAtRef.current = Date.now()
+      setMusic(s)
+    }
+    window.island.musicDemand(true)
+    void window.island.musicGet().then(apply)
+    const off = window.island.onMusicState(apply)
+    // 60 秒续一次「有人用」；若桥接被回收/崩溃，超过 15 秒没有回包就重新拉起。
+    // 为什么不用更密的心跳：桥接正常时每秒都在推，60 秒续租足够覆盖 120 秒租期。
+    const beat = window.setInterval(() => {
+      window.island.musicDemand(true)
+      if (Date.now() - stateAtRef.current > 15_000) {
+        void window.island.musicGet().then(apply)
+      }
+    }, 60_000)
+    return () => {
+      alive = false
+      off()
+      window.clearInterval(beat)
+      window.island.musicDemand(false)
+    }
+  }, [enabled])
+
+  // 新快照到达：记下外推基准；换歌时旧歌词不能闪到新歌上，查询键会自然换掉
+  useEffect(() => {
+    if (!music) return
+    posBaseRef.current = { pos: music.position, at: performance.now() }
+  }, [music?.title, music?.artist, music?.position, music?.playing])
+
+  const lyricKey =
+    music?.active && music.title
+      ? `${music.title}|${music.artist}|${music.album}|${Math.round(music.duration)}`
+      : ''
+  /** 只有与当前歌曲同一个键的歌词才作数：换歌时旧结果立刻作废，不闪到新歌上 */
+  const lyricNow = lyric && lyric.key === lyricKey ? lyric.result : null
+  const hasLyric = !!lyricNow?.ok && (lyricNow.lines?.length ?? 0) > 0
+
+  // 播放中每 250ms 重算一次当前句；暂停/无会话不空转
+  useEffect(() => {
+    if (!enabled || !music?.active || !music.playing || !hasLyric) return
+    const id = window.setInterval(() => setTick((n) => (n + 1) % 1_000_000), 250)
+    return () => window.clearInterval(id)
+  }, [enabled, music?.active, music?.playing, hasLyric])
+
+  useEffect(() => {
+    if (!enabled || !lyricKey) return
+    if (lyricForRef.current === lyricKey) return // 当前歌已经查过（成功或失败只查一次）
+    lyricForRef.current = lyricKey
+    // 换歌先清掉上一首的结果：联网查歌词最长要 6 秒，不能让新歌开头亮着旧歌词
+    setLyric(null)
+    let alive = true
+    void window.island
+      .lyricGet({
+        title: music?.title ?? '',
+        artist: music?.artist ?? '',
+        album: music?.album ?? '',
+        duration: music?.duration ?? 0
+      })
+      .then((r) => {
+        if (alive) setLyric({ key: lyricKey, result: r })
+      })
+      .catch(() => {
+        if (alive) {
+          setLyric({
+            key: lyricKey,
+            result: {
+              ok: false,
+              title: music?.title ?? '',
+              artist: music?.artist ?? '',
+              source: 'none',
+              lines: [],
+              reason: '查歌词时出错了，稍后再试'
+            }
+          })
+        }
+      })
+    return () => {
+      alive = false
+      // 查询被中途取消（关开关 / 换歌）时让出标记，下次还能再查一次
+      if (lyricForRef.current === lyricKey) lyricForRef.current = ''
+    }
+  }, [enabled, lyricKey, music?.title, music?.artist, music?.album, music?.duration])
+
+  const lines = hasLyric ? (lyricNow?.lines ?? []) : []
+  /**
+   * 位置：播放器报时长就按快照 + 最多 0.9 秒外推（与音乐页一致）；
+   * 网易云这类不报时长的，用模块级进度钟自己数。
+   */
+  const playing = music?.playing === true
+  const pos = (() => {
+    if (!music?.active) return 0
+    if (music.duration > 0) {
+      const base = posBaseRef.current
+      const extra = playing && base ? Math.min((performance.now() - base.at) / 1000, 0.9) : 0
+      return Math.min(music.duration, Math.max(0, (base?.pos ?? music.position) + extra))
+    }
+    return clockNow()
+  })()
+  // 当前句：取「开始时间 ≤ 当前位置」的最后一行；前奏期没有亮句
+  let activeIdx = -1
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].time <= pos + 0.15) activeIdx = i
+    else break
+  }
+  /** 前奏期显示第一句但压暗，既不是空白也不假装已经唱到 */
+  const prelude = activeIdx < 0 && lines.length > 0
+  const lineText = activeIdx >= 0 ? lines[activeIdx].text : (lines[0]?.text ?? '')
+  const active = enabled && music?.active === true && lines.length > 0
+
+  /**
+   * 上报「歌词条是否生效」。
+   * 必须等拿到音乐快照（`music !== null`）再报：每次展开都会卸载本组件，收起重建时
+   * 初始 `music` 是 null、`active` 暂时为 false；若此时照报 false，会把 App 里的歌词模式
+   * 清掉——收起那一帧先按普通胶囊量宽（139），拿到快照后再撑到 400，窗口分两步跳
+   * （2026-11-28 第三轮实测，用户说的「抖动 / 显示不完整」之一）。
+   * 不用 cleanup 回报 false：卸载是展开造成的，不是歌词失效；真正的失效会由下一次
+   * 音乐状态推送（active=false）或关开关走到这里。
+   */
+  // 用 layout effect 而不是普通 effect：歌词条渲染与「歌词模式」类名必须在同一帧生效。
+  // 普通 effect 在绘制后才跑，会先画一帧「歌词条挤在普通胶囊宽度里（195）」，再撑到 400
+  // （2026-11-28 第四轮：再打开设置开关时实测到）。
+  useLayoutEffect(() => {
+    if (!enabled) {
+      onLyricMode(false)
+      return
+    }
+    if (!music) return
+    if (!music.active) {
+      onLyricMode(false)
+      return
+    }
+    // 本次挂载第一次拿到音乐快照时先记下它：收起后组件重建、歌词还在查（缓存/联网），
+    // 这时报 false 会让 App 先按普通胶囊量宽，随后再撑到 400（两步跳）。
+    // 等同一首歌的歌词查完再确认；同一挂载内换歌（key 变了）则立即回落，避免宽胶囊空撑。
+    const settled = !!lyric && lyric.key === lyricKey
+    if (mountKeyRef.current === null) mountKeyRef.current = lyricKey
+    if (!settled) {
+      if (lyricKey === mountKeyRef.current) return
+      onLyricMode(false)
+      return
+    }
+    onLyricMode(hasLyric)
+  }, [enabled, music, music?.active, active, hasLyric, lyric, lyricKey, onLyricMode])
+
+  if (!active) return <>{order.map((k) => renderItem(k))}</>
+
+  const coverOk = !!music?.cover && coverErr !== music.cover
+  const title = `${music?.title ?? ''}${music?.artist ? ` - ${music.artist}` : ''}`
+  return (
+    <div
+      className={`collapsed-lyric${playing ? '' : ' paused'}`}
+      role="group"
+      aria-label={`正在播放${title ? `《${title}》` : ''}，歌词：${lineText}`}
+      title={title ? `${title}\n${lineText}` : lineText}
+    >
+      <span className="cl-cover" aria-hidden="true">
+        {coverOk ? (
+          <img src={music?.cover ?? ''} alt="" onError={() => setCoverErr(music?.cover ?? '')} />
+        ) : (
+          <span className="cl-cover-ph">
+            <IcoMusic />
+          </span>
+        )}
+      </span>
+      {petEnabled && petMode === 'island' && (
+        <span className="cl-pet" aria-hidden="true">
+          <Pet skin={petSkin} mood={mood} size="tiny" />
+        </span>
+      )}
+      <span key={lineText} className={`cl-text${prelude ? ' prelude' : ''}`}>
+        {lineText}
+      </span>
+      {/* 右侧播放/暂停按钮（2026-11-28 第三轮）：原来三根竖条既没有按钮观感、又偏下，
+          用户要求换掉。播放中显示暂停图标，暂停时显示播放图标，点击只切播放状态、不展开岛。 */}
+      <button
+        type="button"
+        className={`cl-play${playing ? ' playing' : ''}`}
+        aria-label={playing ? '暂停' : '继续播放'}
+        title={playing ? '暂停' : '继续播放'}
+        onClick={(e) => {
+          // 只切播放状态，不冒泡到岛根（否则会同时展开岛）
+          e.stopPropagation()
+          void window.island.musicControl('toggle')
+        }}
+      >
+        {playing ? <IcoPause /> : <IcoPlay />}
+      </button>
+    </div>
+  )
+}
+
 export default function App(): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   // 岛主题（SPEC-island-themes）：默认亮色玻璃，mount 后从 prefs 回填。
@@ -3285,6 +3586,43 @@ export default function App(): React.JSX.Element {
   const [clockFormat, setClockFormat] = useState<ClockFormat>('time')
   // 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）：默认开，与主进程缺失值一致
   const [desktopLyricEnabled, setDesktopLyricEnabled] = useState(true)
+  // 收起态歌词条（SPEC-collapsed-lyric-bar）：默认开，与主进程缺失值一致
+  const [collapsedLyricEnabled, setCollapsedLyricEnabled] = useState(true)
+  // 歌词条是否正在生效：用于岛根类名（固定宽度）与收起态宽度上限
+  const [lyricMode, setLyricMode] = useState(false)
+  // 尺寸上报是 ResizeObserver 回调，读不到最新 state；用 ref 保证与类名同一时刻生效
+  const lyricModeRef = useRef(false)
+  /**
+   * 歌词条进出时临时关掉 `.island` 的宽度过渡（2026-11-28 用户「有卡顿、不完整」）。
+   * 窗口宽度是主进程一次性 setBounds，而岛自身有 220ms 宽度过渡：切进来时岛先在过渡里
+   * 变大、ResizeObserver 80ms 后才按量到的中间宽度去追窗口，右边被窗口裁掉、窗口一截一截跳。
+   * 关掉过渡后宽度一步到位，再用下面这次立即上报把窗口同一帧改到位，两项一起完成。
+   */
+  const [lyricSnap, setLyricSnap] = useState(false)
+  const lyricSnapTimer = useRef<number | null>(null)
+  const onLyricMode = useCallback((on: boolean) => {
+    // 展开时 CollapsedStatusRow 会卸载，它的清理回调会报 false——那只是组件生命周期，
+    // 不代表「歌词条不该出现」。若照单全收，收起那一帧会先按普通胶囊量宽，紧接着再被歌词条
+    // 撑到 400，窗口分两步跳（2026-11-28 第三轮用户说的「抖动 / 显示不完整」）。
+    // 展开期间保留上一次的 true，收起时才能一次按歌词条宽度到位；真正的失效（音乐停了、
+    // 关了开关）发生在收起态，那时 expandedRef 为 false，照常处理。
+    if (!on && expandedRef.current) return
+    if (lyricModeRef.current === on) return
+    lyricModeRef.current = on
+    setLyricMode(on)
+    setLyricSnap(true)
+    if (lyricSnapTimer.current !== null) window.clearTimeout(lyricSnapTimer.current)
+    lyricSnapTimer.current = window.setTimeout(() => setLyricSnap(false), 300)
+    // 等 React 把类名刷进 DOM、布局稳定后再量一次最终宽度，直接上报；
+    // 不等 ResizeObserver 的 80ms 防抖去追过渡中间态（那时窗口已经晚了一截）
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const el = islandRef.current
+        if (!el || expandedRef.current) return
+        window.island.setCollapsedWidth(Math.ceil(el.getBoundingClientRect().width), lyricModeRef.current)
+      })
+    })
+  }, [])
   const [page, setPage] = useState(0)
   // 组件首页（SPEC-island-widget-grid）：'grid' = 展开后的 iOS 组件网格；数字 = 对应功能页。
   // 收起再展开总是回到网格；点组件或翻页才进具体页。注意它与 page 是两层：
@@ -3313,6 +3651,7 @@ export default function App(): React.JSX.Element {
         if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
         if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
         if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+        if (typeof prefs.collapsedLyric === 'boolean') setCollapsedLyricEnabled(prefs.collapsedLyric)
         setIslandTheme(applyIslandTheme(prefs.islandTheme))
         if (pagesCustomDirty.current) return
         const v = normalizePagesCustom(prefs.pagesCustom)
@@ -3353,8 +3692,12 @@ export default function App(): React.JSX.Element {
   // 歌词面板开着（SPEC-music-lyric-pin）：定时收起到点时读它，开着就放弃这次收起。
   // 用 ref 而不是 state 是刻意的——收起定时器回调不该因为面板开合而重建。
   const lyricOpenRef = useRef(false)
+  // 另存一份 state：面板开合要把岛尺寸从 340 布局 px 跳到 max-content（不可过渡），
+  // 需要在该次渲染后立刻量最终尺寸并同步窗口（见下面的 layout effect）。
+  const [lyricPanelOpen, setLyricPanelOpen] = useState(false)
   const onLyricOpenChange = useCallback((open: boolean) => {
     lyricOpenRef.current = open
+    setLyricPanelOpen((prev) => (prev === open ? prev : open))
   }, [])
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
@@ -3444,7 +3787,8 @@ export default function App(): React.JSX.Element {
           // 走带 1px 死区的统一入口：这条 RO 上报是尺寸抖动的主要来源
           void reportExpandedSize(w, h)
         } else {
-          window.island.setCollapsedWidth(w)
+          // 歌词条固定 400 视觉 px，比普通胶囊宽：带上标记让主进程放宽上限（SPEC-collapsed-lyric-bar）
+          window.island.setCollapsedWidth(w, lyricModeRef.current)
         }
       }, 80)
     })
@@ -3456,6 +3800,31 @@ export default function App(): React.JSX.Element {
       ro.disconnect()
     }
   }, [reportExpandedSize])
+
+  /**
+   * 歌词条生效/失效的那一帧就把收起态窗口宽度改到位（2026-11-28 第四轮）。
+   *
+   * 症状：再打开「收起胶囊显示歌词」时，歌词条先按普通胶囊宽度（195）渲染一帧，下一帧才
+   * 撑到 400；窗口宽度还要等 ResizeObserver 的 80ms 防抖，右边被裁。
+   * `lyric-mode` 类名在本轮提交里已经落到 DOM（子组件用 layout effect 上报），这里紧接着
+   * 量最终宽度直接下发；主进程收起态是同步 setBounds，跨进程 1~2 帧窗口才跟上，期间把岛
+   * 钳在窗口内，宁可短暂收紧也不让右边被裁。
+   */
+  const lyricModeFirst = useRef(true)
+  useLayoutEffect(() => {
+    if (lyricModeFirst.current) {
+      lyricModeFirst.current = false
+      return
+    }
+    if (expandedRef.current) return
+    const el = islandRef.current
+    if (!el) return
+    // 注意：这里**不能**用 clampIslandToWindow。钳制会改写内联宽度，紧接着 ResizeObserver
+    // 与 onLyricMode 里的 rAF 上报量到的就是「被钳过的窄宽度」，反而把窗口按 140 报回去，
+    // 岛永远撑不到 400（2026-11-28 第四轮实测）。窗口由主进程同步 setBounds 跟上，
+    // 顶多一帧右侧被裁，比持续挤压更接近正确形态。
+    window.island.setCollapsedWidth(Math.ceil(el.getBoundingClientRect().width), lyricModeRef.current)
+  }, [lyricMode])
 
   // 时钟走字
   useEffect(() => {
@@ -3689,7 +4058,7 @@ export default function App(): React.JSX.Element {
       intendedWinSize.current = { w, h }
       reportExpandedSize(w, h)
     } else {
-      window.island.setCollapsedWidth(Math.ceil(r.width))
+      window.island.setCollapsedWidth(Math.ceil(r.width), lyricModeRef.current)
     }
   }, [reportExpandedSize])
   useLayoutEffect(() => {
@@ -3698,29 +4067,64 @@ export default function App(): React.JSX.Element {
       window.island?.setExpanded(expanded)
       return
     }
-    if (expanded) {
-      const el = islandRef.current
-      if (el) {
-        // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
-        // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
-        const prev = el.style.transition
-        el.style.transition = 'none'
-        const r = el.getBoundingClientRect()
+    const el = islandRef.current
+    /**
+     * 歌词态切换不做尺寸动画（2026-11-28 第三轮）。
+     * 歌词条 400 视觉 px 比展开态 255 宽，点开时宽度是**变窄**：入场插值只在
+     * `to.w > from.w && to.h > from.h` 时生效，宽度变窄直接跳过，岛停在 300 而窗口缩到 255，
+     * 右边被裁；收起时岛又瞬间变宽到 400、窗口还在补间里，同样被裁。用户要求这一处不要动画。
+     * 处理：临时关掉 `.island` 的尺寸过渡，按最终尺寸量一次上报，再让主进程一步 setBounds。
+     */
+    const lyricToggle = lyricModeRef.current
+    let snapTimer = 0
+    let releaseClamp: (() => void) | null = null
+    if (el) {
+      // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
+      // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
+      const prev = el.style.transition
+      el.style.transition = 'none'
+      const r = el.getBoundingClientRect()
+      if (lyricToggle) {
+        // 保留 none 到这次尺寸变化落定（400ms 后恢复，届时没有样式变化，不会补播动画）
+        snapTimer = window.setTimeout(() => {
+          el.style.transition = prev
+        }, 400)
+      } else {
         el.style.transition = prev
-        if (r.width > 0 && r.height > 0) {
+      }
+      if (r.width > 0 && r.height > 0) {
+        if (expanded) {
           const w = Math.ceil(r.width)
           const h = Math.ceil(r.height)
           if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
           intendedWinSize.current = { w, h }
           reportExpandedSize(w, h)
-          // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
-          // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
-          // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
-          entranceFromRef.current = { w: window.innerWidth, h: window.innerHeight }
-          entranceToRef.current = { w, h }
-          el.style.setProperty('--entrance-w', `${entranceFromRef.current.w}px`)
-          el.style.setProperty('--entrance-h', `${entranceFromRef.current.h}px`)
+          if (lyricToggle) {
+            releaseClamp = clampIslandToWindow(el, w, h)
+          } else {
+            // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
+            // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
+            // （否则展开的第一帧岛已是全尺寸、比窗口大，被裁一下）。
+            entranceFromRef.current = { w: window.innerWidth, h: window.innerHeight }
+            entranceToRef.current = { w, h }
+            el.style.setProperty('--entrance-w', `${entranceFromRef.current.w}px`)
+            el.style.setProperty('--entrance-h', `${entranceFromRef.current.h}px`)
+          }
+        } else if (lyricToggle) {
+          // 收起：`collapsedWidth` 决定 computeBounds(false) 的宽度，必须跟着歌词条量到的 400 走
+          const w = Math.ceil(r.width)
+          window.island.setCollapsedWidth(w, true)
+          releaseClamp = clampIslandToWindow(el, w, 0)
         }
+      }
+    }
+    if (lyricToggle) {
+      setEntrance(null)
+      window.island?.setExpanded(expanded, true)
+      return () => {
+        window.clearTimeout(snapTimer)
+        releaseClamp?.()
+        if (el) el.style.transition = ''
       }
     }
     window.island?.setExpanded(expanded)
@@ -3763,6 +4167,45 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(timer)
     }
   }, [expanded, reportCurrentSize])
+
+  /**
+   * 音乐页点「词」展开/收起歌词面板（2026-11-28 用户「音乐界面展开/收缩太卡」）。
+   *
+   * 实测根因：`.island.expanded.page-4:has(.music-panel.lyric-open)` 把宽度改成 `max-content`，
+   * px→max-content 不可过渡，岛一帧内从 255×219 跳到 402×269；窗口却要等 ResizeObserver
+   * 80ms 防抖才上报，右边被裁 147px、底部被裁 50px，持续约 90ms。
+   * 处理与歌词条开合同一套：关掉尺寸过渡、按最终尺寸立即上报（主进程 applyBoundsNow），
+   * 窗口跟上前的 1~2 帧把岛钳在窗口内。
+   */
+  const lyricPanelFirst = useRef(true)
+  useLayoutEffect(() => {
+    if (lyricPanelFirst.current) {
+      lyricPanelFirst.current = false
+      return
+    }
+    if (!expandedRef.current || viewRef.current !== 4) return
+    const el = islandRef.current
+    if (!el) return
+    const prev = el.style.transition
+    el.style.transition = 'none'
+    const snapTimer = window.setTimeout(() => {
+      el.style.transition = prev
+    }, 400)
+    const r = el.getBoundingClientRect()
+    let releaseClamp: (() => void) | null = null
+    if (r.width > 0 && r.height > 0) {
+      const w = Math.ceil(r.width)
+      const h = Math.ceil(r.height)
+      intendedWinSize.current = { w, h }
+      reportExpandedSize(w, h)
+      releaseClamp = clampIslandToWindow(el, w, h)
+    }
+    return () => {
+      window.clearTimeout(snapTimer)
+      releaseClamp?.()
+      el.style.transition = ''
+    }
+  }, [lyricPanelOpen, reportExpandedSize])
 
   // 展开入场期间让岛的宽高跟着窗口长大（SPEC-expand-clip）。
   // 为什么逐帧读窗口尺寸、而不是让 CSS 过渡按固定时长跑：窗口由主进程 setInterval 补间，
@@ -4067,6 +4510,7 @@ export default function App(): React.JSX.Element {
       if (typeof prefs.petMode === 'string') setPetMode(prefs.petMode)
       if (prefs.clockFormat) setClockFormat(prefs.clockFormat)
       if (typeof prefs.desktopLyricEnabled === 'boolean') setDesktopLyricEnabled(prefs.desktopLyricEnabled)
+      if (typeof prefs.collapsedLyric === 'boolean') setCollapsedLyricEnabled(prefs.collapsedLyric)
       setIslandTheme(applyIslandTheme(prefs.islandTheme))
       const v = normalizePagesCustom(prefs.pagesCustom)
       if (!v) return
@@ -4078,9 +4522,30 @@ export default function App(): React.JSX.Element {
   }, [])
 
   /**
+   * 最近一次用户输入（指针/滚轮/键盘）的时刻。抓屏会冻主进程约 300ms，
+   * 必须挑「用户停手」的时候，详见下面的底图拉取循环。
+   */
+  const lastInputAtRef = useRef(-1e9)
+  useEffect(() => {
+    const touch = (): void => {
+      lastInputAtRef.current = performance.now()
+    }
+    const types = ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const
+    for (const t of types) window.addEventListener(t, touch, { passive: true })
+    return () => {
+      for (const t of types) window.removeEventListener(t, touch)
+    }
+  }, [])
+
+  /**
    * 真透视（SPEC-island-themes 第二轮）：定期向主进程要「岛背后那块桌面」当底图。
-   * 主进程抓屏 60~150ms 且异步，这里只管起定时器；收起 5s、展开 1.5s 一次——
-   * 展开时用户更可能换页/挪窗口，色块变化更明显，抓得勤一点。
+   *
+   * 2026-11-28（SPEC-backdrop-capture-idle）改节奏：实测 `desktopCapturer.getSources`
+   * 每次阻塞主进程 **约 300ms**（与缩略图大小无关），阻塞期间浏览器进程不提交帧——
+   * CDP 逐帧实测，旧版展开态每 1.5s 拉一次，屏幕上每次冻 320~365ms；mono 主题（不抓屏）
+   * 同一套操作全程 60fps、零空档。用户看到的「界面缩放还是卡」就是这一下。
+   * 现在改成空闲档：用户最近 2.5s 没有输入才抓，展开态成功后 8s、收起态 20s 一次，
+   * 失败 1.5s 重试。底图只是模糊色块，晚几秒完全看不出；动画期间则一次都不抓。
    * 换主题（纯黑极简是实心块面）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
    * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
    *
@@ -4144,13 +4609,21 @@ export default function App(): React.JSX.Element {
         })
         .catch(() => false) // 失败静默：底图是锦上添花，不能因此报错或弹窗
     }
+    // 用户停手 2.5s 才抓：抓一次主进程冻约 300ms，任何动画/交互期间都不许碰。
+    const INPUT_QUIET_MS = 2500
+    const RETRY_MS = 1200
     const tick = (): void => {
+      if (document.hidden || performance.now() - lastInputAtRef.current < INPUT_QUIET_MS) {
+        timer = window.setTimeout(tick, RETRY_MS)
+        return
+      }
       void pull().then((ok) => {
         if (!alive) return
-        timer = window.setTimeout(tick, ok ? (expanded ? 1500 : 5000) : 900)
+        timer = window.setTimeout(tick, ok ? (expanded ? 8000 : 20000) : 1500)
       })
     }
-    tick()
+    // 刚启动/刚展开先等入场动画与首帧落定，别一上来就冻一下。
+    timer = window.setTimeout(tick, expanded ? 1200 : 3000)
     return () => {
       alive = false
       if (timer) window.clearTimeout(timer)
@@ -4725,9 +5198,11 @@ export default function App(): React.JSX.Element {
       <div
         className={`island ${expanded ? 'expanded' : 'collapsed'} ${
           expanded ? (view === 'grid' ? 'view-grid' : `page-${view}`) : ''
-        } ${navSnap ? 'nav-snap' : ''} ${entrance ? `island-anim-${entrance}` : ''} ${
-          entrance === 'open' ? 'island-entrance' : ''
-        } ${backdrop ? 'has-backdrop' : ''}`}
+        } ${!expanded && lyricMode ? 'lyric-mode' : ''} ${!expanded && lyricSnap ? 'lyric-snap' : ''} ${
+          navSnap ? 'nav-snap' : ''
+        } ${
+          entrance ? `island-anim-${entrance}` : ''
+        } ${entrance === 'open' ? 'island-entrance' : ''} ${backdrop ? 'has-backdrop' : ''}`}
         // 亮背景加深系数（2026-11-25）：只有暗色玻璃主题用到，其它主题的 CSS 不引用这个变量
         style={{ '--island-lit': String(backdropLit) } as React.CSSProperties}
         ref={islandRef}
@@ -5023,8 +5498,19 @@ export default function App(): React.JSX.Element {
           <>
             {/* 收起态组件按「页面管理」（US-032 / 美化-02）的开关显隐、按 order 排列。
                 order 恒含全部 6 项（normalizeOrder 会补齐），关掉的只是不渲染，位置信息保留。
-                渲染实现抽到 renderStatusItem（美化-03），与展开态头部共用同一份。 */}
-            {pagesCustom.order.map((k) => renderStatusItem(k))}
+                渲染实现抽到 renderStatusItem（美化-03），与展开态头部共用同一份。
+                播放音乐时整条换成歌词条（SPEC-collapsed-lyric-bar），没歌词就原样显示这些组件。 */}
+            <CollapsedStatusRow
+              enabled={collapsedLyricEnabled}
+              order={pagesCustom.order}
+              renderItem={renderStatusItem}
+              onLyricMode={onLyricMode}
+              petEnabled={pagesCustom.collapsed.pet}
+              petSkin={petSkin}
+              petMode={petMode}
+              mood={mood}
+            />
+
           </>
         )}
       </div>

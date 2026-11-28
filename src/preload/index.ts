@@ -48,13 +48,21 @@ export interface NotifyListResult {
 const shelfAddedCbs: ((list: ShelfItem[]) => void)[] = []
 
 const api = {
-  /** 请求主进程把窗口切到展开/收起尺寸 */
-  setExpanded(value: boolean): void {
-    ipcRenderer.send('island:set-expanded', value)
+  /**
+   * 请求主进程把窗口切到展开/收起尺寸。
+   * `instant` = 不做 220ms 补间，直接 setBounds。歌词条模式专用：歌词条比展开态更宽，
+   * 开合时宽度是变窄，旧的入场插值只处理「宽高都变大」，会裁掉岛（2026-11-28 用户实测抖动）。
+   */
+  setExpanded(value: boolean, instant = false): void {
+    ipcRenderer.send('island:set-expanded', value, instant)
   },
-  /** 收起态内容宽度上报（主进程按它定窗口宽，clamp 150~320） */
-  setCollapsedWidth(px: number): void {
-    ipcRenderer.send('island:set-collapsed-width', px)
+  /**
+   * 收起态内容宽度上报（主进程按它定窗口宽，clamp 134~290）。
+   * `lyric` = 当前是否处于歌词条模式：歌词条固定 400 视觉 px，
+   * 比普通胶囊宽，主进程按这个标记把上限放宽到 420。
+   */
+  setCollapsedWidth(px: number, lyric = false): void {
+    ipcRenderer.send('island:set-collapsed-width', px, lyric)
   },
   /** 展开态内容尺寸上报（主进程 clamp 到 255~540 × 113~315 后定窗口大小）。
    *  返回主进程实际采用的尺寸：切页时渲染层等这个回执再显示新页（SPEC-switch-size-sync）。 */
@@ -677,6 +685,8 @@ export interface PrefsShape {
   islandTheme?: IslandTheme
   /** 「词」第二下是否召唤桌面歌词（SPEC-desktop-lyric-setting）；缺失=true */
   desktopLyricEnabled?: boolean
+  /** 收起态歌词条（SPEC-collapsed-lyric-bar）；缺失=true，开启时收起态常驻音乐检测 */
+  collapsedLyric?: boolean
 }
 contextBridge.exposeInMainWorld('island', api)
 

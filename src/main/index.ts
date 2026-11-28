@@ -45,6 +45,12 @@ const COLLAPSED_WIN_HEIGHT = 76
 /** 收起态宽度上下限（防过窄/过宽）。2026-11-16 用户 m01634 胶囊放大后同步放宽 113~240 → 134~290 */
 const COLLAPSED_MIN_W = 134
 const COLLAPSED_MAX_W = 290
+/**
+ * 歌词条模式的上限（SPEC-collapsed-lyric-bar）。
+ * 歌词条按参考视频做成一条宽胶囊：渲染层固定 400 视觉 px，这里留 420 的余量；
+ * 普通收起态仍按 290 夹，不因为这项功能把日常胶囊放开。
+ */
+const COLLAPSED_LYRIC_MAX_W = 420
 /** 收起态当前宽度（渲染层量出来的，默认值给个合理初始） */
 let collapsedWidth = 168
 /** 展开态尺寸（CSS 逻辑像素）：由渲染层按当前页内容量量出后经 IPC 下发，这里只存 */
@@ -84,6 +90,12 @@ let tweenTimer: NodeJS.Timeout | null = null
 /** 补间起点矩形与起始时刻 */
 let tweenFrom: Electron.Rectangle | null = null
 let tweenStart = 0
+/**
+ * 最近一次改窗口矩形的时刻（ms）。抓屏入口用它兜住「补间刚结束、渲染层紧接着来拉底图」
+ * 的窗口：desktopCapturer.getSources 实测阻塞 300ms 左右（与缩略图大小无关），
+ * 落在动画附近就是肉眼可见的一卡（SPEC-backdrop-capture-idle）。
+ */
+let lastBoundsChangeAt = 0
 // US-041 手动隐藏的唯一真源在 fullscreenWatch 的状态机（state === 'manual'）。
 // 这里不再另存布尔值：2026-11-25 实测两份标志会分叉——横幅把岛叫亮时把主进程那份清成
 // false，状态机却还停在 manual，托盘恢复因此漏发 island:manual-restore，岛卡在最上层、
@@ -252,6 +264,7 @@ function animateTo(isExpanded: boolean): void {
 
   const sameDirection = isExpanded === expanded
   expanded = isExpanded
+  lastBoundsChangeAt = Date.now()
   // 已在补间且方向没变：让现有补间继续走，终点下一帧自然按新目标算
   if (tweenTimer && sameDirection) return
   tweenFrom = win.getBounds()
@@ -283,6 +296,7 @@ function tweenTick(): void {
     if (tweenTimer) clearInterval(tweenTimer)
     tweenTimer = null
     tweenFrom = null
+    lastBoundsChangeAt = Date.now()
     win.setBounds(computeBounds(expanded))
   }
 }
@@ -300,6 +314,7 @@ function applyBoundsNow(isExpanded: boolean): void {
   }
   tweenFrom = null
   expanded = isExpanded
+  lastBoundsChangeAt = Date.now()
   win.setBounds(computeBounds(isExpanded))
 }
 
@@ -525,7 +540,14 @@ app.on('window-all-closed', () => {
 })
 
 // 渲染进程请求改变展开状态
-ipcMain.on('island:set-expanded', (_event, value: boolean) => {
+ipcMain.on('island:set-expanded', (_event, value: boolean, instant: unknown) => {
+  // 歌词态切换（2026-11-28）：宽度是变窄，旧的入场插值只处理「宽高都变大」，会裁岛；
+  // 用户明确要求这一处不要动画，所以直接 setBounds 一步到位。即使已经在补间中也要截停。
+  if (instant === true) {
+    if (!value) appendDiagLog(`render set-expanded=false (lyric instant); hasFocus=${mainWindow?.isFocused() ?? 'no-win'}`)
+    applyBoundsNow(value)
+    return
+  }
   if (value === expanded) return
   // US-036 诊断探针：收起发生时记录一行，便于定位「打字时岛自己收起」的真实路径。
   // 诊断稳定后可整体移除（连同 logDiag 通道）。
@@ -561,10 +583,11 @@ ipcMain.on('island:log-diag', (_event, line: unknown) => {
 })
 
 // 渲染层量出收起态内容宽度后下发（随信息数量自适应：有电量时宽、无电量时窄）
-ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
+ipcMain.on('island:set-collapsed-width', (_event, value: unknown, lyric: unknown) => {
   const w = Number(value)
   if (!Number.isFinite(w)) return
-  const next = Math.round(Math.min(COLLAPSED_MAX_W, Math.max(COLLAPSED_MIN_W, w)))
+  const maxW = lyric === true ? COLLAPSED_LYRIC_MAX_W : COLLAPSED_MAX_W
+  const next = Math.round(Math.min(maxW, Math.max(COLLAPSED_MIN_W, w)))
   // 1px 死区，理由同 SIZE_DEADZONE_PX（收起态同样会被取整抖动带着来回改窗口宽度）
   if (Math.abs(next - collapsedWidth) <= SIZE_DEADZONE_PX) return
   collapsedWidth = next
@@ -575,6 +598,7 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown) => {
       animateTo(false)
       return
     }
+    lastBoundsChangeAt = Date.now()
     mainWindow.setBounds(computeBounds(false))
   }
 })
@@ -645,9 +669,12 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
   if (backdropBusy) return null // 上一次还没抓完（低端机/4K 屏可能超 200ms），直接跳过这一拍
   // 开合补间进行中不抓屏（2026-11-26，SPEC-expand-clip）：desktopCapturer.getSources 实测
   // 阻塞主进程 135~192ms，会把 16ms 的补间定时器卡出一个 100ms 级空档 —— 窗口停在原地、
-  // 岛已经展开，屏幕上就是「只剩页头一条」的裁切态。补间只有 220ms，跳过这一拍几乎无感
-  // （渲染层展开态每 1.5s 拉一次，下一次就补上了）。
-  if (tweenTimer) return null
+  // 岛已经展开，屏幕上就是「只剩页头一条」的裁切态。
+  // 2026-11-28（SPEC-backdrop-capture-idle）复测：本机已到 **300ms** 量级，且与缩略图大小
+  // 无关（0.35/0.15/0.08 三档都是 300±5ms）。CDP 逐帧实测：渲染层展开态每 1.5s 拉一次，
+  // 每次都在屏幕上冻出 320~365ms 的空档——用户说的「还是卡」就是它。
+  // 现在补间之外再加一道「最近 1s 动过窗口就拒绝」，并由渲染层改成「停手 2.5s 才拉」。
+  if (tweenTimer || Date.now() - lastBoundsChangeAt < 1000) return null
   backdropBusy = true
   try {
     const bounds = win.getBounds() // DIP

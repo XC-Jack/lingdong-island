@@ -107,3 +107,15 @@
 - 补充修复（2026-11-24，`55ffbc1`）：网格头部去掉重复日期与待办数字，品牌与时钟锁单行。
 - 未做独立验收：按工程规则第三节第 5 条留待批量验收。
 - 合并授权：用户 2026-11-24「ok，先合并吧」。
+
+## 2026-11-28 补充：减弱动态效果下不播切页缩放（分支 `collapsed-lyric-bar`）
+
+**现象 [实测]**：用户反馈音乐页「展开的动画，收缩和缩放，太卡了」。逐帧采样（`.tmp/probe-music-anim.mjs`）显示 renderer 没有 >33ms 的帧间隔、岛也没有越出窗口；本机 `prefers-reduced-motion: reduce` 为 true，CSS 过渡已被压到 1ms，唯独这里的 WAAPI 340ms 缩放不受 CSS 媒体查询约束，仍在整页缩放。
+
+**改动**：`App.tsx` 的切页缩放 `useLayoutEffect` 在创建动画前检查 `matchMedia('(prefers-reduced-motion: reduce)')`，命中就不播缩放，切页直接到位（页面淡入仍走 CSS，已在 1ms）。非 reduce 环境保持 340ms FLIP 缩放不变。
+
+**自检 [实测]**：`npm run build` EXIT=0；探针 `.tmp/probe-zoom.mjs`（临时）在 reduce=true 下点组件进音乐页，`.page-fade` 上只有 1ms 淡入动画、没有 340ms 缩放；`e2e-music` PASS（47 过 / 0 败 / 1 跳过）。
+
+**未验证**：真人观感；非 reduce 机器的 340ms 缩放本轮未改动、未重测。
+
+**2026-11-28 追加（用户改口，本条作废）**：用户随后明确要求岛**完全忽略**系统的「减弱动态效果」。上面的 `matchMedia` 跳过判断已删除，340ms 缩放始终播放；同时删掉了渲染层全部 `@media (prefers-reduced-motion: reduce)` 降级块。见 `docs/Spec/SPEC-island-motion-always.md`。

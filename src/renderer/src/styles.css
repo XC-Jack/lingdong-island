@@ -820,6 +820,129 @@ body {
   text-overflow: ellipsis;
 }
 
+/* ---------- 收起态歌词条（SPEC-collapsed-lyric-bar） ----------
+   参考视频里的形态：播放时整条胶囊变成「封面 + 岛仔 + 当前一句 + 节奏图标」。
+   宽度固定 400 视觉 px（0.75 缩放下 533 布局 px），不随每句长短跳动；
+   主进程按 setCollapsedWidth 的 lyric 标记把上限从 290 放宽到 420。 */
+.island.collapsed.lyric-mode {
+  width: 533px;
+  /* 歌词条不按内容撑开：固定宽度才能让长句截断、短句不缩 */
+  justify-content: flex-start;
+}
+
+/* 歌词条进出时关掉宽度过渡（2026-11-28 用户「有卡顿、不完整」）：
+   窗口宽度由主进程一次性 setBounds，岛若还按 220ms 过渡，窗口会落后按中间宽度一截一截追，
+   右边先被裁掉再补上。只关 width，高度/圆角/亮度的过渡保持不变。 */
+.island.collapsed.lyric-snap {
+  transition:
+    height 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-radius 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    --island-lit 600ms ease;
+}
+
+.collapsed-lyric {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  /* 宽度是一步到位的，内容补一个很短的淡入，避免「啪」地跳出来 */
+  animation: cl-bar-in 160ms ease-out both;
+}
+@keyframes cl-bar-in {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 封面 30×30 布局 px（视觉 22.5），与胶囊其它图标同一视觉尺度 */
+.cl-cover {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cl-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.cl-cover-ph {
+  display: inline-flex;
+  color: color-mix(in srgb, var(--ink-1) 55%, transparent);
+}
+.cl-cover-ph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.cl-pet {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 当前一句：单行、居中、过长省略；前奏期压暗显示第一句 */
+.cl-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ink-1);
+  /* 切句时轻轻淡入，不闪；尊重系统「减弱动态效果」 */
+  animation: cl-line-in 160ms ease-out both;
+}
+.cl-text.prelude {
+  opacity: 0.55;
+}
+@keyframes cl-line-in {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 右侧播放/暂停按钮（2026-11-28 第三轮替换三根竖条节奏动画）：
+   播放中显示暂停图标、暂停时显示播放图标；图标在按钮内垂直居中（原来 flex-end 导致偏下）。 */
+.cl-play {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--ink-1) 85%, transparent);
+}
+.cl-play:hover {
+  color: var(--ink-1);
+}
+.cl-play svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
 .collapsed-clock {
   /* 2026-11-16 用户 m01634：字号 15→17.5、字重 600→800、亮度纯白；第二版再放大一档 */
   font-size: 17.5px;
@@ -3212,25 +3335,10 @@ body {
 
 /* ---------- 可访问性补充（baseline-ui / fixing-accessibility） ---------- */
 
-/* 尊重系统「减弱动态效果」：关闭呼吸/眨眼/弹跳/淡入等非必要动画 */
-@media (prefers-reduced-motion: reduce) {
-  .collapsed-pet,
-  .pet-eye {
-    animation: none;
-  }
-
-  .todo-check.checked {
-    animation: none;
-  }
-
-  .page-fade.page-ready {
-    animation-duration: 1ms;
-  }
-
-  .island {
-    transition-duration: 1ms;
-  }
-}
+/* 2026-11-28：动画**不再跟随**系统「减弱动态效果」（`prefers-reduced-motion`）。
+   用户机器上该设置为开，导致页面缩放、淡入、岛仔呼吸/眨眼、待办勾选、歌词条淡入全部不播；
+   用户明确要求「完全忽略系统设置」，所以这里删掉了原来的 @media 降级块。
+   决定与范围见 `docs/Spec/SPEC-island-motion-always.md`。 */
 
 /* 键盘焦点可见：全局按钮/可点元素统一焦点环（替代被清掉的 outline） */
 button:focus-visible,
@@ -3273,12 +3381,6 @@ button:focus-visible,
 
   50% {
     opacity: 0.45;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .notify-skel-row {
-    animation: none;
   }
 }
 
@@ -3617,11 +3719,6 @@ div.pm-row[draggable='true'] {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--music-play) 0%, transparent); }
   50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--music-play) 9%, transparent); }
 }
-/* 动效偏好：系统设了「减少动画」就停掉呼吸 */
-@media (prefers-reduced-motion: reduce) {
-  .music-cover.playing { animation: none; }
-}
-
 .music-meta {
   flex: 1 1 auto;
   min-width: 0;
@@ -3767,14 +3864,6 @@ div.pm-row[draggable='true'] {
   color: var(--ink-4);
   white-space: normal;
 }
-@media (prefers-reduced-motion: reduce) {
-  .music-lyric-row,
-  .music-lyric-scroll {
-    transition: none;
-    scroll-behavior: auto;
-  }
-}
-
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
    这样每秒推进走合成层、不触发布局，配合 transition 就是连续的 */
 .music-progress {
@@ -4115,9 +4204,4 @@ div.pm-row[draggable='true'] {
 }
 .music-vol-pop input[type='range']:disabled::-webkit-slider-thumb {
   background: color-mix(in srgb, var(--ink-1) 40%, transparent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .music-vol-pop {
-    transition: none;
-  }
 }

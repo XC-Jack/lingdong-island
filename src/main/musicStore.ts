@@ -97,6 +97,33 @@ const EMPTY_STATE: MusicState = {
   pinnedMissing: false
 }
 
+/**
+ * e2e 专用：直接伪造一份音乐状态（`ISLAND_FAKE_MUSIC` = 一段 JSON）。
+ *
+ * 为什么需要：收起态歌词条（SPEC-collapsed-lyric-bar）要靠一个「正在播放且有歌词」的
+ * 会话才能验证；真实 SMTC 假会话（MediaPlayer）拿不到歌名/歌手，没法命中歌词缓存。
+ * 这个开关只在 e2e 脚本里设置，生产环境没有该变量，行为与现在完全一致。
+ * 设了之后：不启动桥接/CDP、不读写任何真实播放器，music:get 直接返回这份状态。
+ */
+const FAKE_MUSIC: Partial<MusicState> | null = (() => {
+  const raw = process.env.ISLAND_FAKE_MUSIC
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw) as Partial<MusicState>
+    return v && typeof v === 'object' ? v : null
+  } catch {
+    return null
+  }
+})()
+
+/** 伪造态的播放位置/状态：每秒自行前进（e2e 要看到换句）；toggle/seek 控制命令也作用在这里 */
+let fakePlaying = FAKE_MUSIC?.playing === true
+let fakePos = Number(FAKE_MUSIC?.position ?? 0) || 0
+
+function fakeState(): MusicState {
+  return { ...EMPTY_STATE, ...(FAKE_MUSIC ?? {}), position: fakePos, playing: fakePlaying }
+}
+
 let child: ChildProcessWithoutNullStreams | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 /** 当前对外状态（桥接 + CDP 合并后的结果）；music:get 直接返回它 */
@@ -431,6 +458,14 @@ function resolveSourceExe(raw: string): string {
  * 用桥接，避免把正在听的另一个播放器盖掉。
  */
 function recompute(): void {
+  if (FAKE_MUSIC) {
+    // e2e 伪造态：不参与桥接/CDP 合并，只把这份状态按变化推出去
+    const next = fakeState()
+    if (sameState(cache, next)) return
+    cache = next
+    broadcast(next)
+    return
+  }
   const c = cdpState
   const pin = pinExe
   const pinnedNetease = pin === 'cloudmusic'
@@ -960,9 +995,19 @@ export function setupMusicStore(): void {
   // 「进程在跑但没开端口」这个条件持续可见，不能等用户翻到音乐页才开始看。
   // 它只挂 1 秒定时器（tasklist 有 4 秒缓存、端口没开时 fetch 立即失败），
   // 不会拉起 50MB 的桥接子进程——那个仍然由 music:get 懒启动。
-  startCdp()
+  if (!FAKE_MUSIC) startCdp()
+  else {
+    // 伪造态也要有一个每秒的「播放心跳」，否则收起态歌词条只会在第一句停住
+    setInterval(() => {
+      if (!fakePlaying) return
+      const dur = Number(FAKE_MUSIC?.duration ?? 0)
+      fakePos = dur > 0 ? (fakePos + 1) % dur : fakePos + 1
+      recompute()
+    }, 1000).unref?.()
+  }
 
   ipcMain.handle('music:get', (): MusicState => {
+    if (FAKE_MUSIC) return fakeState()
     // 首次调用（用户翻到音乐页）时懒启动子进程，避免没人用音乐页也常驻 50MB
     // 并续期「有人在用」，否则它会在 2 分钟后被空闲回收（SPEC-idle-cost-reclaim）
     touchBridgeDemand()
@@ -977,6 +1022,7 @@ export function setupMusicStore(): void {
    * 不在 false 时立刻 kill：来回切页会反复拉起/杀掉 116 MB 的子进程，得不偿失。
    */
   ipcMain.on('music:demand', (_e, on: unknown) => {
+    if (FAKE_MUSIC) return
     touchBridgeDemand()
     if (on === true) {
       startBridge()
@@ -986,6 +1032,17 @@ export function setupMusicStore(): void {
 
   ipcMain.handle('music:control', async (_e, cmd: unknown): Promise<boolean> => {
     if (!isValidCommand(cmd)) return false
+    if (FAKE_MUSIC) {
+      // 只支持 e2e 用到的两个：播放/暂停切换与定位
+      if (cmd === 'toggle') {
+        fakePlaying = !fakePlaying
+        recompute()
+      } else if (typeof cmd === 'object' && cmd.cmd === 'seek') {
+        fakePos = Math.max(0, Number(cmd.value) || 0)
+        recompute()
+      }
+      return true
+    }
     touchBridgeDemand()
     return applyControl(cmd)
   })
