@@ -3688,8 +3688,13 @@ export default function App(): React.JSX.Element {
   // 点组件时的屏幕矩形（缩放动画的起点）。view 变化后的 layout effect 消费一次后清空。
   const zoomFromRef = useRef<DOMRect | null>(null)
   // 这次返回网格是不是从「歌词面板展开」的宽页离开（SPEC-lyric-marquee-view-transition）：
-  // 宽页与网格的宽高比差太多，沿用非等比缩放会把网格拉宽压扁，改走等比缩放。
+  // 宽页与网格差太多，非等比缩放会拉宽压扁；这条路径改由岛本体收窄 + 网格淡入。
   const zoomFromLyricRef = useRef(false)
+  // 尺寸补间的起点（视觉 px）与进行中标记：歌词面板开合、歌词页返回网格时，
+  // 让岛本身在旧/新尺寸之间平滑变形，而不是一帧跳过去（2026-11-28 用户「变宽很突兀」）。
+  const morphStartRef = useRef<{ w: number; h: number } | null>(null)
+  const islandMorphRef = useRef(false)
+  const islandMorphAnimRef = useRef<Animation | null>(null)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
   // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
@@ -3753,6 +3758,10 @@ export default function App(): React.JSX.Element {
   // 需要在该次渲染后立刻量最终尺寸并同步窗口（见下面的 layout effect）。
   const [lyricPanelOpen, setLyricPanelOpen] = useState(false)
   const onLyricOpenChange = useCallback((open: boolean) => {
+    // 点「词」是同步回调，此刻岛还是旧尺寸：记下来当尺寸补间的起点。
+    // （MusicPanel 的 effect 还会补调一次，那次拿到的是新尺寸，但那时补间已经消费完这个 ref。）
+    const r = islandRef.current?.getBoundingClientRect()
+    if (r && r.width > 0 && r.height > 0) morphStartRef.current = { w: r.width, h: r.height }
     lyricOpenRef.current = open
     setLyricPanelOpen((prev) => (prev === open ? prev : open))
   }, [])
@@ -3832,6 +3841,9 @@ export default function App(): React.JSX.Element {
         // 入场动画期间 transform 会缩放 rect，量出来偏小；这段的上报由展开/收起
         // 那条路径自己负责，动画结束后再补一次（见 entrance 那段）。
         if (entranceRef.current) return
+        // 尺寸补间期间：岛每帧都在变，追着上报会把窗口一路带着缩/长（缩小方向还会裁岛），
+        // 由 morphIslandSize 结束时一次性落尺寸。
+        if (islandMorphRef.current) return
         const r = el.getBoundingClientRect()
         const w = Math.ceil(r.width)
         const h = Math.ceil(r.height)
@@ -4105,7 +4117,7 @@ export default function App(): React.JSX.Element {
   const firstExpandEffect = useRef(true)
   const reportCurrentSize = useCallback(() => {
     const el = islandRef.current
-    if (!el) return
+    if (!el || islandMorphRef.current) return
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0) return
     if (expandedRef.current) {
@@ -4226,13 +4238,101 @@ export default function App(): React.JSX.Element {
   }, [expanded, reportCurrentSize])
 
   /**
-   * 音乐页点「词」展开/收起歌词面板（2026-11-28 用户「音乐界面展开/收缩太卡」）。
+   * 岛在两种尺寸之间做形状补间（220ms）：歌词面板开合、歌词页返回网格。
    *
-   * 实测根因：`.island.expanded.page-4:has(.music-panel.lyric-open)` 把宽度改成 `max-content`，
-   * px→max-content 不可过渡，岛一帧内从 255×219 跳到 402×269；窗口却要等 ResizeObserver
-   * 80ms 防抖才上报，右边被裁 147px、底部被裁 50px，持续约 90ms。
-   * 处理与歌词条开合同一套：关掉尺寸过渡、按最终尺寸立即上报（主进程 applyBoundsNow），
-   * 窗口跟上前的 1~2 帧把岛钳在窗口内。
+   * 窗口先撑到「起点/终点」的并集（只大不小），岛在这个大窗口里从 start 长/缩到当前
+   * CSS 目标；动画期间 ResizeObserver 不上报，结束后再一次性把窗口落到最终尺寸。这样：
+   *  - 变大方向：窗口先到位、岛再长，不会有一帧被旧窗口裁；
+   *  - 变小方向：岛先缩、窗口最后才缩，多出来的透明区域看不见。
+   * start 是视觉 px；内联 width/height 要除以 zoom 0.75。
+   */
+  const morphIslandSize = useCallback(
+    (start: { w: number; h: number } | null): void => {
+      const el = islandRef.current
+      if (!el || !expandedRef.current || !start || start.w <= 0 || start.h <= 0) return
+      const prevAnim = islandMorphAnimRef.current
+      if (prevAnim) {
+        // 连续换挡：以当前实际尺寸作为新起点，视觉上不会弹回
+        prevAnim.cancel()
+        islandMorphAnimRef.current = null
+        const live = el.getBoundingClientRect()
+        if (live.width > 0 && live.height > 0) start = { w: live.width, h: live.height }
+      }
+      // 当前 CSS 已经是换挡后的目标：清掉内联宽高量出终点
+      el.style.transition = 'none'
+      el.style.width = ''
+      el.style.height = ''
+      const endR = el.getBoundingClientRect()
+      const end = { w: endR.width, h: endR.height }
+      if (end.w <= 0 || end.h <= 0) {
+        el.style.transition = ''
+        return
+      }
+      if (Math.abs(start.w - end.w) <= 1 && Math.abs(start.h - end.h) <= 1) {
+        el.style.transition = ''
+        return
+      }
+      const stage = {
+        w: Math.ceil(Math.max(start.w, end.w)),
+        h: Math.ceil(Math.max(start.h, end.h))
+      }
+      // 高度只在「变矮」时补间。变高时内容已经按终态排版（controls 在终态底部），
+      // 若把岛钉在旧高度，底部控件会被裁掉一截（探针帧实测「词」开面板时播放键被切）。
+      // 所以变高直接让高度一步到位，只补间宽度；变矮没有裁切风险，宽高一起补。
+      const animateHeight = end.h <= start.h + 1
+      islandMorphRef.current = true
+      intendedWinSize.current = stage
+      // 先按起点尺寸钉住（窗口这时还是旧尺寸；若高度先跳到终点，会冒出窗口被裁一帧）
+      el.style.width = `${start.w / ZOOM}px`
+      el.style.height = `${start.h / ZOOM}px`
+      const settle = (): void => {
+        if (!expandedRef.current) {
+          // 补间途中岛被收起了：交还给展开/收起链路
+          islandMorphRef.current = false
+          el.style.transition = ''
+          el.style.width = ''
+          el.style.height = ''
+          return
+        }
+        // 窗口已经到并集：只补宽度时，高度现在可以一步到位（内容按终态排版，见上）
+        if (!animateHeight) el.style.height = ''
+        const anim = el.animate(
+          animateHeight
+            ? [
+                { width: `${start.w / ZOOM}px`, height: `${start.h / ZOOM}px` },
+                { width: `${end.w / ZOOM}px`, height: `${end.h / ZOOM}px` }
+              ]
+            : [{ width: `${start.w / ZOOM}px` }, { width: `${end.w / ZOOM}px` }],
+          { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+        )
+        islandMorphAnimRef.current = anim
+        anim.onfinish = () => {
+          if (islandMorphAnimRef.current !== anim) return
+          islandMorphAnimRef.current = null
+          islandMorphRef.current = false
+          el.style.transition = ''
+          el.style.width = ''
+          el.style.height = ''
+          const w = Math.ceil(end.w)
+          const h = Math.ceil(end.h)
+          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+          intendedWinSize.current = { w, h }
+          void reportExpandedSize(w, h)
+        }
+      }
+      // 先让窗口到并集（主进程同步 setBounds，回执 1~2 帧）
+      void Promise.resolve(reportExpandedSize(stage.w, stage.h)).then(settle, settle)
+    },
+    [reportExpandedSize]
+  )
+
+  /**
+   * 音乐页点「词」展开/收起歌词面板（2026-11-28 用户「点词面板变宽很突兀」）。
+   *
+   * 旧版是硬切：岛一帧内从 255×219 跳到 402×269，只把窗口同步过去。
+   * 现在点「词」的处理函数先同步把旧尺寸写进 morphStartRef，本 effect 在 DOM 已经换成
+   * 新尺寸的同一帧里把岛钉回旧尺寸，再补间到新尺寸（morphIslandSize）；
+   * 窗口先撑到并集，结束后才缩到最终尺寸。
    */
   const lyricPanelFirst = useRef(true)
   useLayoutEffect(() => {
@@ -4241,28 +4341,12 @@ export default function App(): React.JSX.Element {
       return
     }
     if (!expandedRef.current || viewRef.current !== 4) return
-    const el = islandRef.current
-    if (!el) return
-    const prev = el.style.transition
-    el.style.transition = 'none'
-    const snapTimer = window.setTimeout(() => {
-      el.style.transition = prev
-    }, 400)
-    const r = el.getBoundingClientRect()
-    let releaseClamp: (() => void) | null = null
-    if (r.width > 0 && r.height > 0) {
-      const w = Math.ceil(r.width)
-      const h = Math.ceil(r.height)
-      intendedWinSize.current = { w, h }
-      reportExpandedSize(w, h)
-      releaseClamp = clampIslandToWindow(el, w, h)
-    }
-    return () => {
-      window.clearTimeout(snapTimer)
-      releaseClamp?.()
-      el.style.transition = ''
-    }
-  }, [lyricPanelOpen, reportExpandedSize])
+    const start =
+      morphStartRef.current ??
+      (lastReportedSize.current ? { ...lastReportedSize.current } : null)
+    morphStartRef.current = null
+    morphIslandSize(start)
+  }, [lyricPanelOpen, morphIslandSize])
 
   // 展开入场期间让岛的宽高跟着窗口长大（SPEC-expand-clip）。
   // 为什么逐帧读窗口尺寸、而不是让 CSS 过渡按固定时长跑：窗口由主进程 setInterval 补间，
@@ -4781,6 +4865,10 @@ export default function App(): React.JSX.Element {
     const w = Math.ceil(r.width)
     const h = Math.ceil(r.height)
     gridSizeCache.current = { w, h }
+    // 从展开的歌词面板返回：这一刻岛显示的是网格 CSS 尺寸（255 宽），但窗口还应该是
+    // 宽页的 402。若在这里立刻上报，窗口会先缩到 255 再被尺寸补间撑回 402，闪一帧裁切。
+    // 尺寸补间自己会先记下网格尺寸、结束后再落窗口（morphIslandSize / [view] effect）。
+    if (zoomFromLyricRef.current) return
     intendedWinSize.current = { w, h }
     void reportExpandedSize(w, h)
   }, [view, reportExpandedSize])
@@ -4811,10 +4899,19 @@ export default function App(): React.JSX.Element {
 
   // 功能页 → 组件网格：反方向，起点是当前页面内容区域
   const backToGrid = useCallback(() => {
+    const fromLyric = lyricPanelOpen
     zoomFromRef.current = pageFadeRef.current?.getBoundingClientRect() ?? null
-    zoomFromLyricRef.current = lyricPanelOpen
+    zoomFromLyricRef.current = fromLyric
+    if (fromLyric) {
+      // 宽页返回：窗口先不缩，等岛自己收窄到网格尺寸后再落窗口（morphIslandSize）。
+      // 这里只记下岛当前（宽页）的尺寸作为补间起点。
+      const r = islandRef.current?.getBoundingClientRect()
+      morphStartRef.current = r ? { w: r.width, h: r.height } : null
+    } else {
+      morphStartRef.current = null
+      growWindowTo(gridSizeCache.current)
+    }
     beginNavSnap()
-    growWindowTo(gridSizeCache.current)
     setView('grid')
   }, [beginNavSnap, growWindowTo, lyricPanelOpen])
 
@@ -5066,25 +5163,17 @@ export default function App(): React.JSX.Element {
     const sy = from.height / to.height
     if (fromLyric) {
       /**
-       * 歌词页（401×268）与网格（约 340×362）宽高比差一倍，非等比缩放会把网格
-       * 横向拉宽 1.6 倍、纵向压扁，再被窗口裁掉——用户说的「看的有点变扭」。
-       * 这里只用单一缩放系数（取两个比例里小的，保证起点不超出原矩形），
-       * 以两边中心对齐，从 0.9 左右干净地放大回网格。
+       * 歌词页（402×269）与网格（约 255×272）宽度差一倍：内容层再怎么缩放都会和
+       * 岛背景的尺寸跳变打架。这里让**岛本身**从歌词页尺寸收窄到网格尺寸（220ms，
+       * 窗口先撑到并集、结束后才缩），网格内容只做淡入，不再叠缩放。
        */
-      const s = Math.min(sx, sy)
-      const cdx = (from.left + from.width / 2 - (to.left + to.width / 2)) / z
-      const cdy = (from.top + from.height / 2 - (to.top + to.height / 2)) / z
-      const anim = el.animate(
-        [
-          {
-            transformOrigin: '50% 50%',
-            transform: `translate(${cdx}px, ${cdy}px) scale(${s})`,
-            opacity: 0.25
-          },
-          { transformOrigin: '50% 50%', transform: 'none', opacity: 1 }
-        ],
-        { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
-      )
+      const start = morphStartRef.current
+      morphStartRef.current = null
+      morphIslandSize(start)
+      const anim = el.animate([{ opacity: 0.25 }, { opacity: 1 }], {
+        duration: 220,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+      })
       return () => anim.cancel()
     }
     const anim = el.animate(
@@ -5099,7 +5188,7 @@ export default function App(): React.JSX.Element {
       { duration: 340, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
     )
     return () => anim.cancel()
-  }, [view])
+  }, [view, morphIslandSize])
 
   // 通知铃铛被点击 → 展开岛并直接落在通知页（page 2）。
   // 用户 2026-11-10 要求：点铃铛不必先展开到第一页再自己翻两下。
