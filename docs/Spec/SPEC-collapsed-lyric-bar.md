@@ -77,7 +77,7 @@
 
 - 歌词条进出时，`.island` 的**宽度过渡临时关闭**（`lyric-snap` 类，300ms）：窗口宽度是主进程一次性 `setBounds`，若岛还按 220ms 过渡，ResizeObserver 会在过渡中量到中间宽度、窗口一截一截地追，右边先被裁掉再补上（2026-11-28 用户「有卡顿，不完整」）。
 - 关过渡后，渲染层在类名刷进 DOM 后按最终宽度立即上报一次（两个 `requestAnimationFrame`），窗口与岛同帧到位；内容再补 160ms 淡入，避免「啪」地跳出。
-- 只关宽度过渡；高度、圆角、`--island-lit` 的过渡不变。`prefers-reduced-motion` 下淡入也关闭。
+- 只关宽度过渡；高度、圆角、`--island-lit` 的过渡不变。淡入**始终播放**（2026-11-28 用户要求不跟随系统 `prefers-reduced-motion`，见 `docs/Spec/SPEC-island-motion-always.md`）。
 
 ### 3.7 歌词态 ↔ 展开态之间不做尺寸动画（2026-11-28 第三轮）
 
@@ -159,7 +159,7 @@
 - `npm run typecheck` / `npm run build`：EXIT=0。
 - `node scripts/e2e-collapsed-lyric.mjs`：**PASS（37 过 / 0 败）**，新增 L7 切换时关过渡、L7b 切换后窗口与岛同宽、L8 点竖条暂停/恢复且不展开、L2c2 进入时窗口与岛同宽。
 - 回归：`e2e-collapsed-todo` PASS、`e2e-collapse-order` PASS（22）、`e2e-music` PASS（17 过 / 3 跳过）。
-- 未验证：真机上「肉眼是否还有卡顿」需用户复看；淡入效果在 reduced-motion 下已关闭但未截图。
+- 未验证：真机上「肉眼是否还有卡顿」需用户复看；淡入效果当时在 reduced-motion 下已关闭但未截图（2026-11-28 已改为始终播放，见 `SPEC-island-motion-always`）。
 
 **2026-11-28 第三轮（用户实测：点岛开合抖动/不完整；三根竖条换掉）[实测]**
 
@@ -184,7 +184,7 @@
   3. 音乐页「词」面板开合同样的同帧上报 + 钳制，见 `docs/Spec/SPEC-music-layout-2.md` 第四轮。
 - `node scripts/e2e-collapsed-lyric.mjs`：**PASS（43 过 / 0 败）**。
 - L4b 的测试基准修正：假会话位置按整秒前进、显示层外推最多 0.9 秒；正好在外推跨过第 5 秒边界时暂停，位置回落 1 秒、歌词退回上一句，这是外推的固有边界，不是暂停把歌词条关掉。测试改为等位置真正到 6 秒再取基准（应用侧行为未改）。
-- 未验证：非 reduce-motion、慢机器上是否还有肉眼可见的挤压帧；窗口 setBounds 那 1~2 帧里右侧是否闪一下裁切只有真人能看到。
+- 未验证：慢机器上是否还有肉眼可见的挤压帧；窗口 setBounds 那 1~2 帧里右侧是否闪一下裁切只有真人能看到。（原「非 reduce-motion」一条已作废：2026-11-28 用户要求岛不再跟随该系统设置。）
 
 ## 九、验收记录
 

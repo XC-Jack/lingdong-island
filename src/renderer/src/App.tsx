@@ -4963,10 +4963,6 @@ export default function App(): React.JSX.Element {
     const from = zoomFromRef.current
     zoomFromRef.current = null
     if (!from || !expandedRef.current) return
-    // 系统开了「减弱动态效果」就不播缩放（2026-11-28 用户反馈音乐页「收缩和缩放太卡」）。
-    // 本机 prefers-reduced-motion 实测为 reduce，CSS 过渡早已被压到 1ms，唯独这里用 Web
-    // Animations API 不受 CSS 媒体查询约束，340ms 的整页缩放照旧在跑。尊重系统设置，切页直接到位。
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const el = view === 'grid' ? gridRef.current : pageFadeRef.current
     if (!el) return
     const to = el.getBoundingClientRect()

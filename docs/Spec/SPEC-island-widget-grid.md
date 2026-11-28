@@ -117,3 +117,5 @@
 **自检 [实测]**：`npm run build` EXIT=0；探针 `.tmp/probe-zoom.mjs`（临时）在 reduce=true 下点组件进音乐页，`.page-fade` 上只有 1ms 淡入动画、没有 340ms 缩放；`e2e-music` PASS（47 过 / 0 败 / 1 跳过）。
 
 **未验证**：真人观感；非 reduce 机器的 340ms 缩放本轮未改动、未重测。
+
+**2026-11-28 追加（用户改口，本条作废）**：用户随后明确要求岛**完全忽略**系统的「减弱动态效果」。上面的 `matchMedia` 跳过判断已删除，340ms 缩放始终播放；同时删掉了渲染层全部 `@media (prefers-reduced-motion: reduce)` 降级块。见 `docs/Spec/SPEC-island-motion-always.md`。

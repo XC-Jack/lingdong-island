@@ -3335,31 +3335,10 @@ body {
 
 /* ---------- 可访问性补充（baseline-ui / fixing-accessibility） ---------- */
 
-/* 尊重系统「减弱动态效果」：关闭呼吸/眨眼/弹跳/淡入等非必要动画 */
-@media (prefers-reduced-motion: reduce) {
-  .collapsed-pet,
-  .pet-eye {
-    animation: none;
-  }
-
-  .todo-check.checked {
-    animation: none;
-  }
-
-  .page-fade.page-ready {
-    animation-duration: 1ms;
-  }
-
-  .island {
-    transition-duration: 1ms;
-  }
-
-  /* 收起态歌词条（SPEC-collapsed-lyric-bar）：入场与切句的淡入都停 */
-  .collapsed-lyric,
-  .cl-text {
-    animation: none;
-  }
-}
+/* 2026-11-28：动画**不再跟随**系统「减弱动态效果」（`prefers-reduced-motion`）。
+   用户机器上该设置为开，导致页面缩放、淡入、岛仔呼吸/眨眼、待办勾选、歌词条淡入全部不播；
+   用户明确要求「完全忽略系统设置」，所以这里删掉了原来的 @media 降级块。
+   决定与范围见 `docs/Spec/SPEC-island-motion-always.md`。 */
 
 /* 键盘焦点可见：全局按钮/可点元素统一焦点环（替代被清掉的 outline） */
 button:focus-visible,
@@ -3402,12 +3381,6 @@ button:focus-visible,
 
   50% {
     opacity: 0.45;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .notify-skel-row {
-    animation: none;
   }
 }
 
@@ -3746,11 +3719,6 @@ div.pm-row[draggable='true'] {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--music-play) 0%, transparent); }
   50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--music-play) 9%, transparent); }
 }
-/* 动效偏好：系统设了「减少动画」就停掉呼吸 */
-@media (prefers-reduced-motion: reduce) {
-  .music-cover.playing { animation: none; }
-}
-
 .music-meta {
   flex: 1 1 auto;
   min-width: 0;
@@ -3896,14 +3864,6 @@ div.pm-row[draggable='true'] {
   color: var(--ink-4);
   white-space: normal;
 }
-@media (prefers-reduced-motion: reduce) {
-  .music-lyric-row,
-  .music-lyric-scroll {
-    transition: none;
-    scroll-behavior: auto;
-  }
-}
-
 /* 进度条：细轨 + 圆头填充。填充用 transform:scaleX（origin left）而不是改 width，
    这样每秒推进走合成层、不触发布局，配合 transition 就是连续的 */
 .music-progress {
@@ -4244,9 +4204,4 @@ div.pm-row[draggable='true'] {
 }
 .music-vol-pop input[type='range']:disabled::-webkit-slider-thumb {
   background: color-mix(in srgb, var(--ink-1) 40%, transparent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .music-vol-pop {
-    transition: none;
-  }
 }
