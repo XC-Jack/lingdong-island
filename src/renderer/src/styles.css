@@ -896,7 +896,6 @@ body {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
   font-size: 15px;
@@ -3841,6 +3840,47 @@ div.pm-row[draggable='true'] {
 .music-lyric-row.next {
   color: color-mix(in srgb, var(--ink-1) 66%, transparent);
   font-weight: 600;
+}
+
+/* 超长歌词横向往返滚动（SPEC-lyric-marquee-view-transition）。
+   MarqueeText 量出「内容宽 − 容器宽」后挂 .mq-overflow，并把位移/时长写进
+   --mq-shift / --mq-dur；这里只给「当前句 / 悬停行 / 收起态歌词条」挂动画。
+   不超宽的行不挂 .mq-overflow，完全静止。 */
+.mq {
+  display: block;
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+}
+.mq-inner {
+  display: inline-block;
+  white-space: nowrap;
+}
+/* 还没滚起来的溢出行：右缘渐隐，提示后面还有字，而不是硬切 */
+.music-lyric-row .mq.mq-overflow {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.music-lyric-row.active .mq.mq-overflow,
+.music-lyric-row:hover .mq.mq-overflow {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.music-lyric-row.active .mq.mq-overflow > .mq-inner,
+.music-lyric-row:hover .mq.mq-overflow > .mq-inner,
+.cl-text.mq.mq-overflow > .mq-inner {
+  animation: mq-scroll var(--mq-dur, 8s) ease-in-out infinite alternate;
+}
+/* 两端各停一成时间：句首、句尾都来得及看清再折返 */
+@keyframes mq-scroll {
+  0%,
+  10% {
+    transform: translateX(0);
+  }
+  90%,
+  100% {
+    transform: translateX(var(--mq-shift, 0px));
+  }
 }
 
 /* 前奏倒计时那行：比普通提示更小更淡，不抢歌词的注意力 */

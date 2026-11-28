@@ -2402,6 +2402,57 @@ function MusicSourceChip(): React.JSX.Element {
   )
 }
 
+/**
+ * 超宽文本的往返滚动（SPEC-lyric-marquee-view-transition）。
+ *
+ * 歌词常有整句比歌词栏宽，省略号直接把后半句吃掉。这里量一下「内容宽 − 容器宽」，
+ * 超宽才挂 `mq-overflow` 并把位移/时长写成 CSS 变量；是否真的滚由 CSS 决定
+ * （歌词当前句、悬停行、收起态歌词条才播放），不超宽的行完全静止。
+ *
+ * 只 transform 内容层、不碰布局，滚动期间没有逐帧 reflow。
+ */
+function MarqueeText({
+  text,
+  className
+}: {
+  text: string
+  className?: string
+}): React.JSX.Element {
+  const wrapRef = useRef<HTMLSpanElement | null>(null)
+  const innerRef = useRef<HTMLSpanElement | null>(null)
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current
+    const inner = innerRef.current
+    if (!wrap || !inner) return
+    const measure = (): void => {
+      const shift = Math.ceil(inner.scrollWidth - wrap.clientWidth)
+      if (shift > 2) {
+        // 26 布局 px/s：中文歌词约 1.5 秒滚过一个字宽，够慢能跟着唱；
+        // 单程夹在 4~18 秒，超长句也不会滚得没完没了。
+        const dur = Math.min(18, Math.max(4, shift / 26))
+        wrap.style.setProperty('--mq-shift', `-${shift}px`)
+        wrap.style.setProperty('--mq-dur', `${dur.toFixed(1)}s`)
+        wrap.classList.add('mq-overflow')
+      } else {
+        wrap.classList.remove('mq-overflow')
+      }
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(wrap)
+    ro.observe(inner)
+    return () => ro.disconnect()
+  }, [text])
+  // 传入的类名放前面：e2e 与样式都以 className.split(' ')[0] 认元素（见 L2d）
+  return (
+    <span ref={wrapRef} className={className ? `${className} mq` : 'mq'}>
+      <span ref={innerRef} className="mq-inner">
+        {text}
+      </span>
+    </span>
+  )
+}
+
 function MusicPanel({
   onLyricOpenChange,
   desktopLyricEnabled = true
@@ -3161,7 +3212,8 @@ function MusicPanel({
                     title={canSeekNow ? `点这句跳到 ${fmtDuration(ln.time)}` : undefined}
                     onClick={canSeekNow ? () => jumpToSec(ln.time) : undefined}
                   >
-                    {ln.text}
+                    {/* 整句超出歌词栏时：当前句自动往返滚，悬停任意一行也滚 */}
+                    <MarqueeText text={ln.text} />
                   </div>
                 ))}
               </div>
@@ -3537,9 +3589,11 @@ function CollapsedStatusRow({
           <Pet skin={petSkin} mood={mood} size="tiny" />
         </span>
       )}
-      <span key={lineText} className={`cl-text${prelude ? ' prelude' : ''}`}>
-        {lineText}
-      </span>
+      <MarqueeText
+        key={lineText}
+        className={`cl-text${prelude ? ' prelude' : ''}`}
+        text={lineText}
+      />
       {/* 右侧播放/暂停按钮（2026-11-28 第三轮）：原来三根竖条既没有按钮观感、又偏下，
           用户要求换掉。播放中显示暂停图标，暂停时显示播放图标，点击只切播放状态、不展开岛。 */}
       <button
@@ -3633,6 +3687,9 @@ export default function App(): React.JSX.Element {
   const pageFadeRef = useRef<HTMLDivElement | null>(null)
   // 点组件时的屏幕矩形（缩放动画的起点）。view 变化后的 layout effect 消费一次后清空。
   const zoomFromRef = useRef<DOMRect | null>(null)
+  // 这次返回网格是不是从「歌词面板展开」的宽页离开（SPEC-lyric-marquee-view-transition）：
+  // 宽页与网格的宽高比差太多，沿用非等比缩放会把网格拉宽压扁，改走等比缩放。
+  const zoomFromLyricRef = useRef(false)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
   // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
@@ -4755,10 +4812,11 @@ export default function App(): React.JSX.Element {
   // 功能页 → 组件网格：反方向，起点是当前页面内容区域
   const backToGrid = useCallback(() => {
     zoomFromRef.current = pageFadeRef.current?.getBoundingClientRect() ?? null
+    zoomFromLyricRef.current = lyricPanelOpen
     beginNavSnap()
     growWindowTo(gridSizeCache.current)
     setView('grid')
-  }, [beginNavSnap, growWindowTo])
+  }, [beginNavSnap, growWindowTo, lyricPanelOpen])
 
   /* ---------- 组件网格拖动换位（SPEC-widget-drag，2026-11-27） ----------
      用户原话「按着它的时候鼠标可以拖动」：**按下就能拖**，不需要先按住等 350ms。
@@ -4991,6 +5049,9 @@ export default function App(): React.JSX.Element {
     lastViewRef.current = view
     const from = zoomFromRef.current
     zoomFromRef.current = null
+    // 只有「从展开了歌词面板的宽页返回网格」才改等比缩放；其它路径保持原手感
+    const fromLyric = zoomFromLyricRef.current
+    zoomFromLyricRef.current = false
     if (!from || !expandedRef.current) return
     const el = view === 'grid' ? gridRef.current : pageFadeRef.current
     if (!el) return
@@ -5003,6 +5064,29 @@ export default function App(): React.JSX.Element {
     const dy = (from.top - to.top) / z
     const sx = from.width / to.width
     const sy = from.height / to.height
+    if (fromLyric) {
+      /**
+       * 歌词页（401×268）与网格（约 340×362）宽高比差一倍，非等比缩放会把网格
+       * 横向拉宽 1.6 倍、纵向压扁，再被窗口裁掉——用户说的「看的有点变扭」。
+       * 这里只用单一缩放系数（取两个比例里小的，保证起点不超出原矩形），
+       * 以两边中心对齐，从 0.9 左右干净地放大回网格。
+       */
+      const s = Math.min(sx, sy)
+      const cdx = (from.left + from.width / 2 - (to.left + to.width / 2)) / z
+      const cdy = (from.top + from.height / 2 - (to.top + to.height / 2)) / z
+      const anim = el.animate(
+        [
+          {
+            transformOrigin: '50% 50%',
+            transform: `translate(${cdx}px, ${cdy}px) scale(${s})`,
+            opacity: 0.25
+          },
+          { transformOrigin: '50% 50%', transform: 'none', opacity: 1 }
+        ],
+        { duration: 320, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      )
+      return () => anim.cancel()
+    }
     const anim = el.animate(
       [
         {
