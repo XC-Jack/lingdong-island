@@ -90,6 +90,12 @@ let tweenTimer: NodeJS.Timeout | null = null
 /** 补间起点矩形与起始时刻 */
 let tweenFrom: Electron.Rectangle | null = null
 let tweenStart = 0
+/**
+ * 最近一次改窗口矩形的时刻（ms）。抓屏入口用它兜住「补间刚结束、渲染层紧接着来拉底图」
+ * 的窗口：desktopCapturer.getSources 实测阻塞 300ms 左右（与缩略图大小无关），
+ * 落在动画附近就是肉眼可见的一卡（SPEC-backdrop-capture-idle）。
+ */
+let lastBoundsChangeAt = 0
 // US-041 手动隐藏的唯一真源在 fullscreenWatch 的状态机（state === 'manual'）。
 // 这里不再另存布尔值：2026-11-25 实测两份标志会分叉——横幅把岛叫亮时把主进程那份清成
 // false，状态机却还停在 manual，托盘恢复因此漏发 island:manual-restore，岛卡在最上层、
@@ -258,6 +264,7 @@ function animateTo(isExpanded: boolean): void {
 
   const sameDirection = isExpanded === expanded
   expanded = isExpanded
+  lastBoundsChangeAt = Date.now()
   // 已在补间且方向没变：让现有补间继续走，终点下一帧自然按新目标算
   if (tweenTimer && sameDirection) return
   tweenFrom = win.getBounds()
@@ -289,6 +296,7 @@ function tweenTick(): void {
     if (tweenTimer) clearInterval(tweenTimer)
     tweenTimer = null
     tweenFrom = null
+    lastBoundsChangeAt = Date.now()
     win.setBounds(computeBounds(expanded))
   }
 }
@@ -306,6 +314,7 @@ function applyBoundsNow(isExpanded: boolean): void {
   }
   tweenFrom = null
   expanded = isExpanded
+  lastBoundsChangeAt = Date.now()
   win.setBounds(computeBounds(isExpanded))
 }
 
@@ -589,6 +598,7 @@ ipcMain.on('island:set-collapsed-width', (_event, value: unknown, lyric: unknown
       animateTo(false)
       return
     }
+    lastBoundsChangeAt = Date.now()
     mainWindow.setBounds(computeBounds(false))
   }
 })
@@ -659,9 +669,12 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
   if (backdropBusy) return null // 上一次还没抓完（低端机/4K 屏可能超 200ms），直接跳过这一拍
   // 开合补间进行中不抓屏（2026-11-26，SPEC-expand-clip）：desktopCapturer.getSources 实测
   // 阻塞主进程 135~192ms，会把 16ms 的补间定时器卡出一个 100ms 级空档 —— 窗口停在原地、
-  // 岛已经展开，屏幕上就是「只剩页头一条」的裁切态。补间只有 220ms，跳过这一拍几乎无感
-  // （渲染层展开态每 1.5s 拉一次，下一次就补上了）。
-  if (tweenTimer) return null
+  // 岛已经展开，屏幕上就是「只剩页头一条」的裁切态。
+  // 2026-11-28（SPEC-backdrop-capture-idle）复测：本机已到 **300ms** 量级，且与缩略图大小
+  // 无关（0.35/0.15/0.08 三档都是 300±5ms）。CDP 逐帧实测：渲染层展开态每 1.5s 拉一次，
+  // 每次都在屏幕上冻出 320~365ms 的空档——用户说的「还是卡」就是它。
+  // 现在补间之外再加一道「最近 1s 动过窗口就拒绝」，并由渲染层改成「停手 2.5s 才拉」。
+  if (tweenTimer || Date.now() - lastBoundsChangeAt < 1000) return null
   backdropBusy = true
   try {
     const bounds = win.getBounds() // DIP

@@ -4522,9 +4522,30 @@ export default function App(): React.JSX.Element {
   }, [])
 
   /**
+   * 最近一次用户输入（指针/滚轮/键盘）的时刻。抓屏会冻主进程约 300ms，
+   * 必须挑「用户停手」的时候，详见下面的底图拉取循环。
+   */
+  const lastInputAtRef = useRef(-1e9)
+  useEffect(() => {
+    const touch = (): void => {
+      lastInputAtRef.current = performance.now()
+    }
+    const types = ['pointermove', 'pointerdown', 'wheel', 'keydown'] as const
+    for (const t of types) window.addEventListener(t, touch, { passive: true })
+    return () => {
+      for (const t of types) window.removeEventListener(t, touch)
+    }
+  }, [])
+
+  /**
    * 真透视（SPEC-island-themes 第二轮）：定期向主进程要「岛背后那块桌面」当底图。
-   * 主进程抓屏 60~150ms 且异步，这里只管起定时器；收起 5s、展开 1.5s 一次——
-   * 展开时用户更可能换页/挪窗口，色块变化更明显，抓得勤一点。
+   *
+   * 2026-11-28（SPEC-backdrop-capture-idle）改节奏：实测 `desktopCapturer.getSources`
+   * 每次阻塞主进程 **约 300ms**（与缩略图大小无关），阻塞期间浏览器进程不提交帧——
+   * CDP 逐帧实测，旧版展开态每 1.5s 拉一次，屏幕上每次冻 320~365ms；mono 主题（不抓屏）
+   * 同一套操作全程 60fps、零空档。用户看到的「界面缩放还是卡」就是这一下。
+   * 现在改成空闲档：用户最近 2.5s 没有输入才抓，展开态成功后 8s、收起态 20s 一次，
+   * 失败 1.5s 重试。底图只是模糊色块，晚几秒完全看不出；动画期间则一次都不抓。
    * 换主题（纯黑极简是实心块面）或岛被全屏避让时立刻停，顺手把图清掉，不留后台开销。
    * 抓不到（远程桌面、驱动异常）就保持上一张；一张都没有时退回静态 veil，不影响可用性。
    *
@@ -4588,13 +4609,21 @@ export default function App(): React.JSX.Element {
         })
         .catch(() => false) // 失败静默：底图是锦上添花，不能因此报错或弹窗
     }
+    // 用户停手 2.5s 才抓：抓一次主进程冻约 300ms，任何动画/交互期间都不许碰。
+    const INPUT_QUIET_MS = 2500
+    const RETRY_MS = 1200
     const tick = (): void => {
+      if (document.hidden || performance.now() - lastInputAtRef.current < INPUT_QUIET_MS) {
+        timer = window.setTimeout(tick, RETRY_MS)
+        return
+      }
       void pull().then((ok) => {
         if (!alive) return
-        timer = window.setTimeout(tick, ok ? (expanded ? 1500 : 5000) : 900)
+        timer = window.setTimeout(tick, ok ? (expanded ? 8000 : 20000) : 1500)
       })
     }
-    tick()
+    // 刚启动/刚展开先等入场动画与首帧落定，别一上来就冻一下。
+    timer = window.setTimeout(tick, expanded ? 1200 : 3000)
     return () => {
       alive = false
       if (timer) window.clearTimeout(timer)
