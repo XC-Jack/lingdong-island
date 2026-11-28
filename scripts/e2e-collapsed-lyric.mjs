@@ -275,6 +275,13 @@ try {
 
   // ========== L4 暂停：节奏图标停、歌词条还在 ==========
   {
+    // 假会话的位置按整秒前进，显示层会按流逝时间外推最多 0.9 秒。若正好在外推跨过第 5 秒
+    // 边界的一瞬暂停，快照位置回落到 4 秒、歌词退回上一句（暂停后不再外推）——这是外推的
+    // 固有边界，不是「暂停后歌词条消失」。等位置真正走到 6 秒再取基准，避开这个瞬间。
+    await waitFor(async () => {
+      const st = await islandEval(`window.island.musicGet().then((s) => ({ pos: s.position, playing: s.playing }))`)
+      return st && st.playing && Number(st.pos) >= 6 ? st : null
+    }, 8000)
     const before = await islandEval(BAR_SNAP)
     await islandEval(`window.island.musicControl('toggle')`)
     const paused = await waitFor(async () => {

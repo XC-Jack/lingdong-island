@@ -534,3 +534,26 @@ canVolume:false, volume:0}`。`canVolume:false` 会让滑块 `disabled`、数字
 ①只在本机汽水音乐上验过，网易云 / QQ 音乐是否也受益于 pid 缓存未验证；
 ②缓存是进程内静态变量，应用重启后第一次仍需靠 Tier3 认一次；
 ③车主日（多播放器同时出声）下缓存仍可能指错应用，本轮没有构造这种场景。
+
+## 2026-11-28 第四轮：点「词」开合不再裁切，切页缩放在减弱动态效果下不再播放（分支 `collapsed-lyric-bar`）
+
+**现象 [实测]**：音乐页点「词」展开歌词面板时，`.island.expanded.page-4:has(.music-panel.lyric-open)` 的宽度从固定值改成 `max-content`，px→max-content 不可过渡，岛一帧内从 255×219 跳到 402×269；窗口要等 ResizeObserver 的 80ms 防抖才上报，右边被裁 147px、底部被裁 50px，持续约 90ms。用户原话「就是现在岛在音乐界面的展开的动画，收缩和缩放，太卡了」。
+
+**改动**：
+
+1. `MusicPanel.onWordClick` 同步调用 `onLyricOpenChange`（不再只靠下面的 effect）；App 新增 `lyricPanelOpen` state。
+2. App 新增 `useLayoutEffect([lyricPanelOpen])`（只对展开态音乐页生效）：开合那一帧关掉尺寸过渡、按 `getBoundingClientRect` 量最终尺寸、`reportExpandedSize` 立即上报（主进程 `applyBoundsNow`），窗口跟上前的 1~2 帧用 `clampIslandToWindow` 把岛钳在窗口内。
+3. 切页缩放动画（WAAPI 340ms）尊重系统「减弱动态效果」：本机实测 `prefers-reduced-motion: reduce` 为 true，CSS 过渡早已压到 1ms，但 Web Animations 不受 CSS 媒体查询约束，340ms 的整页缩放照旧在跑。现在 reduce 时不播缩放，切页直接到位。
+
+**自检 [实测]**：
+
+- `npm run build` EXIT=0。
+- 逐帧探针 `.tmp/probe-music-anim.mjs`（临时）：词面板展开改前右/下溢 147×50px → 改后 `overW=0 / overH=0 / badMs=0`；打开音乐页、词面板开合均无 >33ms 的帧间隔。回到网格仍有 1 帧 `overH=53`（约 3~4ms），属收缩过渡一帧的瞬时裁切，未处理。
+- `node scripts/e2e-music.mjs`：**PASS（47 过 / 0 败 / 1 跳过）**，新增 U1g（点「词」后逐帧采样不溢出）、U1h（收起后回到窄态）。
+- `node scripts/e2e-collapsed-lyric.mjs`：**PASS（43 过 / 0 败）**。
+- 探针 `.tmp/probe-zoom.mjs`（临时）：reduce=true 时点组件进音乐页，`.page-fade` 上只有 1ms 的淡入动画，没有 340ms 缩放。
+
+**未验证**：
+
+- 真人观感（尤其窗口 `setBounds` 那 1~2 帧的钳制/释放）只有用户能看到。
+- 非 reduce-motion 的机器上，340ms 缩放是否仍有裁切未测——本机 reduce=true，探针跑不到那条分支。

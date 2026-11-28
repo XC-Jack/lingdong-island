@@ -444,6 +444,50 @@ try {
         pagedBack && pagedBack.slot === 'none' && pagedBack.divider === 'none' &&
         pagedBack.islandW === pagedBefore.islandW && pagedBack.wordExpanded === 'false',
         JSON.stringify(pagedBack))
+      // U1g 词面板开合的尺寸同步（2026-11-28 用户「音乐界面展开/收缩太卡」）：
+      // 宽度 px→max-content 不可过渡，岛一帧内变大，但窗口要等 RO 80ms 才跟上，
+      // 实测右边被裁 147px、底部 50px 约 90ms。逐帧采样岛与窗口，任一方超界即失败。
+      const panelFrames = await islandEval(`new Promise((resolve) => {
+        const t0 = performance.now()
+        const out = []
+        let closed = false
+        const tick = () => {
+          const t = Math.round(performance.now() - t0)
+          if (!closed && t >= 400) { closed = true; document.querySelector('.music-word')?.click() }
+          const isl = document.querySelector('.island')
+          if (isl) {
+            const r = isl.getBoundingClientRect()
+            out.push({ t, iw: Math.round(r.width), ih: Math.round(r.height), winW: window.innerWidth, winH: window.innerHeight })
+          }
+          if (t < 900) requestAnimationFrame(tick)
+          else resolve(out)
+        }
+        requestAnimationFrame(tick)
+        document.querySelector('.music-word')?.click()
+      })`)
+      let overW = -999
+      let overH = -999
+      for (const f of panelFrames || []) {
+        if (f.iw - f.winW > overW) overW = f.iw - f.winW
+        if (f.ih - f.winH > overH) overH = f.ih - f.winH
+      }
+      ok('U1g 「词」面板展开/收起过程中岛不超出窗口（宽/高）',
+        (panelFrames || []).length > 0 && overW <= 1 && overH <= 1,
+        JSON.stringify({ n: (panelFrames || []).length, overW, overH }))
+      await sleep(1000)
+      const panelBack2 = await islandEval(`(() => {
+        const slot = document.querySelector('.music-lyric-slot')
+        const isl = document.querySelector('.island')
+        const w = document.querySelector('.music-word')
+        return {
+          slot: slot ? getComputedStyle(slot).display : null,
+          islandW: isl ? Math.round(isl.getBoundingClientRect().width) : null,
+          wordExpanded: w ? w.getAttribute('aria-expanded') : null
+        }
+      })()`)
+      ok('U1h 采样结束后歌词栏仍是收起的窄态',
+        panelBack2 && panelBack2.slot === 'none' && panelBack2.islandW === pagedBefore.islandW &&
+        panelBack2.wordExpanded === 'false', JSON.stringify(panelBack2))
       const popHidden = await islandEval(`(() => { const p = document.querySelector('.music-vol-pop'); return p ? getComputedStyle(p).visibility : null })()`)
       ok('U2 音量竖条平时隐形（点喇叭前不可见）', popHidden === 'hidden', `visibility=${popHidden}`)
       await islandEval(`document.querySelector('.music-vol-toggle')?.click()`)

@@ -16,6 +16,60 @@ const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, sti
 const AUTO_COLLAPSE_MS = 700
 /** 渲染层整体缩放（styles.css `.app` 的 zoom）。getBoundingClientRect 是屏幕 px，样式写的是布局 px */
 const ZOOM = 0.75
+
+/**
+ * 把岛临时钳在当前窗口内，等主进程 setBounds 跟上（跨进程通常 1~2 帧）。
+ *
+ * 场景：渲染层这一帧已经按最终尺寸画好，窗口还要等 IPC 才改。若不钳制，岛会比窗口大，
+ * 右边/下边被 `.island { overflow:hidden }` 之外的窗口边界裁掉（音乐页点「词」实测裁 147×50px）。
+ * 返回取消函数；最多等 1 秒，主进程异常时也会释放，避免永久变形。
+ */
+function clampIslandToWindow(el: HTMLElement, targetW: number, targetH: number): () => void {
+  const winW = window.innerWidth
+  const winH = window.innerHeight
+  const clampW = targetW > 0 && winW < targetW - 1
+  const clampH = targetH > 0 && winH < targetH - 1
+  if (!clampW && !clampH) return () => {}
+  if (clampW) {
+    el.style.width = `${winW / ZOOM}px`
+    el.style.minWidth = '0'
+  }
+  if (clampH) {
+    el.style.height = `${winH / ZOOM}px`
+    // `.island.expanded` 的 min-height:150 会顶住钳制后的高度（实测仍溢出 37px）
+    el.style.minHeight = '0'
+  }
+  const startedAt = performance.now()
+  let raf = 0
+  const release = (): void => {
+    const wOk = !clampW || window.innerWidth >= targetW - 1
+    const hOk = !clampH || window.innerHeight >= targetH - 1
+    if ((wOk && hOk) || performance.now() - startedAt > 1000) {
+      if (clampW) {
+        el.style.width = ''
+        el.style.minWidth = ''
+      }
+      if (clampH) {
+        el.style.height = ''
+        el.style.minHeight = ''
+      }
+      return
+    }
+    raf = window.requestAnimationFrame(release)
+  }
+  raf = window.requestAnimationFrame(release)
+  return () => {
+    window.cancelAnimationFrame(raf)
+    if (clampW) {
+      el.style.width = ''
+      el.style.minWidth = ''
+    }
+    if (clampH) {
+      el.style.height = ''
+      el.style.minHeight = ''
+    }
+  }
+}
 /**
  * 组件网格拖动的起拖阈值（SPEC-widget-drag）。
  * 按下后指针移动超过这个距离（屏幕 px）就进入拖动；不移动直接松手 = 点击打开组件。
@@ -2404,6 +2458,9 @@ function MusicPanel({
   const onWordClick = (): void => {
     if (desktopBusy) return
     if (lyricOpen) {
+      // 同步上报（不等下面的 effect）：App 要在同一次提交里关掉尺寸过渡、量最终尺寸，
+      // 否则岛先变大/变小、窗口 80ms 后才跟上，右侧与底部会被裁（2026-11-28 实测 147×50px）。
+      onLyricOpenChange?.(false)
       setLyricOpen(false)
       if (canDesktopLyric) {
         setDesktopBusy(true)
@@ -2422,6 +2479,7 @@ function MusicPanel({
         .finally(() => setDesktopBusy(false))
       return
     }
+    onLyricOpenChange?.(true)
     setLyricOpen(true)
   }
   // 把开合状态（含 × 关闭、切页卸载）同步给 App：面板开着时岛不自动收起
@@ -3428,7 +3486,10 @@ function CollapsedStatusRow({
    * 不用 cleanup 回报 false：卸载是展开造成的，不是歌词失效；真正的失效会由下一次
    * 音乐状态推送（active=false）或关开关走到这里。
    */
-  useEffect(() => {
+  // 用 layout effect 而不是普通 effect：歌词条渲染与「歌词模式」类名必须在同一帧生效。
+  // 普通 effect 在绘制后才跑，会先画一帧「歌词条挤在普通胶囊宽度里（195）」，再撑到 400
+  // （2026-11-28 第四轮：再打开设置开关时实测到）。
+  useLayoutEffect(() => {
     if (!enabled) {
       onLyricMode(false)
       return
@@ -3631,8 +3692,12 @@ export default function App(): React.JSX.Element {
   // 歌词面板开着（SPEC-music-lyric-pin）：定时收起到点时读它，开着就放弃这次收起。
   // 用 ref 而不是 state 是刻意的——收起定时器回调不该因为面板开合而重建。
   const lyricOpenRef = useRef(false)
+  // 另存一份 state：面板开合要把岛尺寸从 340 布局 px 跳到 max-content（不可过渡），
+  // 需要在该次渲染后立刻量最终尺寸并同步窗口（见下面的 layout effect）。
+  const [lyricPanelOpen, setLyricPanelOpen] = useState(false)
   const onLyricOpenChange = useCallback((open: boolean) => {
     lyricOpenRef.current = open
+    setLyricPanelOpen((prev) => (prev === open ? prev : open))
   }, [])
   // US-036 诊断探针：让 blur 回调读到最新 expanded（useEffect 闭包会过期）
   const expandedRef = useRef(false)
@@ -3735,6 +3800,31 @@ export default function App(): React.JSX.Element {
       ro.disconnect()
     }
   }, [reportExpandedSize])
+
+  /**
+   * 歌词条生效/失效的那一帧就把收起态窗口宽度改到位（2026-11-28 第四轮）。
+   *
+   * 症状：再打开「收起胶囊显示歌词」时，歌词条先按普通胶囊宽度（195）渲染一帧，下一帧才
+   * 撑到 400；窗口宽度还要等 ResizeObserver 的 80ms 防抖，右边被裁。
+   * `lyric-mode` 类名在本轮提交里已经落到 DOM（子组件用 layout effect 上报），这里紧接着
+   * 量最终宽度直接下发；主进程收起态是同步 setBounds，跨进程 1~2 帧窗口才跟上，期间把岛
+   * 钳在窗口内，宁可短暂收紧也不让右边被裁。
+   */
+  const lyricModeFirst = useRef(true)
+  useLayoutEffect(() => {
+    if (lyricModeFirst.current) {
+      lyricModeFirst.current = false
+      return
+    }
+    if (expandedRef.current) return
+    const el = islandRef.current
+    if (!el) return
+    // 注意：这里**不能**用 clampIslandToWindow。钳制会改写内联宽度，紧接着 ResizeObserver
+    // 与 onLyricMode 里的 rAF 上报量到的就是「被钳过的窄宽度」，反而把窗口按 140 报回去，
+    // 岛永远撑不到 400（2026-11-28 第四轮实测）。窗口由主进程同步 setBounds 跟上，
+    // 顶多一帧右侧被裁，比持续挤压更接近正确形态。
+    window.island.setCollapsedWidth(Math.ceil(el.getBoundingClientRect().width), lyricModeRef.current)
+  }, [lyricMode])
 
   // 时钟走字
   useEffect(() => {
@@ -3987,40 +4077,7 @@ export default function App(): React.JSX.Element {
      */
     const lyricToggle = lyricModeRef.current
     let snapTimer = 0
-    let releaseRaf = 0
-    /** 主进程 setBounds 是跨进程的，渲染层这一帧已经按最终尺寸画好了，窗口还得一两帧才跟上。
-     *  这期间把岛钳在当前窗口内，避免「岛比窗口大 → 右边/底部被裁」（采样实测约 30ms）。 */
-    const clampToWindow = (targetW: number, targetH: number): void => {
-      if (!el) return
-      const winW = window.innerWidth
-      const winH = window.innerHeight
-      let clamped = false
-      if (targetW > 0 && winW < targetW - 1) {
-        el.style.width = `${winW / ZOOM}px`
-        el.style.minWidth = '0'
-        clamped = true
-      }
-      if (targetH > 0 && winH < targetH - 1) {
-        el.style.height = `${winH / ZOOM}px`
-        // `.island.expanded` 的 min-height:150 会顶住钳制后的高度（实测仍溢出 37px）
-        el.style.minHeight = '0'
-        clamped = true
-      }
-      if (!clamped) return
-      const release = (): void => {
-        const wOk = targetW <= 0 || window.innerWidth >= targetW - 1
-        const hOk = targetH <= 0 || window.innerHeight >= targetH - 1
-        if (wOk && hOk) {
-          el.style.width = ''
-          el.style.height = ''
-          el.style.minWidth = ''
-          el.style.minHeight = ''
-          return
-        }
-        releaseRaf = window.requestAnimationFrame(release)
-      }
-      releaseRaf = window.requestAnimationFrame(release)
-    }
+    let releaseClamp: (() => void) | null = null
     if (el) {
       // 量目标尺寸而不是过渡起点：`.island` 有 220ms 的宽高过渡，切到 expanded 的
       // 这一刻量到的是旧的收起尺寸（39），会把窗口开到 114 高、面板底部被裁。
@@ -4043,7 +4100,7 @@ export default function App(): React.JSX.Element {
           intendedWinSize.current = { w, h }
           reportExpandedSize(w, h)
           if (lyricToggle) {
-            clampToWindow(w, h)
+            releaseClamp = clampIslandToWindow(el, w, h)
           } else {
             // SPEC-expand-clip：记下起点（此刻窗口＝收起态外框）与终点（面板外框）。
             // 这里同步写一次内联宽高，本帧绘制前生效，不能等下面 effect 的 rAF 首帧
@@ -4057,7 +4114,7 @@ export default function App(): React.JSX.Element {
           // 收起：`collapsedWidth` 决定 computeBounds(false) 的宽度，必须跟着歌词条量到的 400 走
           const w = Math.ceil(r.width)
           window.island.setCollapsedWidth(w, true)
-          clampToWindow(w, 0)
+          releaseClamp = clampIslandToWindow(el, w, 0)
         }
       }
     }
@@ -4066,14 +4123,8 @@ export default function App(): React.JSX.Element {
       window.island?.setExpanded(expanded, true)
       return () => {
         window.clearTimeout(snapTimer)
-        window.cancelAnimationFrame(releaseRaf)
-        if (el) {
-          el.style.transition = ''
-          el.style.width = ''
-          el.style.height = ''
-          el.style.minWidth = ''
-          el.style.minHeight = ''
-        }
+        releaseClamp?.()
+        if (el) el.style.transition = ''
       }
     }
     window.island?.setExpanded(expanded)
@@ -4116,6 +4167,45 @@ export default function App(): React.JSX.Element {
       window.clearTimeout(timer)
     }
   }, [expanded, reportCurrentSize])
+
+  /**
+   * 音乐页点「词」展开/收起歌词面板（2026-11-28 用户「音乐界面展开/收缩太卡」）。
+   *
+   * 实测根因：`.island.expanded.page-4:has(.music-panel.lyric-open)` 把宽度改成 `max-content`，
+   * px→max-content 不可过渡，岛一帧内从 255×219 跳到 402×269；窗口却要等 ResizeObserver
+   * 80ms 防抖才上报，右边被裁 147px、底部被裁 50px，持续约 90ms。
+   * 处理与歌词条开合同一套：关掉尺寸过渡、按最终尺寸立即上报（主进程 applyBoundsNow），
+   * 窗口跟上前的 1~2 帧把岛钳在窗口内。
+   */
+  const lyricPanelFirst = useRef(true)
+  useLayoutEffect(() => {
+    if (lyricPanelFirst.current) {
+      lyricPanelFirst.current = false
+      return
+    }
+    if (!expandedRef.current || viewRef.current !== 4) return
+    const el = islandRef.current
+    if (!el) return
+    const prev = el.style.transition
+    el.style.transition = 'none'
+    const snapTimer = window.setTimeout(() => {
+      el.style.transition = prev
+    }, 400)
+    const r = el.getBoundingClientRect()
+    let releaseClamp: (() => void) | null = null
+    if (r.width > 0 && r.height > 0) {
+      const w = Math.ceil(r.width)
+      const h = Math.ceil(r.height)
+      intendedWinSize.current = { w, h }
+      reportExpandedSize(w, h)
+      releaseClamp = clampIslandToWindow(el, w, h)
+    }
+    return () => {
+      window.clearTimeout(snapTimer)
+      releaseClamp?.()
+      el.style.transition = ''
+    }
+  }, [lyricPanelOpen, reportExpandedSize])
 
   // 展开入场期间让岛的宽高跟着窗口长大（SPEC-expand-clip）。
   // 为什么逐帧读窗口尺寸、而不是让 CSS 过渡按固定时长跑：窗口由主进程 setInterval 补间，
@@ -4873,6 +4963,10 @@ export default function App(): React.JSX.Element {
     const from = zoomFromRef.current
     zoomFromRef.current = null
     if (!from || !expandedRef.current) return
+    // 系统开了「减弱动态效果」就不播缩放（2026-11-28 用户反馈音乐页「收缩和缩放太卡」）。
+    // 本机 prefers-reduced-motion 实测为 reduce，CSS 过渡早已被压到 1ms，唯独这里用 Web
+    // Animations API 不受 CSS 媒体查询约束，340ms 的整页缩放照旧在跑。尊重系统设置，切页直接到位。
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
     const el = view === 'grid' ? gridRef.current : pageFadeRef.current
     if (!el) return
     const to = el.getBoundingClientRect()
