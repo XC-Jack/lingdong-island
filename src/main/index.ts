@@ -91,6 +91,23 @@ let tweenTimer: NodeJS.Timeout | null = null
 let tweenFrom: Electron.Rectangle | null = null
 let tweenStart = 0
 /**
+ * 形态补间（2026-11-28 词面板开合 / 歌词页回网格）专用的窗口尺寸动画。
+ *
+ * 为什么不用「一次 setBounds 到起点/终点并集」：用户录屏逐帧看到点「词」的那一帧屏幕上
+ * **同时出现两个岛**（旧窗口的一帧留在新窗口左上角，随后才合成出新画面）。一次性大跳变
+ * 在透明置顶窗口上会让合成器把旧帧按新窗口原点摆一帧；主进程现有的开合补间是 16ms
+ * 小步 setBounds，用户历次录屏里从未出现这种重影（本次录屏的胶囊→网格段同样没有）。
+ * 所以这里也走小步补间，跳变幅度每帧只有几像素。
+ *
+ * 与 animateTo 分开的原因：时长由调用方指定；且变高时高度立即到位——渲染层的岛高是
+ * 一步跳到终态的（内容已按终态排版，慢慢长会把底部控件裁掉）。
+ */
+let morphTimer: NodeJS.Timeout | null = null
+let morphFrom: Electron.Rectangle | null = null
+let morphTo: Electron.Rectangle | null = null
+let morphStart = 0
+let morphDuration = 220
+/**
  * 最近一次改窗口矩形的时刻（ms）。抓屏入口用它兜住「补间刚结束、渲染层紧接着来拉底图」
  * 的窗口：desktopCapturer.getSources 实测阻塞 300ms 左右（与缩略图大小无关），
  * 落在动画附近就是肉眼可见的一卡（SPEC-backdrop-capture-idle）。
@@ -261,6 +278,8 @@ function computeBounds(isExpanded: boolean): Electron.Rectangle {
 function animateTo(isExpanded: boolean): void {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
+  // 形态补间与开合补间同时存在时，后者接管窗口
+  stopMorph()
 
   const sameDirection = isExpanded === expanded
   expanded = isExpanded
@@ -308,6 +327,7 @@ function tweenTick(): void {
 function applyBoundsNow(isExpanded: boolean): void {
   const win = mainWindow
   if (!win || win.isDestroyed()) return
+  stopMorph()
   if (tweenTimer) {
     clearInterval(tweenTimer)
     tweenTimer = null
@@ -316,6 +336,79 @@ function applyBoundsNow(isExpanded: boolean): void {
   expanded = isExpanded
   lastBoundsChangeAt = Date.now()
   win.setBounds(computeBounds(isExpanded))
+}
+
+/** 停掉形态补间（新目标 / 开合 / 直接落位都会接管窗口） */
+function stopMorph(): void {
+  if (morphTimer) {
+    clearInterval(morphTimer)
+    morphTimer = null
+  }
+  morphFrom = null
+  morphTo = null
+}
+
+/**
+ * 窗口向目标矩形做小步补间（宽高一起走，除了「变高」那一档高度立即到位）。
+ * 起终点写死在这里，避免每帧重算时目标变化（形态补间期间渲染层的尺寸上报被拦住）。
+ */
+function morphBoundsTo(target: Electron.Rectangle, ms: number): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  if (tweenTimer) {
+    clearInterval(tweenTimer)
+    tweenTimer = null
+    tweenFrom = null
+  }
+  stopMorph()
+  const from = win.getBounds()
+  // 变高：高度立即到位。渲染层的岛此时已按终态排版，窗口慢慢长会把底部控件裁一截。
+  if (target.height >= from.height) {
+    from.height = target.height
+    win.setBounds({ x: from.x, y: from.y, width: from.width, height: target.height })
+  }
+  morphFrom = from
+  morphTo = target
+  morphStart = Date.now()
+  morphDuration = Math.max(1, ms)
+  lastBoundsChangeAt = Date.now()
+  morphTimer = setInterval(morphTick, 16)
+  morphTick()
+}
+
+/**
+ * 与渲染层 `morphEase` 同一条缓动（smoothstep）。
+ *
+ * 这里特意不用 easeOutCubic：形态补间是窗口和岛同时走，easeOut 第一帧就吃掉 20% 行程，
+ * 窗口一帧跳 30px，既会把岛甩在外面裁掉，也正好是录屏里旧帧重影最明显的那一跳。
+ * 两头慢的曲线让第一帧只差 1~2px，窗口和岛逐帧咬住。
+ */
+function morphEase(t: number): number {
+  return t * t * (3 - 2 * t)
+}
+
+/** 形态补间的一帧：曲线见 morphEase（与渲染层岛补间同一条） */
+function morphTick(): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed() || !morphFrom || !morphTo) {
+    stopMorph()
+    return
+  }
+  const from = morphFrom
+  const to = morphTo
+  const t = Math.min(1, (Date.now() - morphStart) / morphDuration)
+  const e = morphEase(t)
+  win.setBounds({
+    x: Math.round(from.x + (to.x - from.x) * e),
+    y: Math.round(from.y + (to.y - from.y) * e),
+    width: Math.round(from.width + (to.width - from.width) * e),
+    height: Math.round(from.height + (to.height - from.height) * e)
+  })
+  if (t >= 1) {
+    stopMorph()
+    win.setBounds(to)
+    lastBoundsChangeAt = Date.now()
+  }
 }
 
 function createWindow(): void {
@@ -645,6 +738,37 @@ ipcMain.handle('island:set-expanded-size', (_event, w: unknown, h: unknown) => {
   return { ...expandedSize }
 })
 
+/**
+ * 渲染层要求「窗口跟着岛一起，用 ms 毫秒补间到新尺寸」（2026-11-28，词面板开合 / 歌词页回网格）。
+ *
+ * 与 island:set-expanded-size 的区别：不做一次性 setBounds，改走 morphBoundsTo 的 16ms
+ * 小步补间。点「词」时窗口从 255 变到 402，一次跳变在用户录屏里会留一帧旧窗口重影
+ * （见 morphBoundsTo 注释）；小步补间把每帧的窗口位移压到几像素，合成器不会露旧帧。
+ * expandedSize 在这里就改成终点：补间期间渲染层的尺寸上报被 islandMorphRef 拦住，
+ * 动画结束后再报一次同值会被 1px 死区吃掉，不会把窗口拽回去。
+ */
+ipcMain.handle('island:set-expanded-size-animated', (_event, w: unknown, h: unknown, ms: unknown) => {
+  const nw = Number(w)
+  const nh = Number(h)
+  const nms = Number(ms)
+  if (!Number.isFinite(nw) || !Number.isFinite(nh)) return { ...expandedSize }
+  const next = {
+    width: Math.round(Math.min(EXPANDED_MAX.width, Math.max(EXPANDED_MIN.width, nw))),
+    height: Math.round(Math.min(EXPANDED_MAX.height, Math.max(EXPANDED_MIN.height, nh)))
+  }
+  if (
+    Math.abs(next.width - expandedSize.width) <= SIZE_DEADZONE_PX &&
+    Math.abs(next.height - expandedSize.height) <= SIZE_DEADZONE_PX
+  ) {
+    return { ...expandedSize }
+  }
+  expandedSize = next
+  if (expanded && mainWindow && !mainWindow.isDestroyed()) {
+    morphBoundsTo(computeBounds(true), Number.isFinite(nms) ? nms : TWEEN_MS)
+  }
+  return { ...expandedSize }
+})
+
 // ---------- 岛背后的「真透视」底色（SPEC-island-themes 第二轮） ----------
 // 目标：B 主题（亮色乳白玻璃）要像效果图那样，能隐约看见桌面颜色在岛底下晕开。
 //
@@ -674,7 +798,7 @@ ipcMain.handle('island:backdrop', async (): Promise<string | null> => {
   // 无关（0.35/0.15/0.08 三档都是 300±5ms）。CDP 逐帧实测：渲染层展开态每 1.5s 拉一次，
   // 每次都在屏幕上冻出 320~365ms 的空档——用户说的「还是卡」就是它。
   // 现在补间之外再加一道「最近 1s 动过窗口就拒绝」，并由渲染层改成「停手 2.5s 才拉」。
-  if (tweenTimer || Date.now() - lastBoundsChangeAt < 1000) return null
+  if (tweenTimer || morphTimer || Date.now() - lastBoundsChangeAt < 1000) return null
   backdropBusy = true
   try {
     const bounds = win.getBounds() // DIP

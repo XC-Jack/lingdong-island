@@ -69,6 +69,14 @@ const api = {
   setExpandedSize(w: number, h: number): Promise<{ width: number; height: number }> {
     return ipcRenderer.invoke('island:set-expanded-size', w, h)
   },
+  /**
+   * 展开态尺寸上报 + 让窗口用 ms 毫秒补间跟过去（2026-11-28 词面板开合 / 歌词页回网格）。
+   * 与 setExpandedSize 的区别只在于窗口不是一次跳变：透明窗口一次大跳变会有一帧旧画面
+   * 留在左上角（用户录屏里的「两个岛」），小步补间不会。
+   */
+  morphExpandedSize(w: number, h: number, ms: number): Promise<{ width: number; height: number }> {
+    return ipcRenderer.invoke('island:set-expanded-size-animated', w, h, ms)
+  },
   /** 文件拖悬停在窗口上（收起态时让主进程放大窗口） */
   dragHover(): void {
     ipcRenderer.send('island:drag-hover')

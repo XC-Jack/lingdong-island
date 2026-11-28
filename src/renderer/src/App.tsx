@@ -16,6 +16,11 @@ const WIDGET_STICKERS = [stickerTodo, stickerShelf, stickerBell, stickerCal, sti
 const AUTO_COLLAPSE_MS = 700
 /** 渲染层整体缩放（styles.css `.app` 的 zoom）。getBoundingClientRect 是屏幕 px，样式写的是布局 px */
 const ZOOM = 0.75
+/**
+ * 形态补间的缓动（与主进程 `morphTick` 同一条 smoothstep）。
+ * 两头慢：第一帧只走 1~2px，窗口和岛不会在开头互相甩开。
+ */
+const morphEase = (t: number): number => t * t * (3 - 2 * t)
 
 /**
  * 把岛临时钳在当前窗口内，等主进程 setBounds 跟上（跨进程通常 1~2 帧）。
@@ -3694,7 +3699,8 @@ export default function App(): React.JSX.Element {
   // 让岛本身在旧/新尺寸之间平滑变形，而不是一帧跳过去（2026-11-28 用户「变宽很突兀」）。
   const morphStartRef = useRef<{ w: number; h: number } | null>(null)
   const islandMorphRef = useRef(false)
-  const islandMorphAnimRef = useRef<Animation | null>(null)
+  /** 取消当前形态补间（连续换挡时以现场尺寸为新起点） */
+  const islandMorphCancelRef = useRef<(() => void) | null>(null)
   // 页面裁剪（US-032）：显示哪些页面 + 收起态组件开关；page 4 是「页面管理」面板本身。
   // 偏好走主进程 prefs.json（IPC），localStorage 跨重启会丢（本机实测），所以初始先默认全开，
   // mount 后异步取回真实偏好再应用——与电量/网络快照同为「先默认后异步回填」的既有模式。
@@ -4238,23 +4244,24 @@ export default function App(): React.JSX.Element {
   }, [expanded, reportCurrentSize])
 
   /**
-   * 岛在两种尺寸之间做形状补间（220ms）：歌词面板开合、歌词页返回网格。
+   * 岛在两种尺寸之间做形状补间：歌词面板开合（220ms）、歌词页返回网格（320ms）。
    *
-   * 窗口先撑到「起点/终点」的并集（只大不小），岛在这个大窗口里从 start 长/缩到当前
-   * CSS 目标；动画期间 ResizeObserver 不上报，结束后再一次性把窗口落到最终尺寸。这样：
-   *  - 变大方向：窗口先到位、岛再长，不会有一帧被旧窗口裁；
-   *  - 变小方向：岛先缩、窗口最后才缩，多出来的透明区域看不见。
+   * 窗口由主进程用同一条曲线的 16ms 小步补间跟过去。不再一次跳到「并集」——透明窗口
+   * 一次大跳变会在合成器里留一帧旧窗口重影（用户录屏里点「词」时看到的「两个岛」）。
+   * 岛的宽高这里逐帧自己写，并且每帧都夹在 `innerWidth/innerHeight` 以内：主进程补间
+   * 万一被抓屏之类的事情卡住半拍，岛就停在窗口边上等它，宁可慢一帧也不越出窗口被裁
+   * （e2e U1g 会逐帧检查这条）。变大时窗口领先（ms-20），变小时窗口滞后（ms+40），
+   * 多出来的透明区域看不见。
    * start 是视觉 px；内联 width/height 要除以 zoom 0.75。
    */
   const morphIslandSize = useCallback(
-    (start: { w: number; h: number } | null): void => {
+    (start: { w: number; h: number } | null, ms = 220): void => {
       const el = islandRef.current
       if (!el || !expandedRef.current || !start || start.w <= 0 || start.h <= 0) return
-      const prevAnim = islandMorphAnimRef.current
-      if (prevAnim) {
+      const cancelPrev = islandMorphCancelRef.current
+      if (cancelPrev) {
         // 连续换挡：以当前实际尺寸作为新起点，视觉上不会弹回
-        prevAnim.cancel()
-        islandMorphAnimRef.current = null
+        cancelPrev()
         const live = el.getBoundingClientRect()
         if (live.width > 0 && live.height > 0) start = { w: live.width, h: live.height }
       }
@@ -4272,56 +4279,79 @@ export default function App(): React.JSX.Element {
         el.style.transition = ''
         return
       }
-      const stage = {
-        w: Math.ceil(Math.max(start.w, end.w)),
-        h: Math.ceil(Math.max(start.h, end.h))
-      }
       // 高度只在「变矮」时补间。变高时内容已经按终态排版（controls 在终态底部），
-      // 若把岛钉在旧高度，底部控件会被裁掉一截（探针帧实测「词」开面板时播放键被切）。
-      // 所以变高直接让高度一步到位，只补间宽度；变矮没有裁切风险，宽高一起补。
+      // 钉在旧高度会把底部控件裁掉一截；所以变高时高度等窗口先长高再一步到位。
       const animateHeight = end.h <= start.h + 1
+      const grow = end.w > start.w
+      const winMs = grow ? Math.max(120, ms - 20) : ms + 40
       islandMorphRef.current = true
-      intendedWinSize.current = stage
+      intendedWinSize.current = { w: Math.ceil(end.w), h: Math.ceil(end.h) }
       // 先按起点尺寸钉住（窗口这时还是旧尺寸；若高度先跳到终点，会冒出窗口被裁一帧）
       el.style.width = `${start.w / ZOOM}px`
       el.style.height = `${start.h / ZOOM}px`
-      const settle = (): void => {
-        if (!expandedRef.current) {
-          // 补间途中岛被收起了：交还给展开/收起链路
-          islandMorphRef.current = false
-          el.style.transition = ''
-          el.style.width = ''
-          el.style.height = ''
-          return
-        }
-        // 窗口已经到并集：只补宽度时，高度现在可以一步到位（内容按终态排版，见上）
-        if (!animateHeight) el.style.height = ''
-        const anim = el.animate(
-          animateHeight
-            ? [
-                { width: `${start.w / ZOOM}px`, height: `${start.h / ZOOM}px` },
-                { width: `${end.w / ZOOM}px`, height: `${end.h / ZOOM}px` }
-              ]
-            : [{ width: `${start.w / ZOOM}px` }, { width: `${end.w / ZOOM}px` }],
-          { duration: 220, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
-        )
-        islandMorphAnimRef.current = anim
-        anim.onfinish = () => {
-          if (islandMorphAnimRef.current !== anim) return
-          islandMorphAnimRef.current = null
-          islandMorphRef.current = false
-          el.style.transition = ''
-          el.style.width = ''
-          el.style.height = ''
-          const w = Math.ceil(end.w)
-          const h = Math.ceil(end.h)
-          if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
-          intendedWinSize.current = { w, h }
-          void reportExpandedSize(w, h)
-        }
+      let cancelled = false
+      const cleanup = (report: boolean): void => {
+        if (cancelled) return
+        cancelled = true
+        islandMorphCancelRef.current = null
+        islandMorphRef.current = false
+        el.style.transition = ''
+        el.style.width = ''
+        el.style.height = ''
+        if (!report) return
+        const w = Math.ceil(end.w)
+        const h = Math.ceil(end.h)
+        if (viewRef.current === 'grid') gridSizeCache.current = { w, h }
+        intendedWinSize.current = { w, h }
+        // 主进程的 expandedSize 在 morphExpandedSize 里已经是这个值，这次上报会被 1px 死区吃掉；
+        // 窗口自己的补间还在跑（变小时比岛慢），不会被拽回。
+        void reportExpandedSize(w, h)
       }
-      // 先让窗口到并集（主进程同步 setBounds，回执 1~2 帧）
-      void Promise.resolve(reportExpandedSize(stage.w, stage.h)).then(settle, settle)
+      islandMorphCancelRef.current = () => cleanup(true)
+      // 窗口走小步补间（主进程同步应用，回执 1~2 帧）；拿到回执再起岛补间，避免窗口还没长高岛先变高
+      void Promise.resolve(window.island.morphExpandedSize(end.w, end.h, winMs)).then(
+        () => {
+          if (cancelled) return
+          if (!expandedRef.current) {
+            // 补间途中岛被收起了：交还给展开/收起链路
+            cleanup(false)
+            return
+          }
+          const t0 = performance.now()
+          const tick = (): void => {
+            if (cancelled) return
+            if (!expandedRef.current) {
+              cleanup(false)
+              return
+            }
+            const t = Math.min(1, (performance.now() - t0) / ms)
+            const e = morphEase(t)
+            const wantW = start.w + (end.w - start.w) * e
+            // 变矮时一起补高度；变高时等窗口高度到位再一步跳到终态
+            const wantH = animateHeight
+              ? start.h + (end.h - start.h) * e
+              : Math.min(end.h, Math.max(start.h, innerHeight - 0.5))
+            // 不越出窗口：窗口回执慢半拍时岛停在窗口边上等它（e2e U1g 逐帧查这条）
+            const w = Math.min(wantW, innerWidth - 0.5)
+            const h = Math.min(wantH, innerHeight - 0.5)
+            el.style.width = `${w / ZOOM}px`
+            el.style.height = `${h / ZOOM}px`
+            const waited = innerWidth >= end.w - 0.5 && (animateHeight || innerHeight >= end.h - 0.5)
+            if (t >= 1 && waited) {
+              cleanup(true)
+              return
+            }
+            // 窗口一直不跟（岛被隐藏 / 系统卡死）时不无限等
+            if (performance.now() - t0 > ms + 800) {
+              cleanup(true)
+              return
+            }
+            window.requestAnimationFrame(tick)
+          }
+          window.requestAnimationFrame(tick)
+        },
+        () => cleanup(true)
+      )
     },
     [reportExpandedSize]
   )
@@ -5169,11 +5199,19 @@ export default function App(): React.JSX.Element {
        */
       const start = morphStartRef.current
       morphStartRef.current = null
-      morphIslandSize(start)
-      const anim = el.animate([{ opacity: 0.25 }, { opacity: 1 }], {
-        duration: 220,
-        easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
-      })
+      // 320ms：用户反馈 220ms 的收窄「基本没有什么动画」。除了拉长，还给网格一点
+      // 匀称的缩放进场（0.95→1，不变形；网格比岛窄，放大前也不会被岛裁），
+      // 让「内容」也动起来，而不只是外壳在收。
+      // 起手透明度不能太低（旧版 0.25）：歌词一帧内消失后，岛会先空一下再淡入，
+      // 看起来反而像闪了一下。0.45 起手，内容一直在，主要是尺寸在收。
+      morphIslandSize(start, 320)
+      const anim = el.animate(
+        [
+          { transform: 'scale(0.95)', opacity: 0.45 },
+          { transform: 'none', opacity: 1 }
+        ],
+        { duration: 320, easing: 'cubic-bezier(0.45, 0, 0.55, 1)' }
+      )
       return () => anim.cancel()
     }
     const anim = el.animate(
